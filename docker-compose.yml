@@ -1,0 +1,144 @@
+version: '3.8'
+
+services:
+  # PostgreSQL数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: dp-postgres
+    environment:
+      POSTGRES_DB: document_parser
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dp-network
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: dp-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dp-network
+
+  # MinIO对象存储
+  minio:
+    image: minio/minio:latest
+    container_name: dp-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - dp-network
+
+  # 创建MinIO bucket（初始化）
+  minio-init:
+    image: minio/mc:latest
+    container_name: dp-minio-init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 10;
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/documents --ignore-existing;
+      /usr/bin/mc anonymous set download myminio/documents;
+      exit 0;
+      "
+    networks:
+      - dp-network
+
+  # 后端应用（Phase 0手动启动，取消注释可自动启动）
+  # backend:
+  #   build:
+  #     context: ./backend
+  #     dockerfile: Dockerfile
+  #   container_name: dp-backend
+  #   command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - ./backend:/app
+  #     - ./config:/app/config
+  #   environment:
+  #     - ENV=development
+  #   depends_on:
+  #     - postgres
+  #     - redis
+  #     - minio
+  #   networks:
+  #     - dp-network
+
+  # Celery Worker（Phase 0手动启动）
+  # celery-worker:
+  #   build:
+  #     context: ./backend
+  #     dockerfile: Dockerfile
+  #   container_name: dp-celery-worker
+  #   command: celery -A app.tasks.celery_app worker -l info
+  #   volumes:
+  #     - ./backend:/app
+  #     - ./config:/app/config
+  #   environment:
+  #     - ENV=development
+  #   depends_on:
+  #     - postgres
+  #     - redis
+  #     - minio
+  #   networks:
+  #     - dp-network
+
+  # 前端应用（Phase 0手动启动）
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #   container_name: dp-frontend
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     - ./frontend:/app
+  #     - /app/node_modules
+  #   environment:
+  #     - VITE_API_BASE_URL=http://localhost:8000
+  #   networks:
+  #     - dp-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
+networks:
+  dp-network:
+    name: dp-network
+    driver: bridge

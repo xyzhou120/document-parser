@@ -1,0 +1,1604 @@
+{
+  "schema_version": "gold-matrix-v2",
+  "evaluation_contract_version": "gold-matrix-v2",
+  "dataset_id": "gas-report-gold-v2-migrated",
+  "source": "Migrated from truth_checklist_2026-10-10.json; pending human adjudication",
+  "created_at": "2026-10-12T04:53:22+00:00",
+  "annotation_policy": {
+    "expected_facts_are_complete": true,
+    "legacy_values_are_observations_only": true,
+    "empty_expected_facts_do_not_mean_absent": true,
+    "human_adjudication_required_for_scoring": true
+  },
+  "quality_thresholds": {
+    "status": "PENDING_BUSINESS_APPROVAL",
+    "note": "未填写业务最低召回、确定正确率、自动完整正确率和错误确定上限；不能据此宣称发布通过。",
+    "metrics": {
+      "minimum_fact_recall_by_key_rule": null,
+      "minimum_fact_recall_by_stratum": null,
+      "minimum_determinate_output_precision": null,
+      "minimum_automatic_correct_completion_rate": null,
+      "minimum_document_complete_correct_rate": null,
+      "maximum_task_error_rate": null,
+      "minimum_sample_size": null,
+      "statistical_uncertainty_method": null
+    }
+  },
+  "rules": [
+    {
+      "field_key": "designed_hole_count",
+      "rule_id": "9541dc33-d75f-45e5-ade7-ae6930415cc3",
+      "rule_version": 2,
+      "field_name": "报告设计钻孔数",
+      "cardinality": "all_occurrences",
+      "scope": "whole_document",
+      "identity_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "applicable_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "value_kind_policy": {
+        "expected": "报告设计钻孔数"
+      },
+      "unit_policy": {
+        "expected": "个"
+      },
+      "retrieval_terms": [
+        "designed_hole_count"
+      ],
+      "synonym_terms": [
+        "设计钻孔",
+        "设计孔数",
+        "布孔",
+        "钻孔数量"
+      ],
+      "ocr_variants": [],
+      "formula_patterns": [],
+      "table_patterns": [],
+      "evidence_requirements": [
+        "value",
+        "unit",
+        "column_header",
+        "row_header",
+        "scope"
+      ],
+      "rule_semantic_hash": "612965750bccf2f906f4d03cbecfd2c3c686995edbb00b4221f0c77bd317d88a"
+    },
+    {
+      "field_key": "actual_hole_count",
+      "rule_id": "121b10c1-f504-4413-9253-c3c973d9e627",
+      "rule_version": 2,
+      "field_name": "报告实际施工钻孔数",
+      "cardinality": "all_occurrences",
+      "scope": "whole_document",
+      "identity_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "applicable_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "value_kind_policy": {
+        "expected": "报告实际施工钻孔数"
+      },
+      "unit_policy": {
+        "expected": "个"
+      },
+      "retrieval_terms": [
+        "actual_hole_count"
+      ],
+      "synonym_terms": [
+        "实际钻孔",
+        "施工钻孔",
+        "竣工",
+        "完成孔数",
+        "实际孔数"
+      ],
+      "ocr_variants": [],
+      "formula_patterns": [],
+      "table_patterns": [],
+      "evidence_requirements": [
+        "value",
+        "unit",
+        "column_header",
+        "row_header",
+        "scope"
+      ],
+      "rule_semantic_hash": "9fa223847b7ce37f30226caf06d3e8cfaea497d0a9f4b46f6e86ea7f2871b56b"
+    },
+    {
+      "field_key": "supplementary_hole_count",
+      "rule_id": "f569cbe9-af9e-413e-b1cd-58cc66f52839",
+      "rule_version": 2,
+      "field_name": "补孔数量",
+      "cardinality": "all_occurrences",
+      "scope": "whole_document",
+      "identity_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "applicable_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "value_kind_policy": {
+        "expected": "补孔数量"
+      },
+      "unit_policy": {
+        "expected": "个"
+      },
+      "retrieval_terms": [
+        "supplementary_hole_count"
+      ],
+      "synonym_terms": [
+        "补孔",
+        "补充钻孔"
+      ],
+      "ocr_variants": [],
+      "formula_patterns": [],
+      "table_patterns": [],
+      "evidence_requirements": [
+        "value",
+        "unit",
+        "column_header",
+        "row_header",
+        "scope"
+      ],
+      "rule_semantic_hash": "7993fd23ac843408e0e1e85263b38f1442ba472d734981e041962050aa5d6ead"
+    },
+    {
+      "field_key": "measurement_point_count",
+      "rule_id": "eb0b5cfc-e9c5-4b53-b9fa-210fb9494eda",
+      "rule_version": 2,
+      "field_name": "效果测点数量",
+      "cardinality": "all_occurrences",
+      "scope": "whole_document",
+      "identity_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "applicable_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "value_kind_policy": {
+        "expected": "效果测点数量"
+      },
+      "unit_policy": {
+        "expected": "个"
+      },
+      "retrieval_terms": [
+        "measurement_point_count"
+      ],
+      "synonym_terms": [
+        "测点",
+        "测点数量",
+        "效果检验",
+        "布置测点"
+      ],
+      "ocr_variants": [],
+      "formula_patterns": [],
+      "table_patterns": [],
+      "evidence_requirements": [
+        "value",
+        "unit",
+        "column_header",
+        "row_header",
+        "scope"
+      ],
+      "rule_semantic_hash": "ec2634d04f5ac5f78345c018551c92419ad5e848d90f7e69a5e88df2c55b427a"
+    },
+    {
+      "field_key": "desorbable_gas_content_measured",
+      "rule_id": "7f3c13d8-7434-44a5-a0f6-2374564ff273",
+      "rule_version": 2,
+      "field_name": "可解吸瓦斯含量实测值",
+      "cardinality": "all_occurrences",
+      "scope": "whole_document",
+      "identity_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "applicable_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "value_kind_policy": {
+        "expected": "可解吸瓦斯含量实测值"
+      },
+      "unit_policy": {
+        "expected": "m³/t"
+      },
+      "retrieval_terms": [
+        "desorbable_gas_content_measured"
+      ],
+      "synonym_terms": [
+        "可解吸",
+        "测试结果",
+        "实测",
+        "测值"
+      ],
+      "ocr_variants": [],
+      "formula_patterns": [],
+      "table_patterns": [],
+      "evidence_requirements": [
+        "value",
+        "unit",
+        "column_header",
+        "row_header",
+        "scope"
+      ],
+      "rule_semantic_hash": "04d66dd52222b6ff8a31345890b1f40d8ab6947c0955b34c7df746a7d26e2de9"
+    },
+    {
+      "field_key": "desorbable_gas_content_calculated",
+      "rule_id": "15380ef9-4227-4ac2-a4d8-9835319b5623",
+      "rule_version": 2,
+      "field_name": "可解吸瓦斯含量计算值",
+      "cardinality": "all_occurrences",
+      "scope": "whole_document",
+      "identity_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "applicable_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "value_kind_policy": {
+        "expected": "可解吸瓦斯含量计算值"
+      },
+      "unit_policy": {
+        "expected": "m³/t"
+      },
+      "retrieval_terms": [
+        "desorbable_gas_content_calculated"
+      ],
+      "synonym_terms": [
+        "可解吸",
+        "计算值",
+        "单元可解吸"
+      ],
+      "ocr_variants": [],
+      "formula_patterns": [],
+      "table_patterns": [],
+      "evidence_requirements": [
+        "value",
+        "unit",
+        "column_header",
+        "row_header",
+        "scope"
+      ],
+      "rule_semantic_hash": "54c06e2adf3f36473b3070975bda25175eecbd7fafb4c06ca4f789a3b0c5b810"
+    },
+    {
+      "field_key": "residual_gas_content_measured",
+      "rule_id": "3f1d4d73-e0e3-4c12-9353-0060991a85c9",
+      "rule_version": 2,
+      "field_name": "残余瓦斯含量实测值",
+      "cardinality": "all_occurrences",
+      "scope": "whole_document",
+      "identity_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "applicable_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "value_kind_policy": {
+        "expected": "残余瓦斯含量实测值"
+      },
+      "unit_policy": {
+        "expected": "m³/t"
+      },
+      "retrieval_terms": [
+        "residual_gas_content_measured"
+      ],
+      "synonym_terms": [
+        "残余瓦斯含量",
+        "现场实测",
+        "含量测定"
+      ],
+      "ocr_variants": [],
+      "formula_patterns": [],
+      "table_patterns": [],
+      "evidence_requirements": [
+        "value",
+        "unit",
+        "column_header",
+        "row_header",
+        "scope"
+      ],
+      "rule_semantic_hash": "de66082cf4a8274a5cc124384bde8f64f7d2b0ff5445571503d1fcf090530521"
+    },
+    {
+      "field_key": "residual_gas_content_calculated",
+      "rule_id": "6cb86725-ce70-470f-8eb5-06927f261ee5",
+      "rule_version": 2,
+      "field_name": "残余瓦斯含量计算值",
+      "cardinality": "all_occurrences",
+      "scope": "whole_document",
+      "identity_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "applicable_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "value_kind_policy": {
+        "expected": "残余瓦斯含量计算值"
+      },
+      "unit_policy": {
+        "expected": "m³/t"
+      },
+      "retrieval_terms": [
+        "residual_gas_content_calculated"
+      ],
+      "synonym_terms": [
+        "残余瓦斯含量",
+        "计算结果",
+        "计算值"
+      ],
+      "ocr_variants": [],
+      "formula_patterns": [],
+      "table_patterns": [],
+      "evidence_requirements": [
+        "value",
+        "unit",
+        "column_header",
+        "row_header",
+        "scope"
+      ],
+      "rule_semantic_hash": "0dad3fe0c4f06e8b3ef9337d3ea661c351a724e5c106d670309446c933c83c14"
+    },
+    {
+      "field_key": "residual_gas_pressure_measured",
+      "rule_id": "9b4f9cb5-8e8e-4ecc-9a24-e25b1e86917e",
+      "rule_version": 2,
+      "field_name": "残余瓦斯压力实测值",
+      "cardinality": "all_occurrences",
+      "scope": "whole_document",
+      "identity_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "applicable_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "value_kind_policy": {
+        "expected": "残余瓦斯压力实测值"
+      },
+      "unit_policy": {
+        "expected": "MPa"
+      },
+      "retrieval_terms": [
+        "residual_gas_pressure_measured"
+      ],
+      "synonym_terms": [
+        "残余瓦斯压力",
+        "压力测定",
+        "实测压力"
+      ],
+      "ocr_variants": [],
+      "formula_patterns": [],
+      "table_patterns": [],
+      "evidence_requirements": [
+        "value",
+        "unit",
+        "column_header",
+        "row_header",
+        "scope"
+      ],
+      "rule_semantic_hash": "27346e370872138017b885b47be57c6810c4b596e32698633f9e4d99190ae73a"
+    },
+    {
+      "field_key": "evaluation_unit_range",
+      "rule_id": "c0a413e0-264b-4196-9b8b-af6f6cc5c0a2",
+      "rule_version": 2,
+      "field_name": "评价单元及范围",
+      "cardinality": "all_occurrences",
+      "scope": "whole_document",
+      "identity_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "applicable_dimensions": [
+        "workface",
+        "evaluation_unit",
+        "measurement_point",
+        "roadway",
+        "measurement_date",
+        "scope_level"
+      ],
+      "value_kind_policy": {
+        "expected": "评价单元及范围"
+      },
+      "unit_policy": {
+        "expected": null
+      },
+      "retrieval_terms": [
+        "evaluation_unit_range"
+      ],
+      "synonym_terms": [
+        "评价单元",
+        "评判单元",
+        "单元划分",
+        "评价范围"
+      ],
+      "ocr_variants": [],
+      "formula_patterns": [],
+      "table_patterns": [],
+      "evidence_requirements": [
+        "value",
+        "unit",
+        "column_header",
+        "row_header",
+        "scope"
+      ],
+      "rule_semantic_hash": "843033667572c484aed9e4ae0f3b9960a770f3a67e955ad7735ce9333fc7554b"
+    }
+  ],
+  "documents": [
+    {
+      "document_id": "D",
+      "label": "采区水仓",
+      "source": {
+        "file": "docs/附件下载0930_按煤矿整理/乔子梁煤业/采区水仓瓦斯抽采达标评判报告及区域防突措施效果检验评判报告（修改）.pdf",
+        "sha256": "8d1cc9cec14ef0b4f9542c8b706200421b9321accb4145de47836c62cdefd753",
+        "pages": 33,
+        "size_bytes": 5753690,
+        "layout": "mixed",
+        "zero_text_pages": 2,
+        "scan_ratio": 0.5151515151515151,
+        "mine": "乔子梁煤业",
+        "mine_group": null,
+        "split": null,
+        "registration_status": "REGISTERED",
+        "registration_notes": "原件只读元数据登记；scan_ratio仅为native_char_count<200且有图像的粗略比例，不证明OCR或整页可读性。所有业务事实仍pending。"
+      },
+      "rules": [
+        {
+          "field_key": "designed_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "D",
+              "field_key": "designed_hole_count",
+              "values": [
+                "75"
+              ],
+              "note": "正文第10页"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "actual_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "D",
+              "field_key": "actual_hole_count",
+              "values": [
+                "81"
+              ],
+              "note": "正文第13页"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "supplementary_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "D",
+              "field_key": "supplementary_hole_count",
+              "values": [
+                "3"
+              ],
+              "note": "正文第12页"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "measurement_point_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "desorbable_gas_content_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "D",
+              "field_key": "desorbable_gas_content_measured",
+              "values": [
+                "1.42",
+                "1.95"
+              ],
+              "note": "扫描 DGC 单第21、22页"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "desorbable_gas_content_calculated",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_content_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "D",
+              "field_key": "residual_gas_content_measured",
+              "values": [
+                "2.23"
+              ],
+              "note": "正文第16页"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_content_calculated",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "D",
+              "field_key": "residual_gas_content_calculated",
+              "values": [
+                "3.38"
+              ],
+              "note": "正文第16页"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_pressure_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "evaluation_unit_range",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "D",
+              "field_key": "evaluation_unit_range",
+              "values": [
+                "采区水仓"
+              ],
+              "match": "contains",
+              "note": "正文第16页：采区水仓控制评价范畴"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        }
+      ]
+    },
+    {
+      "document_id": "A",
+      "label": "102回采（A）",
+      "source": {
+        "file": "docs/附件下载0930_按煤矿整理/乔子梁煤业/102回采工作面瓦斯抽采达标评判报告.pdf",
+        "sha256": "aebd24eadfd914e4859cd8f4a1f7d507323935db572ec7bb58c4f500a20a4442",
+        "pages": 36,
+        "size_bytes": 12938175,
+        "layout": "mixed",
+        "zero_text_pages": 25,
+        "scan_ratio": 0.7222222222222222,
+        "mine": "乔子梁煤业",
+        "mine_group": null,
+        "split": null,
+        "registration_status": "REGISTERED",
+        "registration_notes": "原件只读元数据登记；scan_ratio仅为native_char_count<200且有图像的粗略比例，不证明OCR或整页可读性。所有业务事实仍pending。"
+      },
+      "rules": [
+        {
+          "field_key": "designed_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "actual_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "supplementary_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "measurement_point_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "desorbable_gas_content_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "A",
+              "field_key": "desorbable_gas_content_measured",
+              "values": [],
+              "min_count": 1,
+              "note": "多个样品，逐张核对；本条只要求至少抽到一条"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "desorbable_gas_content_calculated",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_content_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "A",
+              "field_key": "residual_gas_content_measured",
+              "values": [
+                "2.76",
+                "2.46"
+              ],
+              "note": "正文第10页、第11页（需核对）"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_content_calculated",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "A",
+              "field_key": "residual_gas_content_calculated",
+              "values": [
+                "4.15"
+              ],
+              "note": "正文第10页"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_pressure_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "A",
+              "field_key": "residual_gas_pressure_measured",
+              "values": [
+                "0.20",
+                "0.19"
+              ],
+              "note": "正文同句，第11页需核对"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "evaluation_unit_range",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        }
+      ]
+    },
+    {
+      "document_id": "B",
+      "label": "102回采（B）",
+      "source": {
+        "file": "docs/附件下载0930_按煤矿整理/乔子梁煤业/瓦斯抽采达标评判报告102回采工作面.pdf",
+        "sha256": "0813ee9e44b3ce3480a80052ab0fb071c8c325dc0517060b9e0147eb569d631e",
+        "pages": 36,
+        "size_bytes": 12735854,
+        "layout": "mixed",
+        "zero_text_pages": 24,
+        "scan_ratio": 0.6944444444444444,
+        "mine": "乔子梁煤业",
+        "mine_group": null,
+        "split": null,
+        "registration_status": "REGISTERED",
+        "registration_notes": "原件只读元数据登记；scan_ratio仅为native_char_count<200且有图像的粗略比例，不证明OCR或整页可读性。所有业务事实仍pending。"
+      },
+      "rules": [
+        {
+          "field_key": "designed_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "actual_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "supplementary_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "measurement_point_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "desorbable_gas_content_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "desorbable_gas_content_calculated",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_content_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_content_calculated",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_pressure_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "evaluation_unit_range",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        }
+      ]
+    },
+    {
+      "document_id": "C",
+      "label": "轨道下山（C）",
+      "source": {
+        "file": "docs/附件下载0930_按煤矿整理/乔子梁煤业/轨道下山瓦斯抽采达标评判报告.pdf",
+        "sha256": "426d33cffcda9e936d703bde68f362483b629a8d27a65dab5d5644bead7e9090",
+        "pages": 21,
+        "size_bytes": 3115407,
+        "layout": "mixed",
+        "zero_text_pages": 9,
+        "scan_ratio": 0.47619047619047616,
+        "mine": "乔子梁煤业",
+        "mine_group": null,
+        "split": null,
+        "registration_status": "REGISTERED",
+        "registration_notes": "原件只读元数据登记；scan_ratio仅为native_char_count<200且有图像的粗略比例，不证明OCR或整页可读性。所有业务事实仍pending。"
+      },
+      "rules": [
+        {
+          "field_key": "designed_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "actual_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "supplementary_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "measurement_point_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "desorbable_gas_content_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "C",
+              "field_key": "desorbable_gas_content_measured",
+              "values": [
+                "1.34"
+              ],
+              "note": "扫描 DGC 单第15、16页"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "desorbable_gas_content_calculated",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_content_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "C",
+              "field_key": "residual_gas_content_measured",
+              "values": [
+                "3.58",
+                "3.42"
+              ],
+              "note": "正文第12页"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_content_calculated",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "C",
+              "field_key": "residual_gas_content_calculated",
+              "values": [
+                "2.60"
+              ],
+              "note": "正文第12页"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_pressure_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "C",
+              "field_key": "residual_gas_pressure_measured",
+              "values": [
+                "0.24",
+                "0.22"
+              ],
+              "note": "正文第12页"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "evaluation_unit_range",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        }
+      ]
+    },
+    {
+      "document_id": "E",
+      "label": "轨道下山（E）",
+      "source": {
+        "file": "docs/附件下载0930_按煤矿整理/乔子梁煤业/瓦斯抽采达标评判报告轨道下山.pdf",
+        "sha256": "8e67216dea3d10319f53315cf32d6867670390e0699dd5407d154e82403d7030",
+        "pages": 20,
+        "size_bytes": 2763040,
+        "layout": "mixed",
+        "zero_text_pages": 7,
+        "scan_ratio": 0.4,
+        "mine": "乔子梁煤业",
+        "mine_group": null,
+        "split": null,
+        "registration_status": "REGISTERED",
+        "registration_notes": "原件只读元数据登记；scan_ratio仅为native_char_count<200且有图像的粗略比例，不证明OCR或整页可读性。所有业务事实仍pending。"
+      },
+      "rules": [
+        {
+          "field_key": "designed_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "actual_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "supplementary_hole_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "measurement_point_count",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "desorbable_gas_content_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "E",
+              "field_key": "desorbable_gas_content_measured",
+              "values": [
+                "1.34"
+              ],
+              "note": "扫描 DGC 单第14、15页"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "desorbable_gas_content_calculated",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_content_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "E",
+              "field_key": "residual_gas_content_measured",
+              "values": [
+                "3.58",
+                "3.42"
+              ],
+              "note": "正文第11–12页（页码需核对）"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_content_calculated",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "E",
+              "field_key": "residual_gas_content_calculated",
+              "values": [
+                "2.60"
+              ],
+              "note": "正文第11页"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "residual_gas_pressure_measured",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [
+            {
+              "doc": "E",
+              "field_key": "residual_gas_pressure_measured",
+              "values": [
+                "0.24",
+                "0.22"
+              ],
+              "note": "正文第11页"
+            }
+          ],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        },
+        {
+          "field_key": "evaluation_unit_range",
+          "answerability": null,
+          "cardinality": null,
+          "expected_facts": [],
+          "absence_scope": null,
+          "legacy_observations": [],
+          "adjudication": {
+            "status": "pending",
+            "annotator": null,
+            "adjudicator": null,
+            "adjudicated_at": null,
+            "source": "template",
+            "notes": "未完成原文独立标注和裁决；空 expected_facts 不表示缺失。"
+          }
+        }
+      ]
+    }
+  ]
+}

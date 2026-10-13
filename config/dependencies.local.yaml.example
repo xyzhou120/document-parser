@@ -1,0 +1,26 @@
+# 将下面内容合并到当前 config/local.yaml 中。
+# 当前后端配置加载器读取的是仓库根目录 config/，不是 backend/config/。
+
+database:
+  host: "192.168.1.100"
+  port: 5432
+  name: "document_parser"
+  user: "postgres"
+  password: "replace-with-postgres-password"
+
+redis:
+  host: "192.168.1.100"
+  port: 6379
+  db: 0
+  password: "replace-with-redis-password"
+
+minio:
+  endpoint: "192.168.1.100:9000"
+  access_key: "minioadmin"
+  secret_key: "replace-with-minio-password"
+  bucket: "documents"
+  secure: false
+
+celery:
+  broker_url: "redis://:replace-with-redis-password@192.168.1.100:6379/0"
+  result_backend: "redis://:replace-with-redis-password@192.168.1.100:6379/1"

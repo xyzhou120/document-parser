@@ -1,0 +1,46 @@
+# 本地配置覆盖示例
+# 复制此文件为 local.yaml 并修改配置
+
+# 模型服务配置（必须配置）
+models:
+  # 文本模型
+  text_llm:
+    base_url: "http://172.16.14.2:8001/v1"  # 替换为实际地址
+    api_key: "your-api-key-here"  # 如需要API Key
+    model_name: "qwen3.7-27b"
+    timeout: 60
+
+  # 视觉模型（Phase 1启用）
+  vision_llm:
+    base_url: "http://172.16.14.2:8002/v1"
+    api_key: "your-api-key-here"
+    model_name: "qwen3.6-27b"
+    timeout: 120
+
+  # OCR服务
+  ocr:
+    base_url: "http://172.16.14.2:8866"
+    api_key: null  # 如需要API Key
+    timeout: 30
+
+# 数据库配置（如果不同）
+# database:
+#   host: "your-db-host"
+#   port: 5432
+#   name: "document_parser"
+#   user: "your-username"
+#   password: "your-password"
+
+# Redis配置（如果不同）
+# redis:
+#   host: "your-redis-host"
+#   port: 6379
+#   password: "your-password"
+
+# MinIO配置（如果不同）
+# minio:
+#   endpoint: "your-minio-host:9000"
+#   access_key: "your-access-key"
+#   secret_key: "your-secret-key"
+#   bucket: "documents"
+#   secure: false

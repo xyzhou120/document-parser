@@ -1,0 +1,1101 @@
+{
+ "source_run": "cd594aac-adac-4f49-85f1-c3f8e27f8f14",
+ "checklist_type": "gas_report_agent",
+ "rules": [
+  {
+   "field_key": "designed_hole_count",
+   "field_name_cn": "报告设计钻孔数",
+   "data_type": "integer",
+   "unit": "个",
+   "required": true,
+   "multi_instance": true,
+   "merge_strategy": "value_consistent",
+   "strategy": {
+    "methods": [
+     "agent_extract"
+    ],
+    "agent_extract": {
+     "background": "依据瓦斯深度监察规则手册检查项2、3、5、7、8、11～16，将监察所需输入拆为报告事实。平台不执行手册中的合格/不合格判断、反算、公式复算或现场真实性裁定。文档可能含正文、扫描报告单、说明、审批表、设计与台账；标明来源角色和统计粒度。工作面总量、单元量、测点值、单孔参数互不替代；实测与计算、设计与实际分别提取。正文和表格同身份同值可归并为一组多证据，不同值全部保留，不选最高分或最常见值。关键词仅用于搜索；必须查看原图，OCR可错、可漏，无法确认即留空，不用领域常识补值。",
+     "instructions": "按工作面/巷道、评价单元或钻场等报告明示粒度提取设计孔数。不把排数、钻场数、每排孔数、孔长/工程量、取样孔数当总孔数，不相乘反算。",
+     "synonyms": [
+      "设计钻孔",
+      "设计孔数",
+      "布孔",
+      "钻孔数量"
+     ],
+     "negative_examples": [
+      "不得把规范、样例或领域常见数值填写成当前材料实报值",
+      "不得从目录标题推断正文完整",
+      "数字相同不能证明属于同一测点"
+     ],
+     "identity_dimensions": [
+      "workface",
+      "evaluation_unit",
+      "measurement_point",
+      "roadway",
+      "measurement_date",
+      "scope_level"
+     ],
+     "evidence_requirements": [
+      "value",
+      "unit",
+      "column_header",
+      "row_header",
+      "scope"
+     ],
+     "source_roles": [
+      "report_body",
+      "report_sheet",
+      "approval",
+      "statement",
+      "design",
+      "ledger"
+     ],
+     "manual_references": [
+      "瓦斯深度监察规则手册-规范化0930.pdf，PDF第9页"
+     ]
+    }
+   },
+   "validation": null,
+   "fallback_value": null,
+   "priority": 100,
+   "rule_id": "9541dc33-d75f-45e5-ade7-ae6930415cc3",
+   "checklist_type": "gas_report_agent",
+   "version": 2,
+   "source": "database",
+   "dimensions": [
+    "workface",
+    "evaluation_unit",
+    "measurement_point",
+    "roadway",
+    "measurement_date",
+    "scope_level"
+   ],
+   "value_kind": "design",
+   "field_description": "按工作面/巷道、评价单元或钻场等报告明示粒度提取设计孔数。不把排数、钻场数、每排孔数、孔长/工程量、取样孔数当总孔数，不相乘反算。",
+   "dimension_schema": {
+    "workface": {
+     "required": true,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "工作面/掘进对象名称，如40307工作面、22306回顺；不把第五评价单元拼入工作面名。没有明示不能推测。"
+    },
+    "evaluation_unit": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "评价/评判单元编号，如第五评价单元、4#；不填写整份报告标题或里程范围。"
+    },
+    "measurement_point": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测点编号/名称；只有明确逐测点记录才绑定，单元总量没有测点时留空。"
+    },
+    "roadway": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "巷道名称或类型，如运顺、回顺；里程1700~2200m是范围而不是巷道。"
+    },
+    "measurement_date": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测定/统计截止日期；不能用报告编制或审批日期代替。"
+    },
+    "scope_level": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "记录统计层级，如工作面合计、评价单元合计、测点、单孔；不是长度值、里程或对象名称。"
+    }
+   }
+  },
+  {
+   "field_key": "actual_hole_count",
+   "field_name_cn": "报告实际施工钻孔数",
+   "data_type": "integer",
+   "unit": "个",
+   "required": true,
+   "multi_instance": true,
+   "merge_strategy": "value_consistent",
+   "strategy": {
+    "methods": [
+     "agent_extract"
+    ],
+    "agent_extract": {
+     "background": "依据瓦斯深度监察规则手册检查项2、3、5、7、8、11～16，将监察所需输入拆为报告事实。平台不执行手册中的合格/不合格判断、反算、公式复算或现场真实性裁定。文档可能含正文、扫描报告单、说明、审批表、设计与台账；标明来源角色和统计粒度。工作面总量、单元量、测点值、单孔参数互不替代；实测与计算、设计与实际分别提取。正文和表格同身份同值可归并为一组多证据，不同值全部保留，不选最高分或最常见值。关键词仅用于搜索；必须查看原图，OCR可错、可漏，无法确认即留空，不用领域常识补值。",
+     "instructions": "提取报告明确的实际施工/竣工孔数，区分工作面合计和分单元/分巷道；保留补孔含否的文字。有效孔数和合计不自行计算。",
+     "synonyms": [
+      "实际钻孔",
+      "施工钻孔",
+      "竣工",
+      "完成孔数",
+      "实际孔数"
+     ],
+     "negative_examples": [
+      "不得把规范、样例或领域常见数值填写成当前材料实报值",
+      "不得从目录标题推断正文完整",
+      "数字相同不能证明属于同一测点"
+     ],
+     "identity_dimensions": [
+      "workface",
+      "evaluation_unit",
+      "measurement_point",
+      "roadway",
+      "measurement_date",
+      "scope_level"
+     ],
+     "evidence_requirements": [
+      "value",
+      "unit",
+      "column_header",
+      "row_header",
+      "scope"
+     ],
+     "source_roles": [
+      "report_body",
+      "report_sheet",
+      "approval",
+      "statement",
+      "design",
+      "ledger"
+     ],
+     "manual_references": [
+      "瓦斯深度监察规则手册-规范化0930.pdf，PDF第9页"
+     ]
+    }
+   },
+   "validation": null,
+   "fallback_value": null,
+   "priority": 99,
+   "rule_id": "121b10c1-f504-4413-9253-c3c973d9e627",
+   "checklist_type": "gas_report_agent",
+   "version": 2,
+   "source": "database",
+   "dimensions": [
+    "workface",
+    "evaluation_unit",
+    "measurement_point",
+    "roadway",
+    "measurement_date",
+    "scope_level"
+   ],
+   "value_kind": "actual",
+   "field_description": "提取报告明确的实际施工/竣工孔数，区分工作面合计和分单元/分巷道；保留补孔含否的文字。有效孔数和合计不自行计算。",
+   "dimension_schema": {
+    "workface": {
+     "required": true,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "工作面/掘进对象名称，如40307工作面、22306回顺；不把第五评价单元拼入工作面名。没有明示不能推测。"
+    },
+    "evaluation_unit": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "评价/评判单元编号，如第五评价单元、4#；不填写整份报告标题或里程范围。"
+    },
+    "measurement_point": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测点编号/名称；只有明确逐测点记录才绑定，单元总量没有测点时留空。"
+    },
+    "roadway": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "巷道名称或类型，如运顺、回顺；里程1700~2200m是范围而不是巷道。"
+    },
+    "measurement_date": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测定/统计截止日期；不能用报告编制或审批日期代替。"
+    },
+    "scope_level": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "记录统计层级，如工作面合计、评价单元合计、测点、单孔；不是长度值、里程或对象名称。"
+    }
+   }
+  },
+  {
+   "field_key": "supplementary_hole_count",
+   "field_name_cn": "补孔数量",
+   "data_type": "integer",
+   "unit": "个",
+   "required": true,
+   "multi_instance": true,
+   "merge_strategy": "value_consistent",
+   "strategy": {
+    "methods": [
+     "agent_extract"
+    ],
+    "agent_extract": {
+     "background": "依据瓦斯深度监察规则手册检查项2、3、5、7、8、11～16，将监察所需输入拆为报告事实。平台不执行手册中的合格/不合格判断、反算、公式复算或现场真实性裁定。文档可能含正文、扫描报告单、说明、审批表、设计与台账；标明来源角色和统计粒度。工作面总量、单元量、测点值、单孔参数互不替代；实测与计算、设计与实际分别提取。正文和表格同身份同值可归并为一组多证据，不同值全部保留，不选最高分或最常见值。关键词仅用于搜索；必须查看原图，OCR可错、可漏，无法确认即留空，不用领域常识补值。",
+     "instructions": "仅提取原文明确的补孔数量及所属范围，不因总数差额推算补孔，不把补孔孔号当数量。",
+     "synonyms": [
+      "补孔",
+      "补充钻孔"
+     ],
+     "negative_examples": [
+      "不得把规范、样例或领域常见数值填写成当前材料实报值",
+      "不得从目录标题推断正文完整",
+      "数字相同不能证明属于同一测点"
+     ],
+     "identity_dimensions": [
+      "workface",
+      "evaluation_unit",
+      "measurement_point",
+      "roadway",
+      "measurement_date",
+      "scope_level"
+     ],
+     "evidence_requirements": [
+      "value",
+      "unit",
+      "column_header",
+      "row_header",
+      "scope"
+     ],
+     "source_roles": [
+      "report_body",
+      "report_sheet",
+      "approval",
+      "statement",
+      "design",
+      "ledger"
+     ],
+     "manual_references": [
+      "瓦斯深度监察规则手册-规范化0930.pdf，PDF第9页"
+     ]
+    }
+   },
+   "validation": null,
+   "fallback_value": null,
+   "priority": 98,
+   "rule_id": "f569cbe9-af9e-413e-b1cd-58cc66f52839",
+   "checklist_type": "gas_report_agent",
+   "version": 2,
+   "source": "database",
+   "dimensions": [
+    "workface",
+    "evaluation_unit",
+    "measurement_point",
+    "roadway",
+    "measurement_date",
+    "scope_level"
+   ],
+   "value_kind": "actual",
+   "field_description": "仅提取原文明确的补孔数量及所属范围，不因总数差额推算补孔，不把补孔孔号当数量。",
+   "dimension_schema": {
+    "workface": {
+     "required": true,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "工作面/掘进对象名称，如40307工作面、22306回顺；不把第五评价单元拼入工作面名。没有明示不能推测。"
+    },
+    "evaluation_unit": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "评价/评判单元编号，如第五评价单元、4#；不填写整份报告标题或里程范围。"
+    },
+    "measurement_point": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测点编号/名称；只有明确逐测点记录才绑定，单元总量没有测点时留空。"
+    },
+    "roadway": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "巷道名称或类型，如运顺、回顺；里程1700~2200m是范围而不是巷道。"
+    },
+    "measurement_date": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测定/统计截止日期；不能用报告编制或审批日期代替。"
+    },
+    "scope_level": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "记录统计层级，如工作面合计、评价单元合计、测点、单孔；不是长度值、里程或对象名称。"
+    }
+   }
+  },
+  {
+   "field_key": "measurement_point_count",
+   "field_name_cn": "效果测点数量",
+   "data_type": "integer",
+   "unit": "个",
+   "required": true,
+   "multi_instance": true,
+   "merge_strategy": "value_consistent",
+   "strategy": {
+    "methods": [
+     "agent_extract"
+    ],
+    "agent_extract": {
+     "background": "依据瓦斯深度监察规则手册检查项2、3、5、7、8、11～16，将监察所需输入拆为报告事实。平台不执行手册中的合格/不合格判断、反算、公式复算或现场真实性裁定。文档可能含正文、扫描报告单、说明、审批表、设计与台账；标明来源角色和统计粒度。工作面总量、单元量、测点值、单孔参数互不替代；实测与计算、设计与实际分别提取。正文和表格同身份同值可归并为一组多证据，不同值全部保留，不选最高分或最常见值。关键词仅用于搜索；必须查看原图，OCR可错、可漏，无法确认即留空，不用领域常识补值。",
+     "instructions": "只取报告明示测点数量，区分测点、取样钻孔、钻场。报告未写测点数时不得按工作面长度或钻孔数反算。",
+     "synonyms": [
+      "测点",
+      "测点数量",
+      "效果检验",
+      "布置测点"
+     ],
+     "negative_examples": [
+      "不得把规范、样例或领域常见数值填写成当前材料实报值",
+      "不得从目录标题推断正文完整",
+      "数字相同不能证明属于同一测点"
+     ],
+     "identity_dimensions": [
+      "workface",
+      "evaluation_unit",
+      "measurement_point",
+      "roadway",
+      "measurement_date",
+      "scope_level"
+     ],
+     "evidence_requirements": [
+      "value",
+      "unit",
+      "column_header",
+      "row_header",
+      "scope"
+     ],
+     "source_roles": [
+      "report_body",
+      "report_sheet",
+      "approval",
+      "statement",
+      "design",
+      "ledger"
+     ],
+     "manual_references": [
+      "瓦斯深度监察规则手册-规范化0930.pdf，PDF第6页"
+     ]
+    }
+   },
+   "validation": null,
+   "fallback_value": null,
+   "priority": 96,
+   "rule_id": "eb0b5cfc-e9c5-4b53-b9fa-210fb9494eda",
+   "checklist_type": "gas_report_agent",
+   "version": 2,
+   "source": "database",
+   "dimensions": [
+    "workface",
+    "evaluation_unit",
+    "measurement_point",
+    "roadway",
+    "measurement_date",
+    "scope_level"
+   ],
+   "value_kind": "reported",
+   "field_description": "只取报告明示测点数量，区分测点、取样钻孔、钻场。报告未写测点数时不得按工作面长度或钻孔数反算。",
+   "dimension_schema": {
+    "workface": {
+     "required": true,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "工作面/掘进对象名称，如40307工作面、22306回顺；不把第五评价单元拼入工作面名。没有明示不能推测。"
+    },
+    "evaluation_unit": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "评价/评判单元编号，如第五评价单元、4#；不填写整份报告标题或里程范围。"
+    },
+    "measurement_point": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测点编号/名称；只有明确逐测点记录才绑定，单元总量没有测点时留空。"
+    },
+    "roadway": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "巷道名称或类型，如运顺、回顺；里程1700~2200m是范围而不是巷道。"
+    },
+    "measurement_date": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测定/统计截止日期；不能用报告编制或审批日期代替。"
+    },
+    "scope_level": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "记录统计层级，如工作面合计、评价单元合计、测点、单孔；不是长度值、里程或对象名称。"
+    }
+   }
+  },
+  {
+   "field_key": "desorbable_gas_content_measured",
+   "field_name_cn": "可解吸瓦斯含量实测值",
+   "data_type": "float",
+   "unit": "m³/t",
+   "required": true,
+   "multi_instance": true,
+   "merge_strategy": "value_consistent",
+   "strategy": {
+    "methods": [
+     "agent_extract"
+    ],
+    "agent_extract": {
+     "background": "依据瓦斯深度监察规则手册检查项2、3、5、7、8、11～16，将监察所需输入拆为报告事实。平台不执行手册中的合格/不合格判断、反算、公式复算或现场真实性裁定。文档可能含正文、扫描报告单、说明、审批表、设计与台账；标明来源角色和统计粒度。工作面总量、单元量、测点值、单孔参数互不替代；实测与计算、设计与实际分别提取。正文和表格同身份同值可归并为一组多证据，不同值全部保留，不选最高分或最常见值。关键词仅用于搜索；必须查看原图，OCR可错、可漏，无法确认即留空，不用领域常识补值。",
+     "instructions": "逐评价单元和测点提取可解吸瓦斯含量实测/测试结果。计算值、残余含量、残存含量、原始含量均不能代替；不由公式推导。",
+     "synonyms": [
+      "可解吸",
+      "测试结果",
+      "实测",
+      "测值"
+     ],
+     "negative_examples": [
+      "不得把规范、样例或领域常见数值填写成当前材料实报值",
+      "不得从目录标题推断正文完整",
+      "数字相同不能证明属于同一测点"
+     ],
+     "identity_dimensions": [
+      "workface",
+      "evaluation_unit",
+      "measurement_point",
+      "roadway",
+      "measurement_date",
+      "scope_level"
+     ],
+     "evidence_requirements": [
+      "value",
+      "unit",
+      "column_header",
+      "row_header",
+      "scope"
+     ],
+     "source_roles": [
+      "report_body",
+      "report_sheet",
+      "approval",
+      "statement",
+      "design",
+      "ledger"
+     ],
+     "manual_references": [
+      "瓦斯深度监察规则手册-规范化0930.pdf，PDF第7页"
+     ]
+    }
+   },
+   "validation": null,
+   "fallback_value": null,
+   "priority": 94,
+   "rule_id": "7f3c13d8-7434-44a5-a0f6-2374564ff273",
+   "checklist_type": "gas_report_agent",
+   "version": 2,
+   "source": "database",
+   "dimensions": [
+    "workface",
+    "evaluation_unit",
+    "measurement_point",
+    "roadway",
+    "measurement_date",
+    "scope_level"
+   ],
+   "value_kind": "measured",
+   "field_description": "逐评价单元和测点提取可解吸瓦斯含量实测/测试结果。计算值、残余含量、残存含量、原始含量均不能代替；不由公式推导。",
+   "dimension_schema": {
+    "workface": {
+     "required": true,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "工作面/掘进对象名称，如40307工作面、22306回顺；不把第五评价单元拼入工作面名。没有明示不能推测。"
+    },
+    "evaluation_unit": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "评价/评判单元编号，如第五评价单元、4#；不填写整份报告标题或里程范围。"
+    },
+    "measurement_point": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测点编号/名称；只有明确逐测点记录才绑定，单元总量没有测点时留空。"
+    },
+    "roadway": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "巷道名称或类型，如运顺、回顺；里程1700~2200m是范围而不是巷道。"
+    },
+    "measurement_date": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测定/统计截止日期；不能用报告编制或审批日期代替。"
+    },
+    "scope_level": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "记录统计层级，如工作面合计、评价单元合计、测点、单孔；不是长度值、里程或对象名称。"
+    }
+   }
+  },
+  {
+   "field_key": "desorbable_gas_content_calculated",
+   "field_name_cn": "可解吸瓦斯含量计算值",
+   "data_type": "float",
+   "unit": "m³/t",
+   "required": true,
+   "multi_instance": true,
+   "merge_strategy": "value_consistent",
+   "strategy": {
+    "methods": [
+     "agent_extract"
+    ],
+    "agent_extract": {
+     "background": "依据瓦斯深度监察规则手册检查项2、3、5、7、8、11～16，将监察所需输入拆为报告事实。平台不执行手册中的合格/不合格判断、反算、公式复算或现场真实性裁定。文档可能含正文、扫描报告单、说明、审批表、设计与台账；标明来源角色和统计粒度。工作面总量、单元量、测点值、单孔参数互不替代；实测与计算、设计与实际分别提取。正文和表格同身份同值可归并为一组多证据，不同值全部保留，不选最高分或最常见值。关键词仅用于搜索；必须查看原图，OCR可错、可漏，无法确认即留空，不用领域常识补值。",
+     "instructions": "提取原文标明可解吸含量计算值；计算表列头与测定表的实测值分别记录，不自行代入计算。",
+     "synonyms": [
+      "可解吸",
+      "计算值",
+      "单元可解吸"
+     ],
+     "negative_examples": [
+      "不得把规范、样例或领域常见数值填写成当前材料实报值",
+      "不得从目录标题推断正文完整",
+      "数字相同不能证明属于同一测点"
+     ],
+     "identity_dimensions": [
+      "workface",
+      "evaluation_unit",
+      "measurement_point",
+      "roadway",
+      "measurement_date",
+      "scope_level"
+     ],
+     "evidence_requirements": [
+      "value",
+      "unit",
+      "column_header",
+      "row_header",
+      "scope"
+     ],
+     "source_roles": [
+      "report_body",
+      "report_sheet",
+      "approval",
+      "statement",
+      "design",
+      "ledger"
+     ],
+     "manual_references": [
+      "瓦斯深度监察规则手册-规范化0930.pdf，PDF第7页"
+     ]
+    }
+   },
+   "validation": null,
+   "fallback_value": null,
+   "priority": 93,
+   "rule_id": "15380ef9-4227-4ac2-a4d8-9835319b5623",
+   "checklist_type": "gas_report_agent",
+   "version": 2,
+   "source": "database",
+   "dimensions": [
+    "workface",
+    "evaluation_unit",
+    "measurement_point",
+    "roadway",
+    "measurement_date",
+    "scope_level"
+   ],
+   "value_kind": "calculated",
+   "field_description": "提取原文标明可解吸含量计算值；计算表列头与测定表的实测值分别记录，不自行代入计算。",
+   "dimension_schema": {
+    "workface": {
+     "required": true,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "工作面/掘进对象名称，如40307工作面、22306回顺；不把第五评价单元拼入工作面名。没有明示不能推测。"
+    },
+    "evaluation_unit": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "评价/评判单元编号，如第五评价单元、4#；不填写整份报告标题或里程范围。"
+    },
+    "measurement_point": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测点编号/名称；只有明确逐测点记录才绑定，单元总量没有测点时留空。"
+    },
+    "roadway": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "巷道名称或类型，如运顺、回顺；里程1700~2200m是范围而不是巷道。"
+    },
+    "measurement_date": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测定/统计截止日期；不能用报告编制或审批日期代替。"
+    },
+    "scope_level": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "记录统计层级，如工作面合计、评价单元合计、测点、单孔；不是长度值、里程或对象名称。"
+    }
+   }
+  },
+  {
+   "field_key": "residual_gas_content_measured",
+   "field_name_cn": "残余瓦斯含量实测值",
+   "data_type": "float",
+   "unit": "m³/t",
+   "required": true,
+   "multi_instance": true,
+   "merge_strategy": "value_consistent",
+   "strategy": {
+    "methods": [
+     "agent_extract"
+    ],
+    "agent_extract": {
+     "background": "依据瓦斯深度监察规则手册检查项2、3、5、7、8、11～16，将监察所需输入拆为报告事实。平台不执行手册中的合格/不合格判断、反算、公式复算或现场真实性裁定。文档可能含正文、扫描报告单、说明、审批表、设计与台账；标明来源角色和统计粒度。工作面总量、单元量、测点值、单孔参数互不替代；实测与计算、设计与实际分别提取。正文和表格同身份同值可归并为一组多证据，不同值全部保留，不选最高分或最常见值。关键词仅用于搜索；必须查看原图，OCR可错、可漏，无法确认即留空，不用领域常识补值。",
+     "instructions": "逐测点提取残余瓦斯含量实测值，绑定单元及工作面；原始/残存/可解吸含量和临界值不得替代。",
+     "synonyms": [
+      "残余瓦斯含量",
+      "现场实测",
+      "含量测定"
+     ],
+     "negative_examples": [
+      "不得把规范、样例或领域常见数值填写成当前材料实报值",
+      "不得从目录标题推断正文完整",
+      "数字相同不能证明属于同一测点"
+     ],
+     "identity_dimensions": [
+      "workface",
+      "evaluation_unit",
+      "measurement_point",
+      "roadway",
+      "measurement_date",
+      "scope_level"
+     ],
+     "evidence_requirements": [
+      "value",
+      "unit",
+      "column_header",
+      "row_header",
+      "scope"
+     ],
+     "source_roles": [
+      "report_body",
+      "report_sheet",
+      "approval",
+      "statement",
+      "design",
+      "ledger"
+     ],
+     "manual_references": [
+      "瓦斯深度监察规则手册-规范化0930.pdf，PDF第19页"
+     ]
+    }
+   },
+   "validation": null,
+   "fallback_value": null,
+   "priority": 92,
+   "rule_id": "3f1d4d73-e0e3-4c12-9353-0060991a85c9",
+   "checklist_type": "gas_report_agent",
+   "version": 2,
+   "source": "database",
+   "dimensions": [
+    "workface",
+    "evaluation_unit",
+    "measurement_point",
+    "roadway",
+    "measurement_date",
+    "scope_level"
+   ],
+   "value_kind": "measured",
+   "field_description": "逐测点提取残余瓦斯含量实测值，绑定单元及工作面；原始/残存/可解吸含量和临界值不得替代。",
+   "dimension_schema": {
+    "workface": {
+     "required": true,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "工作面/掘进对象名称，如40307工作面、22306回顺；不把第五评价单元拼入工作面名。没有明示不能推测。"
+    },
+    "evaluation_unit": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "评价/评判单元编号，如第五评价单元、4#；不填写整份报告标题或里程范围。"
+    },
+    "measurement_point": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测点编号/名称；只有明确逐测点记录才绑定，单元总量没有测点时留空。"
+    },
+    "roadway": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "巷道名称或类型，如运顺、回顺；里程1700~2200m是范围而不是巷道。"
+    },
+    "measurement_date": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测定/统计截止日期；不能用报告编制或审批日期代替。"
+    },
+    "scope_level": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "记录统计层级，如工作面合计、评价单元合计、测点、单孔；不是长度值、里程或对象名称。"
+    }
+   }
+  },
+  {
+   "field_key": "residual_gas_content_calculated",
+   "field_name_cn": "残余瓦斯含量计算值",
+   "data_type": "float",
+   "unit": "m³/t",
+   "required": true,
+   "multi_instance": true,
+   "merge_strategy": "value_consistent",
+   "strategy": {
+    "methods": [
+     "agent_extract"
+    ],
+    "agent_extract": {
+     "background": "依据瓦斯深度监察规则手册检查项2、3、5、7、8、11～16，将监察所需输入拆为报告事实。平台不执行手册中的合格/不合格判断、反算、公式复算或现场真实性裁定。文档可能含正文、扫描报告单、说明、审批表、设计与台账；标明来源角色和统计粒度。工作面总量、单元量、测点值、单孔参数互不替代；实测与计算、设计与实际分别提取。正文和表格同身份同值可归并为一组多证据，不同值全部保留，不选最高分或最常见值。关键词仅用于搜索；必须查看原图，OCR可错、可漏，无法确认即留空，不用领域常识补值。",
+     "instructions": "只提取报告已有的残余含量计算结果和对应单元，不从初始含量与抽采量自行计算。",
+     "synonyms": [
+      "残余瓦斯含量",
+      "计算结果",
+      "计算值"
+     ],
+     "negative_examples": [
+      "不得把规范、样例或领域常见数值填写成当前材料实报值",
+      "不得从目录标题推断正文完整",
+      "数字相同不能证明属于同一测点"
+     ],
+     "identity_dimensions": [
+      "workface",
+      "evaluation_unit",
+      "measurement_point",
+      "roadway",
+      "measurement_date",
+      "scope_level"
+     ],
+     "evidence_requirements": [
+      "value",
+      "unit",
+      "column_header",
+      "row_header",
+      "scope"
+     ],
+     "source_roles": [
+      "report_body",
+      "report_sheet",
+      "approval",
+      "statement",
+      "design",
+      "ledger"
+     ],
+     "manual_references": [
+      "瓦斯深度监察规则手册-规范化0930.pdf，PDF第19页"
+     ]
+    }
+   },
+   "validation": null,
+   "fallback_value": null,
+   "priority": 91,
+   "rule_id": "6cb86725-ce70-470f-8eb5-06927f261ee5",
+   "checklist_type": "gas_report_agent",
+   "version": 2,
+   "source": "database",
+   "dimensions": [
+    "workface",
+    "evaluation_unit",
+    "measurement_point",
+    "roadway",
+    "measurement_date",
+    "scope_level"
+   ],
+   "value_kind": "calculated",
+   "field_description": "只提取报告已有的残余含量计算结果和对应单元，不从初始含量与抽采量自行计算。",
+   "dimension_schema": {
+    "workface": {
+     "required": true,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "工作面/掘进对象名称，如40307工作面、22306回顺；不把第五评价单元拼入工作面名。没有明示不能推测。"
+    },
+    "evaluation_unit": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "评价/评判单元编号，如第五评价单元、4#；不填写整份报告标题或里程范围。"
+    },
+    "measurement_point": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测点编号/名称；只有明确逐测点记录才绑定，单元总量没有测点时留空。"
+    },
+    "roadway": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "巷道名称或类型，如运顺、回顺；里程1700~2200m是范围而不是巷道。"
+    },
+    "measurement_date": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测定/统计截止日期；不能用报告编制或审批日期代替。"
+    },
+    "scope_level": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "记录统计层级，如工作面合计、评价单元合计、测点、单孔；不是长度值、里程或对象名称。"
+    }
+   }
+  },
+  {
+   "field_key": "residual_gas_pressure_measured",
+   "field_name_cn": "残余瓦斯压力实测值",
+   "data_type": "float",
+   "unit": "MPa",
+   "required": true,
+   "multi_instance": true,
+   "merge_strategy": "value_consistent",
+   "strategy": {
+    "methods": [
+     "agent_extract"
+    ],
+    "agent_extract": {
+     "background": "依据瓦斯深度监察规则手册检查项2、3、5、7、8、11～16，将监察所需输入拆为报告事实。平台不执行手册中的合格/不合格判断、反算、公式复算或现场真实性裁定。文档可能含正文、扫描报告单、说明、审批表、设计与台账；标明来源角色和统计粒度。工作面总量、单元量、测点值、单孔参数互不替代；实测与计算、设计与实际分别提取。正文和表格同身份同值可归并为一组多证据，不同值全部保留，不选最高分或最常见值。关键词仅用于搜索；必须查看原图，OCR可错、可漏，无法确认即留空，不用领域常识补值。",
+     "instructions": "逐测点提取残余压力实测值及原文单位。抽采负压、原始压力、压力临界值不是残余实测压力。",
+     "synonyms": [
+      "残余瓦斯压力",
+      "压力测定",
+      "实测压力"
+     ],
+     "negative_examples": [
+      "不得把规范、样例或领域常见数值填写成当前材料实报值",
+      "不得从目录标题推断正文完整",
+      "数字相同不能证明属于同一测点"
+     ],
+     "identity_dimensions": [
+      "workface",
+      "evaluation_unit",
+      "measurement_point",
+      "roadway",
+      "measurement_date",
+      "scope_level"
+     ],
+     "evidence_requirements": [
+      "value",
+      "unit",
+      "column_header",
+      "row_header",
+      "scope"
+     ],
+     "source_roles": [
+      "report_body",
+      "report_sheet",
+      "approval",
+      "statement",
+      "design",
+      "ledger"
+     ],
+     "manual_references": [
+      "瓦斯深度监察规则手册-规范化0930.pdf，PDF第20页"
+     ]
+    }
+   },
+   "validation": null,
+   "fallback_value": null,
+   "priority": 90,
+   "rule_id": "9b4f9cb5-8e8e-4ecc-9a24-e25b1e86917e",
+   "checklist_type": "gas_report_agent",
+   "version": 2,
+   "source": "database",
+   "dimensions": [
+    "workface",
+    "evaluation_unit",
+    "measurement_point",
+    "roadway",
+    "measurement_date",
+    "scope_level"
+   ],
+   "value_kind": "measured",
+   "field_description": "逐测点提取残余压力实测值及原文单位。抽采负压、原始压力、压力临界值不是残余实测压力。",
+   "dimension_schema": {
+    "workface": {
+     "required": true,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "工作面/掘进对象名称，如40307工作面、22306回顺；不把第五评价单元拼入工作面名。没有明示不能推测。"
+    },
+    "evaluation_unit": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "评价/评判单元编号，如第五评价单元、4#；不填写整份报告标题或里程范围。"
+    },
+    "measurement_point": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测点编号/名称；只有明确逐测点记录才绑定，单元总量没有测点时留空。"
+    },
+    "roadway": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "巷道名称或类型，如运顺、回顺；里程1700~2200m是范围而不是巷道。"
+    },
+    "measurement_date": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测定/统计截止日期；不能用报告编制或审批日期代替。"
+    },
+    "scope_level": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "记录统计层级，如工作面合计、评价单元合计、测点、单孔；不是长度值、里程或对象名称。"
+    }
+   }
+  },
+  {
+   "field_key": "evaluation_unit_range",
+   "field_name_cn": "评价单元及范围",
+   "data_type": "string",
+   "unit": null,
+   "required": true,
+   "multi_instance": true,
+   "merge_strategy": "value_consistent",
+   "strategy": {
+    "methods": [
+     "agent_extract"
+    ],
+    "agent_extract": {
+     "background": "依据瓦斯深度监察规则手册检查项2、3、5、7、8、11～16，将监察所需输入拆为报告事实。平台不执行手册中的合格/不合格判断、反算、公式复算或现场真实性裁定。文档可能含正文、扫描报告单、说明、审批表、设计与台账；标明来源角色和统计粒度。工作面总量、单元量、测点值、单孔参数互不替代；实测与计算、设计与实际分别提取。正文和表格同身份同值可归并为一组多证据，不同值全部保留，不选最高分或最常见值。关键词仅用于搜索；必须查看原图，OCR可错、可漏，无法确认即留空，不用领域常识补值。",
+     "instructions": "提取单元编号、巷道/工作面、起止里程/范围原文，单元4和单元5独立，不根据顺序猜编号。",
+     "synonyms": [
+      "评价单元",
+      "评判单元",
+      "单元划分",
+      "评价范围"
+     ],
+     "negative_examples": [
+      "不得把规范、样例或领域常见数值填写成当前材料实报值",
+      "不得从目录标题推断正文完整",
+      "数字相同不能证明属于同一测点"
+     ],
+     "identity_dimensions": [
+      "workface",
+      "evaluation_unit",
+      "measurement_point",
+      "roadway",
+      "measurement_date",
+      "scope_level"
+     ],
+     "evidence_requirements": [
+      "value",
+      "unit",
+      "column_header",
+      "row_header",
+      "scope"
+     ],
+     "source_roles": [
+      "report_body",
+      "report_sheet",
+      "approval",
+      "statement",
+      "design",
+      "ledger"
+     ],
+     "manual_references": [
+      "瓦斯深度监察规则手册-规范化0930.pdf，PDF第18页"
+     ]
+    }
+   },
+   "validation": null,
+   "fallback_value": null,
+   "priority": 88,
+   "rule_id": "c0a413e0-264b-4196-9b8b-af6f6cc5c0a2",
+   "checklist_type": "gas_report_agent",
+   "version": 2,
+   "source": "database",
+   "dimensions": [
+    "workface",
+    "evaluation_unit",
+    "measurement_point",
+    "roadway",
+    "measurement_date",
+    "scope_level"
+   ],
+   "value_kind": "reported",
+   "field_description": "提取单元编号、巷道/工作面、起止里程/范围原文，单元4和单元5独立，不根据顺序猜编号。",
+   "dimension_schema": {
+    "workface": {
+     "required": true,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "工作面/掘进对象名称，如40307工作面、22306回顺；不把第五评价单元拼入工作面名。没有明示不能推测。"
+    },
+    "evaluation_unit": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "评价/评判单元编号，如第五评价单元、4#；不填写整份报告标题或里程范围。"
+    },
+    "measurement_point": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测点编号/名称；只有明确逐测点记录才绑定，单元总量没有测点时留空。"
+    },
+    "roadway": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "巷道名称或类型，如运顺、回顺；里程1700~2200m是范围而不是巷道。"
+    },
+    "measurement_date": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "测定/统计截止日期；不能用报告编制或审批日期代替。"
+    },
+    "scope_level": {
+     "required": false,
+     "repeatable": true,
+     "parent_key": null,
+     "description": "记录统计层级，如工作面合计、评价单元合计、测点、单孔；不是长度值、里程或对象名称。"
+    }
+   }
+  }
+ ]
+}

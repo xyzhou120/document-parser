@@ -1,0 +1,155 @@
+# ==================== 本地开发环境 ====================
+# 包含所有依赖服务，用于本地开发测试
+
+services:
+  # PostgreSQL数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: doc-parser-postgres
+    environment:
+      POSTGRES_DB: document_parser
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis（Celery broker & cache）
+  redis:
+    image: redis:7-alpine
+    container_name: doc-parser-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # MinIO（对象存储）
+  minio:
+    image: minio/minio:latest
+    container_name: doc-parser-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    # The upstream image does not guarantee curl/wget. Application storage
+    # initialization retries on demand; do not gate startup on a missing binary.
+
+  # 后端API服务（开发模式）
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: doc-parser-backend
+    environment:
+      # 数据库配置
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: document_parser
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres123
+
+      # Redis配置
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # MinIO配置
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      MINIO_BUCKET: documents
+      MINIO_SECURE: "false"
+
+      # Celery配置
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+
+      # 模型服务配置（需要修改为实际地址）
+      OCR_BASE_URL: http://your-ocr-server:port
+      OCR_API_KEY: ""
+      TEXT_LLM_BASE_URL: http://your-llm-server:port/v1
+      TEXT_LLM_API_KEY: ""
+      TEXT_LLM_MODEL: qwen3.7-27b
+
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/backend/app
+      - ../config:/app/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Celery Worker
+  celery-worker:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: doc-parser-celery-worker
+    environment:
+      # 数据库配置
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: document_parser
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres123
+
+      # Redis配置
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # MinIO配置
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      MINIO_BUCKET: documents
+      MINIO_SECURE: "false"
+
+      # Celery配置
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+
+      # 模型服务配置（需要修改为实际地址）
+      OCR_BASE_URL: http://your-ocr-server:port
+      OCR_API_KEY: ""
+      TEXT_LLM_BASE_URL: http://your-llm-server:port/v1
+      TEXT_LLM_API_KEY: ""
+      TEXT_LLM_MODEL: qwen3.7-27b
+
+    volumes:
+      - ./app:/app/backend/app
+      - ../config:/app/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=2
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

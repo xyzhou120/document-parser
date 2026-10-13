@@ -1,0 +1,367 @@
+"""Resumable OCR/content preparation.
+
+P09 intentionally stops at an immutable build checkpoint.  Publishing an Artifact,
+content revision, impact, or processing head belongs to P11.  The service therefore
+only turns page/region work into a deterministic checkpoint and coverage manifest.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import inspect
+import json
+from collections.abc import Awaitable, Callable, Mapping
+from copy import deepcopy
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.content import ContentBuildJob
+from app.services.service_circuit import CircuitPermit, ServiceCircuit
+
+
+def _digest(value: bytes | str) -> str:
+    return hashlib.sha256(value if isinstance(value, bytes) else value.encode("utf-8")).hexdigest()
+
+
+def _normalise(value: Any) -> str:
+    return " ".join(str(value or "").replace("\u3000", " ").split())
+
+
+def image_hash(image: bytes | bytearray | memoryview) -> str:
+    return _digest(bytes(image))
+
+
+def region_key(file_hash: str, page_number: int, region_id: str, image_digest: str, profile: Mapping[str, Any]) -> str:
+    profile_id = _digest(json.dumps(dict(profile), sort_keys=True, separators=(",", ":")))
+    return _digest(f"{file_hash}:{page_number}:{region_id}:{image_digest}:{profile_id}")
+
+
+@dataclass(frozen=True)
+class OCRRegionResult:
+    region_id: str
+    page_number: int
+    state: str
+    raw_ocr: str = ""
+    normalized_ocr: str = ""
+    confidence: float | None = None
+    bbox: list[float] | None = None
+    coordinate_system: str | None = None
+    image_hash: str | None = None
+    error: str | None = None
+    blocks: list[dict[str, Any]] | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "region_id": self.region_id, "page_number": self.page_number, "state": self.state,
+            "raw_ocr": self.raw_ocr, "normalized_ocr": self.normalized_ocr,
+            "confidence": self.confidence, "bbox": self.bbox,
+            "coordinate_system": self.coordinate_system, "image_hash": self.image_hash,
+            "error": self.error,
+            "blocks": deepcopy(self.blocks or []),
+        }
+
+
+class ContentBuildError(RuntimeError):
+    pass
+
+
+class ServiceUnavailable(ContentBuildError):
+    def __init__(self, message: str, *, retry_at: datetime | None = None):
+        super().__init__(message)
+        self.retry_at = retry_at
+
+
+class ContentBuildService:
+    """Build page/region checkpoints without committing publication state."""
+
+    def __init__(self, *, circuit: ServiceCircuit | None = None, max_region_attempts: int = 3, lease_seconds: int = 300):
+        self.circuit = circuit
+        self.max_region_attempts = max(1, max_region_attempts)
+        self.lease_seconds = lease_seconds
+
+    async def create_job(
+        self, db: AsyncSession, document_id: UUID, file_hash: str, profile: Mapping[str, Any],
+        *, parent_revision_id: UUID | None = None,
+    ) -> ContentBuildJob:
+        job = ContentBuildJob(document_id=document_id, file_hash=file_hash, profile=deepcopy(dict(profile)),
+                              parent_revision_id=parent_revision_id, phase="planned", dispatch_state="queued", attempt=0, fence_token=0,
+                              checkpoint={"pages": {}, "regions": {}})
+        db.add(job)
+        await db.flush()
+        return job
+
+    @staticmethod
+    def _regions(page: Mapping[str, Any], page_number: int) -> list[dict[str, Any]]:
+        explicit = list(page.get("regions") or page.get("ocr_regions") or [])
+        if explicit:
+            result = []
+            for i, item in enumerate(explicit):
+                item = dict(item)
+                result.append({**item, "region_id": str(item.get("region_id") or item.get("id") or f"p{page_number}:r{i}")})
+            return result
+        reliable_native = page.get("native_coverage_complete") is True
+        # PDFParser can prove a text-only page is native when there are no images and
+        # the source did not flag a scan.  Image pages require an explicit render/OCR
+        # region; an empty default must never manufacture full coverage.
+        inspection = page.get("inspection") or {}
+        reliable_native = reliable_native or (
+            inspection.get("native_readability") == "verified"
+            and inspection.get("scope_complete") is True
+            and not page.get("native_layer_suspect")
+        )
+        return [{"region_id": f"p{page_number}:page", "kind": "native" if reliable_native else "ocr", "whole_page": True}]
+
+    @staticmethod
+    def _page_image(page: Mapping[str, Any], region: Mapping[str, Any]) -> bytes | None:
+        data = region.get("image_bytes") or page.get("image_bytes") or page.get("rendered_image")
+        return bytes(data) if data is not None else None
+
+    async def _call(self, fn: Callable[..., Any], *args: Any) -> Any:
+        value = fn(*args)
+        return await value if inspect.isawaitable(value) else value
+
+    @staticmethod
+    def _locate_blocks(values, region, page):
+        for block in values.get("blocks") or []:
+            locator = block.get("locator") or {}
+            box = locator.get("bbox") or block.get("bbox")
+            if isinstance(box, Mapping):
+                box = [box.get(k) for k in ("x0", "y0", "x1", "y1")]
+            block["original_locator"] = deepcopy(locator or None)
+            system = locator.get("coordinate_system") or block.get("coordinate_system") or region.get("coordinate_system")
+            if box and system == "PIXEL" and region.get("image_width") and region.get("image_height"):
+                target = region.get("bbox") or [0, 0, page.get("width"), page.get("height")]
+                if all(v is not None for v in target):
+                    x0, y0, x1, y1 = target
+                    box = [x0 + box[0] * (x1-x0)/region["image_width"], y0 + box[1] * (y1-y0)/region["image_height"],
+                           x0 + box[2] * (x1-x0)/region["image_width"], y0 + box[3] * (y1-y0)/region["image_height"]]
+                    system = "PDF_POINT"
+            block["bbox"] = box
+            block["coordinate_system"] = system
+            block["location_precision"] = "REGION" if box else "PAGE"
+        values["location_precision"] = "REGION" if values.get("bbox") else "PAGE"
+        values["image_ref"] = deepcopy(region.get("image_ref"))
+
+    async def _save(self, db, job, checkpoint, fence, worker_id, *, state="running", phase="regions", error=None):
+        current = await db.get(ContentBuildJob, job.build_id, with_for_update=True, populate_existing=True)
+        if current is None or current.fence_token != fence or current.lease_owner != worker_id:
+            await db.rollback()
+            raise ContentBuildError("stale content build worker cannot submit")
+        current.checkpoint = deepcopy(checkpoint)
+        current.dispatch_state = state
+        current.phase = phase
+        current.last_error = error
+        current.lease_until = datetime.utcnow() + timedelta(seconds=self.lease_seconds) if state == "running" else None
+        await db.flush()
+        await db.commit()
+
+    @staticmethod
+    def _manifest(checkpoint, expected_count):
+        pages = []
+        for number in range(1, expected_count + 1):
+            cp = checkpoint["pages"].get(str(number), {})
+            regions = [deepcopy(checkpoint["regions"].get(f"p{number}:{rid}", {"region_id": rid, "state": "pending"})) for rid in cp.get("regions", [])]
+            closed = bool(regions) and cp.get("scope_attested") is True and all(r["state"] in {"processed", "blank"} for r in regions)
+            pages.append({"page_number": number, "scope_complete": closed, "regions": regions})
+        return {"expected_page_count": expected_count, "pages": pages}
+
+    async def process(
+        self,
+        db: AsyncSession,
+        job: ContentBuildJob,
+        pages: list[Mapping[str, Any]],
+        *,
+        renderer: Callable[[Mapping[str, Any], Mapping[str, Any]], bytes | Awaitable[bytes]] | None = None,
+        ocr: Callable[[bytes, int, Mapping[str, Any]], Any] | None = None,
+        service_key_value: str = "ocr:content-build",
+        worker_id: str = "content-builder",
+        expected_page_count: int | None = None,
+        max_regions: int = 20,
+    ) -> dict[str, Any]:
+        current = await db.get(ContentBuildJob, job.build_id, with_for_update=True, populate_existing=True)
+        if current is None:
+            raise ContentBuildError("content build does not exist")
+        if current.lease_until and current.lease_until > datetime.utcnow():
+            await db.rollback()
+            raise ContentBuildError("content build is already leased")
+        current.fence_token = (current.fence_token or 0) + 1
+        current.lease_owner = worker_id
+        current.lease_until = datetime.utcnow() + timedelta(seconds=self.lease_seconds)
+        current.attempt = (current.attempt or 0) + 1
+        fence = current.fence_token
+        checkpoint = deepcopy(current.checkpoint or {"pages": {}, "regions": {}})
+        checkpoint.setdefault("pages", {})
+        checkpoint.setdefault("regions", {})
+        current.phase = "regions"
+        current.dispatch_state = "running"
+        await db.commit()
+        expected_count = expected_page_count or checkpoint.get("expected_page_count") or (job.profile or {}).get("expected_page_count") or len(pages)
+        if expected_count <= 0 or max_regions <= 0:
+            raise ValueError("positive page count and region quantum required")
+        checkpoint["expected_page_count"] = expected_count
+        work = 0
+        for page in pages:
+            number = int(page.get("page_number", page.get("page", 0)))
+            if number <= 0:
+                continue
+            page_cp = checkpoint["pages"].setdefault(str(number), {"page_number": number, "state": "pending", "regions": []})
+            regions = self._regions(page, number)
+            page_cp["scope_attested"] = bool(
+                page.get("regions_scope_complete") is True
+                or ((page.get("native_coverage_complete") is True or (page.get("inspection") or {}).get("scope_complete") is True)
+                    and all(r.get("kind") == "native" for r in regions))
+                or (regions and all(region.get("whole_page") is True for region in regions)
+                    and page.get("coverage_attested") is True)
+            )
+            page_cp["native_page"] = {k: deepcopy(v) for k, v in page.items() if k not in {"image_bytes", "rendered_image", "regions", "ocr_regions"}}
+            page_cp["regions"] = [str(r["region_id"]) for r in regions]
+            for region in regions:
+                rid = str(region["region_id"])
+                checkpoint_key = f"p{number}:{rid}"
+                native_key = region_key(job.file_hash, number, rid, _digest(str(page.get("text") or "")), job.profile or {})
+                if region.get("kind") == "native" and (checkpoint["regions"].get(checkpoint_key) or {}).get("cache_key") == native_key:
+                    continue
+                if work >= max_regions:
+                    checkpoint["coverage_manifest"] = self._manifest(checkpoint, expected_count)
+                    await self._save(db, job, checkpoint, fence, worker_id, state="yielded")
+                    return checkpoint
+                # A native marker is already covered and deliberately does not invoke OCR.
+                if region.get("kind") == "native" or region.get("source") == "native":
+                    result = OCRRegionResult(rid, number, "processed", raw_ocr=str(page.get("text", "") or ""), normalized_ocr=_normalise(page.get("text", "") or ""))
+                    checkpoint["regions"][checkpoint_key] = result.as_dict() | {"cache_key": native_key, "source": "native"}
+                    work += 1
+                    await self._save(db, job, checkpoint, fence, worker_id)
+                    continue
+                image = self._page_image(page, region)
+                if image is None and renderer is not None:
+                    try:
+                        rendered = await self._call(renderer, page, region)
+                        if isinstance(rendered, Mapping):
+                            image = rendered.get("image_bytes")
+                            region = {**region, **{k: deepcopy(v) for k, v in rendered.items() if k != "image_bytes"}}
+                            if region.get("whole_page") and rendered.get("scope_complete") is True:
+                                page_cp["scope_attested"] = True
+                        else:
+                            image = rendered
+                    except Exception as exc:
+                        checkpoint["regions"][checkpoint_key] = OCRRegionResult(rid, number, "failed", error=f"render_failed:{type(exc).__name__}").as_dict()
+                        await self._save(db, job, checkpoint, fence, worker_id)
+                        continue
+                if image is None:
+                    checkpoint["regions"][checkpoint_key] = OCRRegionResult(rid, number, "unreadable", error="image_unavailable").as_dict()
+                    await self._save(db, job, checkpoint, fence, worker_id)
+                    continue
+                digest = image_hash(image)
+                cache_key = region_key(job.file_hash, number, rid, digest, job.profile or {})
+                cached = checkpoint["regions"].get(checkpoint_key)
+                if cached and cached.get("cache_key") == cache_key and cached.get("state") in {"processed", "blank", "unreadable", "failed"}:
+                    continue
+                if ocr is None:
+                    checkpoint["regions"][checkpoint_key] = OCRRegionResult(rid, number, "unknown", image_hash=digest, error="ocr_not_configured").as_dict()
+                    continue
+                permit: CircuitPermit | None = None
+                if self.circuit:
+                    permit = await self.circuit.acquire(service_key_value)
+                    if not permit.allowed:
+                        job.dispatch_state = "waiting_service"
+                        checkpoint["retry_at"] = permit.retry_at.isoformat() if permit.retry_at else None
+                        checkpoint["last_wait_reason"] = "ocr_circuit_open"
+                        checkpoint["coverage_manifest"] = self._manifest(checkpoint, expected_count)
+                        await self._save(db, job, checkpoint, fence, worker_id, state="failed_terminal" if permit.exhausted else "waiting_service", error="ocr_circuit_exhausted" if permit.exhausted else "ocr_circuit_open")
+                        raise ServiceUnavailable("OCR service circuit is open", retry_at=permit.retry_at)
+                previous = checkpoint["regions"].get(checkpoint_key) or {}
+                if previous.get("cache_key") != cache_key:
+                    previous = {}
+                attempts = int(previous.get("attempts", 0)) + 1
+                try:
+                    payload = await self._call(ocr, image, number, region)
+                    values = self._parse_ocr(payload, rid, number, digest, region)
+                    self._locate_blocks(values, region, page)
+                    values["cache_key"] = cache_key
+                    values["attempts"] = attempts
+                    checkpoint["regions"][checkpoint_key] = values
+                    if self.circuit and permit:
+                        await self.circuit.success(service_key_value, permit)
+                    work += 1
+                except Exception as exc:
+                    if self.circuit and permit:
+                        await self.circuit.failure(service_key_value, permit)
+                    state = "failed" if attempts >= self.max_region_attempts else "unknown"
+                    checkpoint["regions"][checkpoint_key] = OCRRegionResult(rid, number, state, image_hash=digest, error=str(exc)).as_dict() | {"cache_key": cache_key, "attempts": attempts}
+                    if state == "unknown":
+                        job.dispatch_state = "waiting_service"
+                        checkpoint["retry_at"] = (datetime.utcnow() + timedelta(seconds=5)).isoformat()
+                        checkpoint["coverage_manifest"] = self._manifest(checkpoint, expected_count)
+                        await self._save(db, job, checkpoint, fence, worker_id, state="waiting_service", error=type(exc).__name__)
+                        raise ServiceUnavailable("OCR request failed; retry is scheduled") from exc
+                await self._save(db, job, checkpoint, fence, worker_id)
+            states = [checkpoint["regions"].get(f"p{number}:{rid}", {}).get("state", "unknown") for rid in page_cp["regions"]]
+            page_cp["state"] = "processed" if all(s in {"processed", "blank"} for s in states) else "failed" if any(s == "failed" for s in states) else "unknown"
+        checkpoint["coverage_manifest"] = self._manifest(checkpoint, expected_count)
+        coverage_pages = checkpoint["coverage_manifest"]["pages"]
+        checkpoint["progress"] = {"processed_pages": sum(p["scope_complete"] for p in coverage_pages), "total_pages": expected_count}
+        ready = all(p["scope_complete"] for p in coverage_pages)
+        await self._save(db, job, checkpoint, fence, worker_id, state="succeeded" if ready else "partial", phase="ready" if ready else "partial")
+        return checkpoint
+
+    # Stable semantic aliases for workers that call this phase "build" or "run".
+    build = process
+    run = process
+
+    @staticmethod
+    def _parse_ocr(payload: Any, region_id: str, page_number: int, digest: str, region: Mapping[str, Any]) -> dict[str, Any]:
+        if payload is None or payload == [] or payload == {}:
+            # Existing OCR clients return [] on service errors as well as no text.
+            # Blank requires explicit visual blank attestation, never an empty reply.
+            raise ContentBuildError("empty OCR response without blank verification")
+        if isinstance(payload, Mapping):
+            raw = payload.get("raw_ocr", payload.get("text", ""))
+            if not str(raw or "").strip() and payload.get("blocks"):
+                result = ContentBuildService._parse_ocr(payload["blocks"], region_id, page_number, digest, region)
+                result["raw_payload"] = deepcopy(dict(payload))
+                return result
+            state = payload.get("state") or ("blank" if not raw else "processed")
+            if state == "blank" and payload.get("blank_verified") is not True:
+                raise ContentBuildError("blank region is not visually verified")
+            if state not in {"processed", "blank", "unreadable", "unknown", "failed"}:
+                raise ContentBuildError("invalid OCR region state")
+            if state == "processed" and not str(raw or "").strip():
+                raise ContentBuildError("processed OCR region has no text")
+            if state in {"unknown", "failed"}:
+                raise ContentBuildError("OCR service did not complete region")
+            result = OCRRegionResult(region_id, page_number, state, str(raw or ""), _normalise(payload.get("normalized_ocr", raw)), payload.get("confidence"), payload.get("bbox", region.get("bbox")), payload.get("coordinate_system", region.get("coordinate_system")), digest).as_dict()
+            result["raw_payload"] = deepcopy(dict(payload))
+            return result
+        if isinstance(payload, str):
+            if not payload.strip():
+                raise ContentBuildError("empty OCR response without blank verification")
+            return OCRRegionResult(region_id, page_number, "processed", payload, _normalise(payload), image_hash=digest, bbox=region.get("bbox"), coordinate_system=region.get("coordinate_system")).as_dict()
+        items = list(payload)
+        blocks = []
+        for item in items:
+            if isinstance(item, Mapping):
+                raw = str(item.get("text", item.get("content", "")) or "")
+                block = {"raw_text": raw, "normalized_text": _normalise(raw), "confidence": item.get("confidence"),
+                         "locator": deepcopy(item.get("locator")), "bbox": deepcopy(item.get("bbox")), "label": item.get("label")}
+            else:
+                raw = str(getattr(item, "text", "") or "")
+                locator = getattr(item, "locator", None)
+                block = {"raw_text": raw, "normalized_text": _normalise(raw), "confidence": getattr(item, "confidence", None),
+                         "locator": locator.model_dump(mode="json") if locator is not None and hasattr(locator, "model_dump") else deepcopy(locator),
+                         "bbox": None, "label": getattr(item, "label", None)}
+            if raw.strip():
+                blocks.append(block)
+        if not blocks:
+            raise ContentBuildError("empty OCR response without blank verification")
+        text = "\n".join(str(block["raw_text"]) for block in blocks)
+        result = OCRRegionResult(region_id, page_number, "processed", text, _normalise(text), image_hash=digest, bbox=region.get("bbox"), coordinate_system=region.get("coordinate_system"), blocks=blocks).as_dict()
+        result["raw_payload"] = [item.model_dump(mode="json") if hasattr(item, "model_dump") else deepcopy(item) for item in items]
+        return result
+
+
+content_build_service = ContentBuildService()
+

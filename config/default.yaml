@@ -1,0 +1,161 @@
+# 应用配置
+app:
+  name: "document-parser"
+  version: "1.0.0"
+  debug: false
+  host: "0.0.0.0"
+  port: 8000
+
+# 数据库配置
+database:
+  host: "localhost"
+  port: 5432
+  name: "document_parser"
+  user: "postgres"
+  password: "postgres"
+  pool_size: 10
+  max_overflow: 20
+
+# Redis配置
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+  password: null
+  max_connections: 50
+
+# MinIO配置
+minio:
+  endpoint: "localhost:9000"
+  access_key: "minioadmin"
+  secret_key: "minioadmin"
+  bucket: "documents"
+  secure: false
+
+# Celery配置
+celery:
+  broker_url: "redis://localhost:6379/0"
+  result_backend: "redis://localhost:6379/0"
+  task_serializer: "json"
+  result_serializer: "json"
+  accept_content: ["json"]
+  timezone: "Asia/Shanghai"
+  enable_utc: true
+
+# 模型服务配置（需要在local.yaml中覆盖）
+models:
+  # 文本大模型：字段提取的兜底策略使用。
+  # 注意：model_name 需与服务 /v1/models 返回的模型一致，否则调用返回 404。
+  text_llm:
+    base_url: "http://172.26.1.84:4000/v1"
+    api_key: sk-xR8FJFpvRSHRrZV6AeMGGw
+    model_name: "qwen38-flash"
+    timeout: 120
+    max_retries: 3
+
+  vision_llm:
+    base_url: "http://172.26.1.84:4000/v1"
+    api_key: sk-xR8FJFpvRSHRrZV6AeMGGw
+    model_name: "qwen36-27b"
+    timeout: 120
+    max_retries: 3
+
+
+  ocr:
+    # 根地址即可，客户端会自行拼接 /ocr
+    base_url: "http://172.26.1.84:7000"
+    api_key: null
+    timeout: 60
+    max_retries: 3
+
+# 日志配置
+agent:
+  max_rounds: 40
+  max_rounds_per_batch: 6
+  max_actions_per_round: 4
+  max_view_pages: 20
+  max_region_views: 24
+  max_search_results: 8
+  field_batch_size: 1
+  max_tokens: 6000
+  max_context_chars: 24000
+  max_total_tokens: 200000
+  # Plan B: whole-page 120 DPI, region crops 180 DPI, 2 retained images,
+  # calibrated token estimate. Structured reliable extraction disables reasoning text.
+  render_dpi: 120
+  region_render_dpi: 180
+  history_images: 2
+  thinking_enabled: false
+  token_per_char: 0.55
+  image_tokens_per_kpx: 1.0
+  # Plan B defect fix: answers are never capped below min_output_tokens.
+  min_output_tokens: 2500
+  # Plan C (2026-10-10): "retrieval" verifies deterministic candidates per field. It stays OFF by
+  # default: the A/B gate in docs section 10.4 is not passed (recall below the legacy baseline).
+  # Switch only after the gate is re-run and you confirm the change.
+  agent_mode: legacy
+  # Measured in docs section 10.3: dense OCR fields need about 16k per field, not 12k.
+  field_token_budget: 16000
+  max_calls_per_field: 3
+  candidates_per_call: 12
+  max_candidates_per_field: 24
+  max_candidates_multi: 36
+  max_images_per_call: 12
+  max_image_tokens_per_call: 4000
+  candidate_window_chars: 300
+  retrieval_image_policy: auto
+
+# 日志配置
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/app.log"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
+
+# 文件上传配置
+upload:
+  max_file_size: 104857600  # 100MB
+  allowed_extensions: [".pdf"]
+  temp_dir: "/tmp/document-parser"
+
+# Phase 0字段配置（硬编码）
+fields:
+  default:
+    - field_key: "mine_name"
+      field_name: "煤矿名称"
+      field_type: "STRING"
+      extraction_methods: ["keyword", "llm"]
+      keywords: ["煤矿名称", "矿井名称", "煤矿："]
+      pattern: "(?:煤矿名称|矿井名称|煤矿)[:：]\\s*([^，。\\n]{2,30})"
+
+    - field_key: "residual_gas_threshold"
+      field_name: "残余瓦斯含量临界值"
+      field_type: "NUMBER"
+      unit: "m³/t"
+      extraction_methods: ["keyword", "llm"]
+      keywords: ["临界值", "残余瓦斯含量"]
+      pattern: "残余瓦斯含量临界值[为是]?\\s*(\\d+\\.?\\d*)\\s*m³/t"
+
+    - field_key: "report_date"
+      field_name: "报告日期"
+      field_type: "DATE"
+      extraction_methods: ["keyword", "llm"]
+      keywords: ["报告日期", "编制日期", "日期"]
+      pattern: "(?:报告日期|编制日期)[:：]\\s*(\\d{4}年\\d{1,2}月\\d{1,2}日)"
+
+    - field_key: "borehole_count"
+      field_name: "钻孔数量"
+      field_type: "NUMBER"
+      unit: "个"
+      extraction_methods: ["keyword", "llm"]
+      keywords: ["钻孔数量", "钻孔", "孔数"]
+      pattern: "钻孔\\s*(\\d+)\\s*个"
+
+    - field_key: "drainage_volume"
+      field_name: "抽采量"
+      field_type: "NUMBER"
+      unit: "m³"
+      extraction_methods: ["keyword", "llm"]
+      keywords: ["抽采量", "抽采总量", "瓦斯抽采量"]
+      pattern: "抽采量[为是]?\\s*(\\d+\\.?\\d*)\\s*m³"

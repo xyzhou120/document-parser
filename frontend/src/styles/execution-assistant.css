@@ -1,0 +1,54 @@
+.execution-panel{background:#fff;border:1px solid #dce5ef;border-radius:5px;margin:0 0 12px;overflow:hidden}
+.workspace-bottom .health-dot.neutral{background:#7d8ea6}
+.content-preparation-card{margin-top:14px}.content-preparation-card .ant-descriptions-item-content{overflow-wrap:anywhere}.content-preparation-actions{display:flex;gap:12px;align-items:center;margin-top:14px;font-size:12px;color:#526986;flex-wrap:wrap}
+.execution-panel .panel-bar{min-height:49px;height:auto}
+.execution-panel .ant-alert{margin:10px 12px}
+.execution-summary{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px;color:#526986;font-size:11px;border-bottom:1px solid #e0e7ef}
+.execution-note{margin:0;padding:12px;color:#526986;font-size:11px;line-height:1.8;background:#f8fbfe}
+.execution-panel .ant-table-wrapper{padding:0 8px 8px}
+.execution-panel .ant-table-cell{font-size:11px;vertical-align:top}
+.execution-panel .ant-tag{font-size:10px;margin:0}
+.execution-error{display:block;color:#ae2929;margin-top:4px;max-width:260px;overflow-wrap:anywhere}
+.execution-checkpoint{white-space:pre-wrap;max-height:160px;overflow:auto;max-width:240px;font-size:10px;color:#526986}
+.execution-more{text-align:center;padding:0 0 12px}
+.assistant-workspace{display:grid;grid-template-columns:minmax(280px,1fr) minmax(360px,1.1fr);gap:10px;min-width:0}
+.assistant-paper-stage{height:690px;background:#edf2f7;padding:8px}
+.assistant-panel{background:#fff;border:1px solid #dce5ef;border-radius:5px;display:flex;flex-direction:column;min-height:690px;min-width:0;overflow:hidden}
+.assistant-panel>.panel-bar{flex-shrink:0}
+.assistant-context{padding:12px;border-bottom:1px solid #e0e7ef;display:flex;gap:8px;flex-direction:column}
+.assistant-context p{font-size:11px;color:#526986;line-height:1.7;margin:0}
+.assistant-context small,.assistant-version,.assistant-capabilities{font-size:10px;color:#526986;line-height:1.7;overflow-wrap:anywhere}
+.assistant-version{display:block;margin-top:8px}
+.assistant-context .ant-alert{font-size:11px;padding:8px 10px}
+.assistant-risks{color:#865800!important;margin:0!important;font-size:11px}
+.assistant-messages{flex:1;min-height:180px;max-height:510px;overflow:auto;padding:12px;background:#f8fbfe}
+.assistant-messages>.ant-empty{margin:55px 0}
+.assistant-message{background:#fff;border:1px solid #dce5ef;border-radius:5px;padding:11px;margin-bottom:10px}
+.assistant-message:last-child{margin-bottom:0}
+.assistant-question{display:flex;gap:7px;line-height:1.7;margin:0 0 8px;color:#20344f;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.assistant-question strong{color:#0869ce;flex-shrink:0}
+.assistant-answer{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8;font-size:12px;color:#233d5c;margin:9px 0}
+.assistant-citations{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.assistant-citations button{display:flex;flex-direction:column;gap:3px;text-align:left;padding:8px;background:#f5f9fd;border:1px solid #d7e5f3;border-radius:4px;color:#3d5573;overflow-wrap:anywhere}
+.assistant-citations button:not(:disabled):hover{background:#eaf5ff;border-color:#9dcaf0}
+.assistant-citations button:disabled{cursor:not-allowed;opacity:.64}
+.assistant-citations strong{font-size:10px;color:#0869ce}
+.assistant-citations span{font-size:11px;line-height:1.6;white-space:pre-wrap;max-height:70px;overflow:auto}
+.assistant-search-state{font-size:10px;color:#526986;margin:6px 0}
+.assistant-compose{flex-shrink:0;border-top:1px solid #e0e7ef;padding:11px;display:flex;flex-direction:column;gap:8px}
+.assistant-compose .ant-input{font-size:12px}
+.assistant-compose-actions{display:flex;justify-content:space-between;gap:8px;align-items:center;color:#526986;font-size:10px}
+.assistant-compose-actions span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.assistant-capabilities{margin:0}
+.assistant-panel .ant-segmented{align-self:flex-start}
+.assistant-aux-actions,.assistant-compare-head,.assistant-feedback-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:space-between}
+.assistant-card{max-height:260px;overflow:auto;padding:10px;background:#f5f9fd;border:1px solid #d7e5f3;border-radius:4px;font-size:11px}
+.assistant-card>p{white-space:pre-wrap}.assistant-card details{margin-top:8px}.assistant-card small{overflow-wrap:anywhere}
+.assistant-topics{display:flex;flex-wrap:wrap;gap:4px}.assistant-topics .ant-tag{white-space:normal;margin:0;font-size:10px}
+.assistant-outline{width:100%;background:transparent;border:0;border-bottom:1px solid #dce5ef;display:flex;justify-content:space-between;gap:10px;padding:8px 0;text-align:left;font-size:11px;color:#3d5573;overflow-wrap:anywhere}
+.assistant-outline:hover{background:#eaf5ff}.assistant-outline small{flex-shrink:0}.assistant-outline span{white-space:pre-wrap}
+.assistant-compare,.assistant-feedback{padding:11px;border-top:1px solid #dce5ef;font-size:11px;max-height:340px;overflow:auto;background:#f8fbfe}
+.assistant-compare>small,.assistant-feedback>small{display:block;font-size:10px;color:#526986;overflow-wrap:anywhere;line-height:1.7}
+.assistant-compare-columns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0}.assistant-compare-columns>div{min-width:0;max-height:210px;overflow:auto;padding:8px;background:#fff;border:1px solid #dce5ef;border-radius:4px}.assistant-compare-columns p{white-space:pre-wrap;line-height:1.7}.assistant-feedback{display:flex;flex-direction:column;gap:8px}.assistant-feedback .ant-input,.assistant-feedback .ant-select{font-size:11px}
+@media(max-width:1000px){.assistant-workspace{grid-template-columns:1fr}.assistant-paper-stage{height:500px}.assistant-panel{min-height:600px}.assistant-messages{max-height:420px}}
+@media(max-width:650px){.execution-summary{gap:8px}.execution-summary .ant-space{width:100%}.assistant-workspace{grid-template-columns:minmax(0,1fr)}.assistant-paper-stage{height:430px}.assistant-panel{min-height:540px}.assistant-messages{max-height:360px;padding:8px}.assistant-compose-actions{align-items:flex-end;flex-direction:column}.assistant-compose-actions span{max-width:100%;width:100%}}

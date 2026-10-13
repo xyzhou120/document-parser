@@ -1,0 +1,92 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite3
+
+# Configuration
+config/local.yaml
+.env
+.env.local
+.env.*.local
+
+# Test
+.pytest_cache/
+.pytest-temp/
+pytest-cache-files-*/
+.mypy_cache/
+.ruff_cache/
+.tmp-*/
+.coverage
+htmlcov/
+
+# Celery runtime state
+celerybeat-schedule*
+celerybeat.pid
+
+# Node
+node_modules/
+dist/
+.cache/
+
+# MinIO data
+minio-data/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+.DS_Store
+
+# Local-only project material
+/docs/
+/output/
+/.omx/
+/.playwright-cli/
+
+# Root-level working notes and generated archives
+/*.md
+!/README.md
+/*.docx
+/*.txt
+/pdf_extract.tar
+/pdf_extract.tar.gz
+/hello

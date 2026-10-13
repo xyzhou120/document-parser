@@ -1,0 +1,127 @@
+/* ===== 规则化改造新增样式：工作台 / 规则管理 / 数据分析 / 服务管理 ===== */
+
+.list-page{max-width:1560px;margin:auto}
+.value-warning{color:#c87f0a;font-weight:600}
+
+/* ---------- 统计卡片 ---------- */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:14px}
+.stat-card{background:#fff;border:1px solid #dce5ef;border-radius:6px;padding:16px 18px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.stat-label{font-size:12px;color:#63758e}
+.stat-value{font-size:28px;font-weight:700;color:#142540;line-height:1.1;display:flex;align-items:baseline;gap:4px}
+.stat-value em{font-size:13px;font-weight:500;color:#63758e;font-style:normal}
+.stat-meta{font-size:11px;color:#7d8ea6;line-height:1.6}
+
+/* ---------- 通用面板 ---------- */
+.panel{background:#fff;border:1px solid #dce5ef;border-radius:6px;overflow:hidden;min-width:0}
+.panel-heading{min-height:52px;padding:0 16px;border-bottom:1px solid #e4ebf3;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.panel-title{font-size:15px;margin:0;font-weight:600}
+.panel-body{padding:16px}
+.panel-note{margin:14px 0 0;font-size:11px;color:#7d8ea6;line-height:1.8}
+.section-gap{margin-top:14px}
+.empty-panel{padding:48px 20px;text-align:center}
+.dashboard-grid{display:grid;grid-template-columns:1.55fr 1fr;gap:14px}
+.analytics-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+
+.range-switch{display:flex;gap:6px}
+.range-switch button{border:1px solid #dce5ef;background:#fff;color:#5b6f8c;font-size:12px;padding:5px 12px;border-radius:4px;cursor:pointer;transition:all .16s ease}
+.range-switch button.active{background:#087bff;border-color:#087bff;color:#fff}
+
+/* ---------- 快速操作 ---------- */
+.quick-actions{display:flex;flex-direction:column;gap:10px;padding:16px}
+.quick-action{display:grid;grid-template-columns:34px 1fr;grid-template-rows:auto auto;gap:2px 12px;align-items:center;text-align:left;background:#f7fafd;border:1px solid #e2eaf4;border-radius:5px;padding:13px 15px;cursor:pointer;transition:all .16s ease}
+.quick-action:hover{background:#eef6ff;border-color:#bcd8f7}
+.quick-action .anticon{grid-row:1/3;font-size:20px;color:#087bff}
+.quick-action span{font-size:13px;font-weight:600;color:#20344f}
+.quick-action small{font-size:11px;color:#7d8ea6}
+
+/* ---------- 分布条 ---------- */
+.distribution-row{display:grid;grid-template-columns:minmax(96px,1.15fr) 1fr 62px;align-items:center;gap:10px;padding:7px 0}
+.distribution-label{font-size:12px;color:#43587a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.distribution-value{font-size:12px;color:#20344f;text-align:right;font-weight:600}
+.distribution-value small{display:block;font-size:10px;color:#8fa3bd;font-weight:400}
+.progress-track{height:8px;background:#eef3f9;border-radius:4px;overflow:hidden}
+.progress-fill{height:100%;background:#087bff;border-radius:4px;transition:width .3s ease}
+.progress-fill.secondary{background:#34b5a0}
+
+/* ---------- 规则管理 ---------- */
+.rules-layout{display:grid;grid-template-columns:236px 1fr;gap:14px;align-items:start}
+.rule-types{padding-bottom:8px}
+.rule-type{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;border:0;background:transparent;text-align:left;padding:11px 16px;font-size:13px;color:#3d5573;cursor:pointer;border-left:3px solid transparent;transition:all .16s ease}
+.rule-type:hover{background:#f3f8fd}
+.rule-type.active{background:#eaf4ff;border-left-color:#087bff;color:#0d5bb5;font-weight:600}
+.rule-type small{background:#eef3f9;color:#5b6f8c;font-size:11px;padding:1px 7px;border-radius:9px}
+.rule-type.active small{background:#087bff;color:#fff}
+.rule-type-desc{margin:0;padding:12px 16px;font-size:12px;color:#6d7f97;line-height:1.8;background:#fafcfe;border-bottom:1px solid #e4ebf3}
+.rule-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:12px;padding:14px}
+.rule-card{border:1px solid #e0e8f2;border-radius:6px;background:#fff;display:flex;flex-direction:column;transition:box-shadow .16s ease,border-color .16s ease}
+.rule-card:hover{box-shadow:0 3px 12px #2b4a7020;border-color:#c9dcf2}
+.rule-card.disabled{opacity:.62;background:#fbfcfd}
+.rule-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:13px 15px 10px;border-bottom:1px solid #eef3f9}
+.rule-card-title{min-width:0}
+.rule-card-title h3{margin:0 0 5px;font-size:14px;font-weight:600}
+.rule-card-title code{font-size:11px;color:#7d8ea6;background:#f4f7fb;padding:2px 6px;border-radius:3px}
+.rule-card-badges{display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+.rule-card-badges .ant-tag{margin:0;font-size:11px}
+.rule-card-body{padding:11px 15px;display:flex;flex-direction:column;gap:9px;flex:1}
+.rule-row{display:grid;grid-template-columns:70px 1fr;gap:10px;align-items:start}
+.rule-row-label{font-size:11px;color:#8fa3bd;padding-top:3px}
+.rule-row-value{display:flex;flex-wrap:wrap;gap:5px;font-size:12px;color:#3d5573;align-items:center}
+.rule-row-value .ant-tag{margin:0;font-size:11px}
+.rule-row-value em{color:#98a9bf;font-style:normal;font-size:11px}
+.soft-tag{background:#f2f6fb;border:1px solid #e0e8f2;color:#4a6285;font-size:11px;padding:2px 8px;border-radius:3px}
+.rule-card-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 15px;border-top:1px solid #eef3f9;background:#fafcfe}
+.rule-priority{font-size:11px;color:#8fa3bd}
+.rule-card-actions{display:flex;gap:8px}
+
+/* ---------- 规则编辑器 ---------- */
+.rule-editor section{padding:16px 2px;border-bottom:1px solid #eef3f9}
+.rule-editor section:last-child{border-bottom:0}
+.rule-editor h4{margin:0 0 14px;font-size:13px;font-weight:600;color:#20344f}
+.rule-editor h5{margin:0 0 10px;font-size:12px;font-weight:600;color:#43587a}
+.editor-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;margin-bottom:12px}
+.editor-grid-four{grid-template-columns:repeat(4,1fr)}
+.editor-grid label,.editor-full{display:flex;flex-direction:column;gap:6px;min-width:0}
+.editor-full{margin-bottom:12px}
+.editor-grid label>span,.editor-full>span{font-size:11px;color:#63758e}
+.editor-switches{display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin-top:10px}
+.inline-select{display:flex;align-items:center;gap:8px;font-size:11px;color:#63758e}
+.editor-sub{margin-top:14px;padding:13px 15px;background:#f8fbfe;border:1px solid #e8eff7;border-radius:5px}
+.editor-hint{margin:0;font-size:11px;color:#8fa3bd;line-height:1.8}
+
+/* ---------- 变更历史 ---------- */
+.log-list{max-height:460px;overflow:auto}
+.log-item{padding:11px 4px;border-bottom:1px solid #eef3f9}
+.log-item:last-child{border-bottom:0}
+.log-head{display:flex;align-items:center;gap:9px;font-size:12px;color:#20344f}
+.log-head time{margin-left:auto;font-size:11px;color:#8fa3bd}
+.log-body{margin-top:6px;font-size:11px;color:#7d8ea6}
+
+/* ---------- 服务管理 ---------- */
+.service-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.service-card{background:#fff;border:1px solid #dce5ef;border-radius:6px;padding:17px}
+.service-card-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.service-card-head h3{margin:0 0 5px;font-size:14px;font-weight:600}
+.service-icon{width:40px;height:40px;flex-shrink:0;display:grid;place-items:center;border-radius:6px;background:#eaf4ff;color:#087bff;font-size:12px;font-weight:700;letter-spacing:.02em}
+.service-detail .ant-descriptions-item-label{font-size:11px;color:#8fa3bd;width:74px}
+.service-detail .ant-descriptions-item-content{font-size:12px}
+.service-endpoint{font-size:11px;color:#4a6285;word-break:break-all}
+
+/* ---------- 结果页字段明细 ---------- */
+.field-badges{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
+.field-badges .ant-tag{margin:0;font-size:10px}
+.instance-list{margin-top:10px;display:flex;flex-direction:column;gap:7px}
+.instance-item{border:1px solid #e4ebf3;border-radius:4px;padding:9px 10px;background:#fafcfe}
+.instance-item strong{font-size:13px;color:#142540}
+.instance-item p{margin:6px 0 0;font-size:11px;color:#7d8ea6;line-height:1.7}
+.instance-meta{display:flex;gap:12px;font-size:10px;color:#8fa3bd;margin-top:5px}
+
+@media(max-width:1200px){
+  .dashboard-grid,.analytics-grid{grid-template-columns:1fr}
+  .rules-layout{grid-template-columns:1fr}
+  .rule-list{grid-template-columns:1fr}
+}
+@media(max-width:768px){
+  .stat-value{font-size:23px}
+  .editor-grid,.editor-grid-four{grid-template-columns:1fr}
+  .list-toolbar{flex-wrap:wrap}
+}

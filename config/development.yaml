@@ -1,0 +1,7 @@
+# 开发环境配置覆盖
+
+app:
+  debug: true
+
+logging:
+  level: "DEBUG"
