@@ -43,9 +43,9 @@ logs/
 *.sqlite3
 
 # Configuration
-config/local.yaml
-.env
-.env.local
+#config/local.yaml
+#.env
+#.env.local
 .env.*.local
 
 # Test

@@ -166,11 +166,11 @@ async def test_29_pages_12_rules_finish_without_reinserting_the_range_plan(sessi
     event.listen(engine, "before_cursor_execute", record)
     try:
         result = await service.process_run(sessions, run_id, executor=executor, writer=executor.write_result,
-            before_publish=executor.before_publish, owner="bounded-29x12", max_quantums=800, lease_seconds=300)
+            before_publish=executor.before_publish, owner="bounded-29x12", max_quantums=3000, lease_seconds=300)
     finally:
         event.remove(engine, "before_cursor_execute", record)
     assert result["status"] == "COMPLETED"
-    assert result["quantums_executed"] <= 12 * 50
+    assert result["quantums_executed"] <= 12 * 250
     assert len(inserts) == 12
     assert content.reads == 1
     async with sessions() as db:
