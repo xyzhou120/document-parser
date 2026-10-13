@@ -1,7 +1,7 @@
-"""Opt-in live API acceptance, retaining isolated test records and honest evidence.
+"""可选启用的真实 API 验收，保留隔离测试记录和真实证据。
 
-Uses a real dev PDF for extraction/incremental reuse. Review CRUD is tested on
-a synthetic PDF; automated test submissions must never become human gold.
+使用真实开发 PDF 测试提取和增量复用。复核 CRUD 使用模拟 PDF 测试；
+自动化测试提交不能成为人工 gold。
 """
 from __future__ import annotations
 

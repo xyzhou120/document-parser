@@ -1,4 +1,4 @@
-"""Document assistant conversations pinned to content/index generations."""
+"""绑定到内容与索引版本的文档助手会话。"""
 
 import uuid
 from datetime import datetime

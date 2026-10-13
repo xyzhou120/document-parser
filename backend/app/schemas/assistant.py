@@ -1,4 +1,4 @@
-"""Public document assistant schemas."""
+"""公开文档助手数据模式。"""
 
 from typing import Any, Literal
 from uuid import UUID

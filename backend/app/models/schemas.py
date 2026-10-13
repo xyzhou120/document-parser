@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-# ============ Document Schemas ============
+# ============ 文档数据模式 ============
 
 
 class DocumentCreate(BaseModel):
@@ -64,7 +64,7 @@ class DocumentListResponse(BaseModel):
     items: list[DocumentResponse]
 
 
-# ============ ParseRun Schemas ============
+# ============ 解析运行数据模式 ============
 
 
 class ParseRunCreate(BaseModel):
@@ -98,7 +98,7 @@ class ParseRunResponse(BaseModel):
         from_attributes = True
 
 
-# ============ ExtractedField Schemas ============
+# ============ 提取字段数据模式 ============
 
 
 class ExtractedFieldResponse(BaseModel):
@@ -124,7 +124,7 @@ class ParseResultResponse(BaseModel):
     fields: list[ExtractedFieldResponse]
 
 
-# ============ Upload Schemas ============
+# ============ 上传数据模式 ============
 
 
 class UploadMetadata(BaseModel):

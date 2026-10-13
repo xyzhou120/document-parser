@@ -1,8 +1,7 @@
-"""Resumable OCR/content preparation.
+"""可恢复的 OCR 与内容准备。
 
-P09 intentionally stops at an immutable build checkpoint.  Publishing an Artifact,
-content revision, impact, or processing head belongs to P11.  The service therefore
-only turns page/region work into a deterministic checkpoint and coverage manifest.
+P09 在不可变构建检查点停止。发布 Artifact、内容修订、影响记录和处理头
+由 P11 负责。因此本服务只把页面和区域工作转为确定性的检查点及覆盖清单。
 """
 
 from __future__ import annotations
@@ -76,7 +75,7 @@ class ServiceUnavailable(ContentBuildError):
 
 
 class ContentBuildService:
-    """Build page/region checkpoints without committing publication state."""
+    """构建页面与区域检查点，但不提交发布状态。"""
 
     def __init__(self, *, circuit: ServiceCircuit | None = None, max_region_attempts: int = 3, lease_seconds: int = 300):
         self.circuit = circuit
@@ -104,9 +103,8 @@ class ContentBuildService:
                 result.append({**item, "region_id": str(item.get("region_id") or item.get("id") or f"p{page_number}:r{i}")})
             return result
         reliable_native = page.get("native_coverage_complete") is True
-        # PDFParser can prove a text-only page is native when there are no images and
-        # the source did not flag a scan.  Image pages require an explicit render/OCR
-        # region; an empty default must never manufacture full coverage.
+        # 没有图像且来源未标记扫描时，PDFParser 可证明纯文本页属于原生文本。
+        # 含图像页面需要明确的渲染或 OCR 区域；空默认值不能伪造完整覆盖。
         inspection = page.get("inspection") or {}
         reliable_native = reliable_native or (
             inspection.get("native_readability") == "verified"
@@ -229,7 +227,7 @@ class ContentBuildService:
                     checkpoint["coverage_manifest"] = self._manifest(checkpoint, expected_count)
                     await self._save(db, job, checkpoint, fence, worker_id, state="yielded")
                     return checkpoint
-                # A native marker is already covered and deliberately does not invoke OCR.
+                # 原生文本标记已覆盖该区域，因此有意不调用 OCR。
                 if region.get("kind") == "native" or region.get("source") == "native":
                     result = OCRRegionResult(rid, number, "processed", raw_ocr=str(page.get("text", "") or ""), normalized_ocr=_normalise(page.get("text", "") or ""))
                     checkpoint["regions"][checkpoint_key] = result.as_dict() | {"cache_key": native_key, "source": "native"}
@@ -308,15 +306,15 @@ class ContentBuildService:
         await self._save(db, job, checkpoint, fence, worker_id, state="succeeded" if ready else "partial", phase="ready" if ready else "partial")
         return checkpoint
 
-    # Stable semantic aliases for workers that call this phase "build" or "run".
+    # 为把此阶段称作 build 或 run 的工作进程提供稳定语义别名。
     build = process
     run = process
 
     @staticmethod
     def _parse_ocr(payload: Any, region_id: str, page_number: int, digest: str, region: Mapping[str, Any]) -> dict[str, Any]:
         if payload is None or payload == [] or payload == {}:
-            # Existing OCR clients return [] on service errors as well as no text.
-            # Blank requires explicit visual blank attestation, never an empty reply.
+            # 现有 OCR 客户端在服务错误和无文本时都会返回 []。
+            # 空白页面需要明确的视觉空白证明，不能仅凭空响应判断。
             raise ContentBuildError("empty OCR response without blank verification")
         if isinstance(payload, Mapping):
             raw = payload.get("raw_ocr", payload.get("text", ""))
@@ -364,4 +362,3 @@ class ContentBuildService:
 
 
 content_build_service = ContentBuildService()
-

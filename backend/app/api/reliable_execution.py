@@ -1,4 +1,4 @@
-"""P13-A reliable extraction execution status and recovery endpoints."""
+"""P13-A 可靠提取的执行状态与恢复接口。"""
 
 from uuid import UUID
 
@@ -103,8 +103,7 @@ async def reliable_extract(document_id: UUID, payload: ReliableExtractRequest,
         run = await reliable_extraction_service.start(db, document_id, rules=rules,
                 revision_id=payload.revision_id, parent_run_id=payload.parent_run_id,
                 document_token_hard_limit=payload.document_token_hard_limit, request_id=payload.request_id)
-        # The initial outbox is the recovery truth; commit before publishing a
-        # broker message so a fast worker cannot race uncommitted ledger rows.
+        # 初始发件箱是恢复依据；先提交，再发布消息，防止工作进程抢先读取未提交的账本记录。
         await db.commit()
         from app.tasks import reliable_execution_wakeup_task
         try:
@@ -112,8 +111,7 @@ async def reliable_extract(document_id: UUID, payload: ReliableExtractRequest,
                                                               queue="reliable-execution")
             task_id = task.id
         except Exception as exc:
-            # The durable initial outbox remains pending.  Broker downtime
-            # does not convert never-attempted fields into terminal failure.
+            # 持久化的初始发件箱仍处于待处理状态；消息代理停机不能把尚未尝试的字段判为最终失败。
             run.error_message = f"dispatch pending recovery: {type(exc).__name__}"
             await db.commit()
             task_id = None
@@ -128,7 +126,7 @@ async def reliable_extract(document_id: UUID, payload: ReliableExtractRequest,
             try:
                 reliable_content_build_task.apply_async(args=[str(exc.build_id)], queue="reliable-execution")
             except Exception:
-                pass  # Durable content.build.execute outbox repairs broker loss.
+                pass  # 持久化的 content.build.execute 发件箱可补偿消息丢失。
             return {"contract_version": "reliable-extraction-v2", "document_id": document_id,
                     "parse_run_id": None, "build_id": exc.build_id, "status": "PREPARING_CONTENT",
                     "automatic_complete": False}
@@ -200,8 +198,7 @@ async def resume_content_build(document_id: UUID, build_id: UUID, db: AsyncSessi
         task = reliable_content_build_task.apply_async(args=[str(build_id)], queue="reliable-execution")
         task_id = task.id
     except Exception:
-        # The durable content.build.execute event is the recovery path.
+        # 持久化的 content.build.execute 事件负责恢复。
         pass
     return {"build_id": build_id, "status": "PREPARING_CONTENT", "task_id": task_id,
             "parse_run_id": (build.checkpoint or {}).get("parse_run_id")}
-

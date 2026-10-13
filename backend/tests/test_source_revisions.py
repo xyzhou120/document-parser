@@ -1,4 +1,4 @@
-"""Source revision isolation, guards and dispatch handling without external services."""
+"""无需外部服务的来源修订隔离、防护和投递处理测试。"""
 
 from copy import deepcopy
 from datetime import datetime
@@ -107,7 +107,7 @@ async def test_unreadable_page_risk_survives_derived_artifact(context):
     assert derived.quality["source_unreadable_pages"] == [1]
     assert derived.quality["weak_pages"] == [1]
     assert derived.pages[0]["source_unreadable"] is True
-    assert derived.status == "READY"  # processing completeness and source readability are separate.
+    assert derived.status == "READY"  # 处理完整性与来源可读性相互独立。
     assert revision.source_review_status == "PARTIALLY_REVIEWED"
 
 

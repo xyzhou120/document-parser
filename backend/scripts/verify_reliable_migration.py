@@ -1,9 +1,7 @@
-"""Verify the v2 migration in a new isolated PostgreSQL database.
+"""在新的隔离 PostgreSQL 数据库中验证 v2 迁移。
 
-Never uses the configured business database as a migration target.  The default
-connection only reaches the postgres maintenance database to create a uniquely
-named empty verification database.  The database is retained for inspection;
-this script never drops a database or changes application configuration.
+绝不使用已配置的业务数据库作为迁移目标。默认连接只访问 postgres 维护数据库，
+创建名称唯一的空验证数据库。数据库会保留供检查；本脚本不会删除数据库或修改应用配置。
 """
 from __future__ import annotations
 
@@ -28,7 +26,7 @@ BASELINE = "20261009_0003"
 
 
 def configuration() -> dict:
-    """Read connection fields without logging secrets or loading app services."""
+    """读取连接字段，不记录密钥，也不加载应用服务。"""
     merged: dict = {}
     for name in ("default.yaml", "local.yaml"):
         path = ROOT / "config" / name
@@ -43,7 +41,7 @@ def run_alembic(database_url: str, *arguments: str) -> str:
     command = [sys.executable, "-m", "alembic", "-c", str(BACKEND / "alembic.ini"), *arguments]
     result = subprocess.run(command, cwd=BACKEND, env=env, text=True, capture_output=True)
     if result.returncode:
-        # Never print exception text that could contain a connection URL.
+        # 不能打印可能包含连接 URL 的异常文本。
         raise RuntimeError(f"Alembic {' '.join(arguments)} failed; exit={result.returncode}")
     return (result.stdout + result.stderr).strip()
 
@@ -85,7 +83,7 @@ async def verify(args: argparse.Namespace) -> dict:
         "database_retained": True,
         "checks": [],
     }
-    # Run Alembic outside this loop's connection lifetime; migration uses its own loop.
+    # 在当前事件循环连接生命周期之外运行 Alembic；迁移使用自己的事件循环。
     await asyncio.to_thread(run_alembic, url, "upgrade", BASELINE)
     report["checks"].append("baseline_upgrade")
     document_id, artifact_id, run_id, source_id = (uuid.uuid4() for _ in range(4))
@@ -152,7 +150,7 @@ async def verify(args: argparse.Namespace) -> dict:
         )
     finally:
         await conn.close()
-    # Compare Alembic autogenerate against the complete model metadata.
+    # 将 Alembic 自动生成结果与完整模型元数据比较。
     await asyncio.to_thread(run_alembic, url, "check")
     report["checks"].append("alembic_metadata_no_drift")
     return report
@@ -166,7 +164,7 @@ def main() -> int:
     try:
         report = asyncio.run(verify(args))
     except Exception as exc:
-        # Connection exceptions sometimes include credentials. Keep output minimal.
+        # 连接异常有时包含凭据，输出保持最少。
         print(f"Isolated G1 verification failed: {type(exc).__name__}", file=sys.stderr)
         return 1
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -177,4 +175,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

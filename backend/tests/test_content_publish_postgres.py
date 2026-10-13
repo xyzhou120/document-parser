@@ -1,4 +1,4 @@
-"""P11 lock/CAS/fencing evidence in the explicitly authorized G1 database."""
+"""在明确授权的 G1 数据库中验证 P11 锁、CAS 和栅栏。"""
 
 import asyncio
 import os

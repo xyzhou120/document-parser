@@ -1,7 +1,7 @@
-"""Hybrid retrieval against one frozen generation manifest.
+"""基于一个冻结索引清单进行混合检索。
 
-JSON vectors are scanned with exact cosine for a single attachment. No ANN or
-pgvector behavior is implied; a future vector index can implement ``vector_search``.
+单个附件的 JSON 向量使用精确余弦扫描。这里不包含 ANN 或 pgvector 行为；
+未来的向量索引可以实现 vector_search。
 """
 
 from __future__ import annotations
@@ -61,10 +61,10 @@ class RetrievalService:
     async def qualify_answer(self, generation_id: UUID | str, *, revision_id,
                              document_id, invalidation_watermark: int,
                              expected_serve_version: int | None = None, db=None) -> dict:
-        """Read-only hint unless db is supplied for the owning answer transaction.
+        """除非提供负责答案事务的 db，否则只返回只读提示。
 
-        P16 passes db and expected_serve_version, checks eligible and writes the
-        answer in that same transaction. The locks then close the revocation race.
+        P16 传入 db 和 expected_serve_version，在同一事务中检查可用性并写入答案。
+        锁随后关闭撤销竞争窗口。
         """
         generation = await self.repository.get_generation(generation_id)
         if generation is None or generation.serve_status != "eligible":
@@ -118,7 +118,7 @@ class RetrievalService:
                 if chunk.get("table_ref"):
                     channel_scores[chunk["chunk_id"]]["table"] = len(overlap) / max(1, len(query_terms))
             if overlap and cue_terms & text_terms:
-                # A summary can add a soft cue but can never exclude any raw block.
+                # 摘要可以增加弱提示，但不能排除任何原始块。
                 channel_scores[chunk["chunk_id"]]["summary_cue"] = 0.01
         embedding_manifest = generation.indexed_block_manifest.get("embedding", {})
         semantic_status = "unavailable"
@@ -185,7 +185,7 @@ class RetrievalService:
                                   "table_ref": deepcopy(hit.get("table_ref")),
                                   "chunk_id": hit["chunk_id"]}]
             hit.pop("embedding", None)
-        # Recheck after remote embedding/reranker calls. P16 also checks on answer commit.
+        # 远程嵌入和重排调用后重新检查；P16 还会在答案提交时检查。
         if not await self.repository.is_generation_current(
                 generation.generation_id, revision_id=generation.revision_id,
                 document_id=generation.document_id, invalidation_watermark=watermark):

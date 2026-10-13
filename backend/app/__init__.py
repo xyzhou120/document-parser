@@ -1,4 +1,4 @@
-"""Application package"""
+"""应用包。"""
 
-# Importing a package must not import the ASGI application and its dependencies.
-# Start the application with app.main:app.
+# 导入包时不应连带导入 ASGI 应用及其依赖。
+# 使用 app.main:app 启动应用。

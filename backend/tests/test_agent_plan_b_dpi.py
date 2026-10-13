@@ -1,7 +1,7 @@
-"""Plan B: whole-page views and region crops render at their own configured DPI.
+"""方案 B：整页视图和区域裁剪分别按配置的 DPI 渲染。
 
-Uses a real one-page PDF generated in the test, and an in-memory stand-in for MinIO
-(no cache hits), so the render path is exercised end to end without network access.
+使用测试中生成的真实单页 PDF 和内存中的 MinIO 模拟对象（无缓存命中），
+因此可在不访问网络的情况下端到端执行渲染路径。
 """
 
 import asyncio
@@ -50,5 +50,5 @@ def test_whole_page_and_region_use_separate_dpi(tmp_path, monkeypatch):
     assert page_receipt["render_profile"]["dpi"] == 120
     assert region_receipt["location_precision"] == "region"
     assert region_receipt["render_profile"]["dpi"] == 180
-    # Both renders must be real PNG bytes, not placeholders.
+    # 两种渲染结果都必须是真实 PNG 字节，而不是占位数据。
     assert page_png.startswith(b"\x89PNG") and region_png.startswith(b"\x89PNG")

@@ -1,4 +1,4 @@
-"""Real P06/P07/P10 orchestration with a deterministic provider and isolated PG."""
+"""使用确定性提供方和隔离 PG 验证真实的 P06/P07/P10 编排。"""
 
 import json
 from types import SimpleNamespace

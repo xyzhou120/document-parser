@@ -1,4 +1,4 @@
-"""Import every mapped model without importing configured engines or credentials."""
+"""导入所有映射模型，但不导入已配置的引擎或凭据。"""
 
 import importlib
 import pkgutil

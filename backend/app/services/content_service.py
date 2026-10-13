@@ -1,4 +1,4 @@
-"""Content revision access and immutable Artifact-to-revision pinning."""
+"""内容修订读取与产物到修订的不可变绑定。"""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class RevisionContent:
 
 
 class ContentRevisionError(ValueError):
-    """The requested immutable revision cannot be read as its recorded content."""
+    """无法按记录内容读取请求的不可变修订。"""
 
 
 class ContentService:
@@ -30,7 +30,7 @@ class ContentService:
         self.adapter = adapter or ContentAdapter()
 
     async def get_revision(self, db: AsyncSession, revision_id: UUID | str) -> RevisionContent:
-        """Read exactly ``revision_id``; never substitute the current/latest revision."""
+        """只读取指定的 revision_id，不能替换为当前或最新修订。"""
         revision = await db.get(ContentRevision, UUID(str(revision_id)))
         if revision is None:
             raise ContentRevisionError(f"content revision {revision_id} does not exist")
@@ -48,7 +48,7 @@ class ContentService:
             raise ContentRevisionError(f"artifact coverage no longer matches revision {revision_id}")
         return RevisionContent(revision=revision, content=content)
 
-    # Explicit alias used by index/assistant callers to make pinning semantics clear.
+    # 供索引和助手调用方使用的显式别名，用于明确绑定语义。
     read_revision = get_revision
     get = get_revision
 
@@ -56,7 +56,7 @@ class ContentService:
         return self.adapter.adapt(artifact)
 
     async def get_by_source_revision(self, db: AsyncSession, source_revision_id: UUID | str) -> RevisionContent | None:
-        """Resolve the unique read-only SourceRevision -> ContentRevision mapping."""
+        """解析唯一的只读 SourceRevision -> ContentRevision 映射。"""
         result = await db.execute(
             select(ContentRevision).where(
                 ContentRevision.origin_source_revision_id == UUID(str(source_revision_id))
@@ -78,13 +78,12 @@ class ContentService:
         source_kind: str = "artifact",
         change_kind: str = "initial",
     ) -> RevisionContent:
-        """Create or reuse the immutable revision for one Artifact.
+        """为一个 Artifact 创建或复用不可变修订。
 
-        This function records the source revision relation only; it never updates the
-        SourceRevision row and never changes document processing heads.
+        此函数只记录来源修订关系；不会更新 SourceRevision 记录，也不会改变文档处理头。
         """
-        # Serializes attempts to pin this immutable Artifact, including a unique
-        # SourceRevision mapping.  Flush only: the publisher owns the transaction.
+        # 串行处理此不可变 Artifact 的绑定尝试，包括唯一的 SourceRevision 映射。
+        # 这里只刷新，不提交；事务由发布方负责。
         persisted = await db.get(DocumentArtifact, artifact.artifact_id, with_for_update=True)
         if persisted is None:
             raise ContentRevisionError("only persisted artifacts can be pinned")
@@ -144,4 +143,3 @@ class ContentService:
 
 
 content_service = ContentService()
-

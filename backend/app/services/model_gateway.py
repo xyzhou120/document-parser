@@ -1,7 +1,7 @@
-"""Recoverable candidate-call boundary. No function here completes a field job.
+"""可恢复的候选调用边界。本模块的函数不会完成字段任务。
 
-The scheduler persists returned split/retry plans and candidate decisions together
-with its checkpoint, after checking generation/fence and semantic evidence.
+调度器在检查版本、栅栏和语义证据后，将返回的拆分或重试计划与检查点、
+候选决策一同持久化。
 """
 
 import base64
@@ -99,7 +99,7 @@ class GatewayOutcome:
 
 
 def split_candidates(request: CallRequest, *, max_depth=16) -> list[dict]:
-    """Only split at independently verifiable units, retaining context and OCR images."""
+    """只按可独立核验的单元拆分，并保留上下文和 OCR 图像。"""
     if len(request.split_path) >= max_depth:
         return []
     candidates = request.candidates
@@ -142,7 +142,7 @@ def split_candidates(request: CallRequest, *, max_depth=16) -> list[dict]:
 
 
 def _prompt_payload(value):
-    """Keep source/semantic data while excluding persisted transport/audit payloads."""
+    """保留来源和语义数据，同时排除持久化的传输与审计载荷。"""
     if isinstance(value, dict):
         return {key: _prompt_payload(item) for key, item in value.items()
                 if key not in {"evidence_registry", "image_refs", "image_base64", "base64_image"}
@@ -157,7 +157,7 @@ def build_messages(request: CallRequest) -> list[dict]:
     candidates = []
     for candidate in request.candidates:
         item = {**_prompt_payload(candidate.payload), "candidate_id": candidate.candidate_id, "source": candidate.source}
-        item.pop("evidence", None)  # Historical receipts stay platform-owned; IDs remain.
+        item.pop("evidence", None)  # 历史回执由平台保留；ID 继续保留。
         if item.get("window") == item.get("text"):
             item.pop("window", None)
         if candidate.units:
@@ -213,7 +213,7 @@ def _unique_object(pairs):
 
 
 def parse_response_json(content):
-    """Decode complete JSON inside harmless prose/fences, without repairing data."""
+    """从无害说明或代码围栏中解析完整 JSON，不修复数据。"""
     if not isinstance(content, str):
         raise ValueError("model_content_not_text")
     text = content.strip().lstrip("\ufeff")
@@ -243,8 +243,8 @@ def parse_response_json(content):
 
 def response_diagnostics(content, *, error=None, include_excerpt=True):
     raw = content if isinstance(content, str) else str(type(content).__name__)
-    # Bound audit text and redact credentials/base64 before persisting it. The
-    # source answer may contain business data, so this stays in the internal ledger.
+    # 持久化前限制审计文本长度并脱敏凭据和 base64。
+    # 来源答案可能包含业务数据，因此只保存在内部账本中。
     sample = raw[:1600]
     sample = re.sub(r"data:image/[^\s\"']+", "[image omitted]", sample)
     sample = re.sub(r"(?i)(bearer\s+)[^\s\"']+", r"\1[redacted]", sample)
@@ -298,7 +298,7 @@ def response_parts(response):
         details = get(raw, "completion_tokens_details", {})
         reasoning = get(details, "reasoning_tokens")
         if reasoning is not None:
-            # Reasoning is a completion subset; never add it to total again.
+            # 推理 token 属于完成 token 的子集，不能再次加到总数中。
             usage["reasoning_tokens"] = max(0, int(reasoning))
         if not any(usage.values()):
             usage = None
@@ -306,7 +306,7 @@ def response_parts(response):
 
 
 def validate_decisions(content, candidates, validator=None):
-    """Transport validation only. P10 supplies semantic/evidence validation."""
+    """只做传输校验；语义和证据校验由 P10 提供。"""
     payload = parse_response_json(content)
     # Accept only the known transcription wrapper, with the same ID checks.
     if (isinstance(payload, dict) and set(payload) == {"transcription"}
@@ -373,10 +373,10 @@ class ModelGateway:
 
     async def requeue_external_quota(self, request: CallRequest, *, prior_call_id,
                                      dispatch_key: str) -> GatewayOutcome:
-        """Resume verified quota recovery with a distinct, separately billed attempt.
+        """使用独立且单独计费的尝试恢复已核验的配额执行。
 
-        P05 supplies a stable new dispatch key for this deliberate retry; repeated
-        delivery of that new key remains idempotent. The prior call is untouched.
+        P05 为这次明确重试提供稳定的新投递键；重复投递该键仍保持幂等。
+        之前的调用不受影响。
         """
         prior = await self.ledger.get(UUID(str(prior_call_id)))
         previous = prior.reservation.get("gateway_outcome", {})

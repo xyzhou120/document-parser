@@ -1,9 +1,8 @@
 """隔离的 P20 可靠提取评测入口。
 
-The runner reads JSON files only.  It never opens the application database,
-starts workers, calls a model, or mutates a run.  Gold remains the sole source
-of truth for expected dimensions and evidence; run exports are only adapted to
-the prediction shape consumed by :mod:`scripts.evaluation_v2`.
+运行器只读取 JSON 文件。它不会打开应用数据库、启动工作进程、调用模型或修改运行记录。
+Gold 是预期维度和证据的唯一来源；运行导出结果只适配为 scripts.evaluation_v2
+消费的预测结构。
 """
 
 from __future__ import annotations
@@ -26,12 +25,11 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def adapt_run_export(export: dict[str, Any]) -> dict[str, Any]:
-    """Convert a v2 fact/execution export without inventing evidence.
+    """转换 v2 事实或执行导出结果，但不伪造证据。
 
-    Existing ``documents[].rules`` predictions are copied.  Compatibility
-    exports may use ``fields``; only names and supplied fact fields are mapped.
-    Missing dimensions, evidence, status and range closure remain missing so
-    the scorer cannot turn an incomplete export into a passing result.
+    复制已有的 documents[].rules 预测。兼容导出结果可以使用 fields；只映射名称和已提供
+    的事实字段。缺失的维度、证据、状态和范围闭合信息继续保持缺失，防止评分器把不完整
+    导出结果判为通过。
     """
 
     if isinstance(export.get("documents"), list) and all(
@@ -96,8 +94,8 @@ def adapt_run_export(export: dict[str, Any]) -> dict[str, Any]:
                     rule[key] = value
             if job:
                 rule["execution_provenance"] = deepcopy(job)
-            # Parse exports sometimes put facts under values.  No conversion or
-            # evidence fallback is applied; supplied facts pass through intact.
+            # 解析导出结果有时会把事实放在 values 下。
+            # 不做转换或证据回退，直接保留已提供的事实。
             if "facts" not in rule and isinstance(field.get("values"), list):
                 rule["facts"] = field["values"]
             if isinstance(rule.get("facts"), list):

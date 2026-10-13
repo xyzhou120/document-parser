@@ -1,8 +1,7 @@
-"""P13-A database-backed recovery/status facade.
+"""P13-A 基于数据库的恢复与状态门面。
 
-This service intentionally stops at the execution ledger.  Semantic fact
-publication remains P10/P11/P12 work and cannot be represented as a successful
-extraction by this facade.
+本服务有意在执行账本处停止。语义事实发布仍由 P10/P11/P12 负责，
+本门面不能将其表示为成功提取。
 """
 
 from __future__ import annotations
@@ -43,15 +42,15 @@ class ContentPreparationRequired(ReliableExecutionError):
 
 class ReliableExtractionService:
     def __init__(self):
-        # P13-B installs the P06/P07/P10 semantic executor at worker startup.
-        # Absence is explicit and never generates a fabricated done result.
+        # P13-B 在工作进程启动时安装 P06/P07/P10 语义执行器。
+        # 缺失状态必须显式表达，不能伪造完成结果。
         self.executor_factory: Callable[[Any], QuantumExecutor] | None = None
 
     async def start(self, db: AsyncSession, document_id: UUID, *, rules: list[Any],
                     revision_id: UUID | None = None, parent_run_id: UUID | None = None,
                     document_token_hard_limit: int | None = None, request_id: str | None = None,
                     extraction_strategy: str | None = None) -> ParseRun:
-        """Create a new explicit v2 run with immutable rule/content/model snapshots."""
+        """创建新的显式 v2 运行，并冻结规则、内容和模型快照。"""
         from app.config import settings
         from app.services.content_publish_service import content_publish_service
 
@@ -256,18 +255,17 @@ class ReliableExtractionService:
                 "execution_generation": run.execution_generation, "resumed": action == "resume"}
 
     async def dispatch_due(self, db: AsyncSession, *, limit: int = 100) -> int:
-        """Requeue due jobs only; no model call or fake success is performed."""
+        """只重新入队到期任务；不调用模型，也不伪造成功。"""
         return await JobRepository(db).requeue_due(limit=limit)
 
     async def process_run(self, sessions: Any, run_id: UUID, *, executor: QuantumExecutor,
                           owner: str, max_quantums: int = 20, writer: Any = None,
                           before_publish: Any = None,
                           lease_seconds: int = 90) -> dict[str, Any]:
-        """Execute a task quantum window, auto-enqueue remaining durable work.
+        """执行一个任务量子窗口，并自动将剩余持久化工作入队。
 
-        The caller supplies the real semantic executor. This is also the
-        fault-injection seam: tests use controlled outcomes, while production
-        P13-B supplies retrieval/model/verification without changing recovery.
+        调用方提供真实的语义执行器。这也是故障注入边界：测试使用受控结果，
+        生产环境的 P13-B 提供检索、模型和核验，而不改变恢复逻辑。
         """
         if max_quantums < 1:
             raise ValueError("max_quantums must be positive")
@@ -300,17 +298,16 @@ class ReliableExtractionService:
                     expected_current_parse_run_id=head.current_parse_run_id)
             jobs = list((await db.execute(select(ParseFieldJob).where(ParseFieldJob.run_id == run_id))).scalars().all())
             runnable = [job for job in jobs if job.execution_state in {"queued", "yielded"}]
-            # Each yield already writes one durable field wake in the same
-            # transaction. Do not append a second window-wide fanout here;
-            # the dispatcher coalesces pending field wakes by run_id.
+            # 每次 yield 已在同一事务中写入一个持久化字段唤醒事件。
+            # 不要在此追加窗口级广播；调度器会按 run_id 合并待处理唤醒事件。
             if runnable:
                 pending_wake = await db.scalar(select(ExecutionOutbox.event_id).where(
                     ExecutionOutbox.kind == "field_job_wakeup",
                     ExecutionOutbox.aggregate_id.in_([job.job_id for job in jobs]),
                     ExecutionOutbox.dispatch_state.in_(["pending", "failed"]),
                 ).limit(1))
-                # A window containing only completed fields produces no yield
-                # wake. Preserve its remaining runnable work with one event.
+                # 只包含已完成字段的窗口不会产生 yield 唤醒事件。
+                # 使用一个事件保留剩余可运行工作。
                 if pending_wake is None:
                     await repo.enqueue_outbox(kind="field_job_wakeup", aggregate_id=runnable[0].job_id,
                         dedupe_key=f"run:{run_id}:continue:{current.execution_generation}:{sum(job.attempt for job in jobs)}:{sum(job.progress_seq for job in jobs)}",
@@ -322,7 +319,7 @@ class ReliableExtractionService:
     async def dispatch_events(self, sessions: Any, sender: Callable[[str, dict[str, Any]], Awaitable[None]],
                               *, limit: int = 100, kinds: list[str] | None = None,
                               run_id: UUID | None = None) -> int:
-        """Claim/commit, send outside SQL, then acknowledge in a short transaction."""
+        """领取并提交，在 SQL 之外发送，然后在短事务中确认。"""
         async with sessions() as db, db.begin():
             dispatcher = DispatchOutbox(db)
             await dispatcher.recover_stuck(before=datetime.utcnow() - timedelta(minutes=5), limit=limit,
@@ -351,8 +348,7 @@ class ReliableExtractionService:
                 error = str(exc)
             async with sessions() as db, db.begin():
                 row = await db.get(ExecutionOutbox, event_id, with_for_update=True)
-                # A delayed old dispatcher cannot overwrite the acknowledgement
-                # from a later redelivery attempt.
+                # 延迟的旧调度器不能覆盖后续重新投递尝试的确认结果。
                 if row is None or row.dispatch_state != "sending" or row.attempts != attempt:
                     continue
                 if error:

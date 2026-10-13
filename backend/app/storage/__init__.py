@@ -1,4 +1,4 @@
-"""Storage package"""
+"""存储模块包。"""
 
 from app.storage.database import (
     AsyncSessionLocal,

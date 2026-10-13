@@ -1,7 +1,7 @@
-"""Plan C1: scanned pages enter the checklist agent through region OCR (2026-10-10).
+"""方案 C1：扫描页通过区域 OCR 进入清单代理（2026-10-10）。
 
-No network: the OCR service and the PDF renderer are replaced by fakes whose answers have the
-shape verified against the DGC scanned sheets (one item per layout region, pixel bbox, text).
+不访问网络：OCR 服务和 PDF 渲染器替换为模拟对象，其答案结构已根据 DGC 扫描表单验证
+（每个布局区域一项，包含像素 bbox 和文本）。
 """
 
 import asyncio
@@ -49,7 +49,7 @@ def test_region_items_keep_text_pixel_box_and_layout_label_without_a_score():
     assert blocks[1].label == "text" and blocks[2].label == "table"
     assert blocks[2].locator.bbox.x0 == 50 and blocks[2].locator.bbox.y1 == 380
     assert blocks[2].locator.coordinate_system == "PIXEL" and blocks[2].locator.page_number == 21
-    assert all(b.confidence is None for b in blocks)  # no score is invented
+    assert all(b.confidence is None for b in blocks)  # 不伪造分数。
     assert blocks[0].location_status == "ocr_region"
 
 
@@ -106,7 +106,7 @@ def test_checklist_manifest_carries_the_ocr_identity_and_a_new_version():
     assert checklist["manifest"]["ocr_policy"].startswith("region-ocr")
     assert checklist["version"] != OLD_CHECKLIST_VERSION
     rules = preprocessing_profile("rules")
-    assert "ocr_endpoint" not in rules["manifest"]  # rules artifacts keep their identity
+    assert "ocr_endpoint" not in rules["manifest"]  # 规则产物保持自身标识。
 
 
 def test_checklist_ocr_reads_scanned_pages_by_regions_and_records_status():
@@ -145,7 +145,7 @@ def test_checklist_ocr_reads_scanned_pages_by_regions_and_records_status():
     assert page2["text"].endswith("可解吸瓦斯量 $ m^{3}/t $：1.02")
     block = page2["text_blocks"][0]
     assert block["source"] == "ocr" and block["label"] == "text"
-    # Pixel box converted to PDF points with the rendered image size: 293 * 600 / 1654 etc.
+    # 根据渲染图像尺寸将像素框转换为 PDF 点坐标，例如 293 * 600 / 1654。
     assert abs(block["bbox"][0] - 293 * 600 / 1654) < 1e-6
     assert abs(block["bbox"][3] - 1620 * 800 / 2339) < 1e-6
     assert blocks_by_page[2][0]["confidence"] is None
@@ -167,4 +167,4 @@ def test_line_ocr_is_still_used_by_the_rules_engine():
     asyncio.run(service._ocr_scanned_pages(AsyncMock(), uuid4(), pages, Path("/tmp/x.pdf"), False))
     assert service.ocr_client.recognize.await_count == 1
     assert pages[0]["ocr_status"] == "ok"
-    assert artifact_service.PREPROCESS_PROFILE_VERSION  # the shared constant is unchanged in meaning
+    assert artifact_service.PREPROCESS_PROFILE_VERSION  # 共享常量的含义保持不变。

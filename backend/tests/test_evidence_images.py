@@ -1,4 +1,4 @@
-"""Source-render artifact reuse and locator provenance checks."""
+"""来源渲染产物复用和定位器来源检查。"""
 
 import asyncio
 import hashlib

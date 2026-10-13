@@ -1,7 +1,7 @@
-"""Short-transaction call accounting; field result publication belongs to the scheduler.
+"""短事务调用计费；字段结果发布由调度器负责。
 
-``reservation.gateway_outcome`` keeps the transport result for crash/re-delivery recovery.
-It is not a published fact. Late usage can settle an old fence without changing field state.
+reservation.gateway_outcome 保留传输结果，供崩溃或重新投递时恢复。
+它不是已发布事实。迟到的用量记录可以结算旧栅栏，而不改变字段状态。
 """
 
 import asyncio
@@ -21,7 +21,7 @@ from app.models.execution import ParseFieldJob, ParseModelCall
 
 
 class AdminHardLimitExceeded(RuntimeError):
-    """The frozen administrator cost ceiling rejected a new real attempt."""
+    """冻结的管理员成本上限拒绝了新的实际尝试。"""
 
     def __init__(self, limit: int, accounted: int, requested: int):
         self.limit, self.accounted, self.requested = limit, accounted, requested
@@ -36,7 +36,7 @@ def token_total(value: dict | None) -> int:
 
 
 def accounted_tokens(call: "CallRecord") -> int:
-    """Unknown charges keep the full reserved upper bound, including after expiry."""
+    """未知费用保留完整的预留上限，即使预留已过期也一样。"""
     if call.state == "queued":
         return 0
     if call.charge_state in {"actual", "reconciled"}:
@@ -121,7 +121,7 @@ def reconcile_record(call: Any, usage: dict, revision: int) -> bool:
 
 
 class CallLedger:
-    """Production PostgreSQL ledger. Each method owns and closes a short transaction."""
+    """生产环境 PostgreSQL 账本。每个方法负责一个短事务的开启和关闭。"""
 
     def __init__(self, session_factory, *, unknown_seconds=300):
         self.sessions, self.unknown_seconds = session_factory, unknown_seconds
@@ -152,8 +152,8 @@ class CallLedger:
             call = await db.get(ParseModelCall, call_id)
             if call is None:
                 raise KeyError(call_id)
-            # Always use run -> call lock order, including unlimited attempts, so
-            # one caller cannot bypass a concurrent run cost check.
+            # 即使尝试次数不限，也始终按运行 -> 调用顺序加锁，
+            # 防止调用方绕过并发的运行成本检查。
             run = (await db.execute(select(ParseRun).join(
                 ParseFieldJob, ParseFieldJob.run_id == ParseRun.parse_run_id
             ).where(ParseFieldJob.job_id == call.job_id).with_for_update(of=ParseRun))).scalar_one_or_none()
@@ -182,7 +182,7 @@ class CallLedger:
             return bool(result.rowcount == 1)
 
     async def record_wait(self, call_id, outcome: dict) -> None:
-        """Unsent administrator waits are durable but never count as a charge."""
+        """未发送的管理员等待记录会持久化，但永远不计为费用。"""
         async with self.sessions() as db, db.begin():
             row = await db.get(ParseModelCall, call_id, with_for_update=True)
             if row is not None and row.state == "queued":
@@ -218,7 +218,7 @@ class CallLedger:
                 if row.state in {"sending", "started"}:
                     row.state, row.completed_at = "uncertain", now
                 row.charge_state, row.usage_quality = "uncertain", "estimated"
-                # Expiry permits recovery; it never erases the potential charge.
+                # 过期允许恢复，但不会抹掉潜在费用。
                 row.unknown_deadline = None
             return [call_record(row) for row in rows]
 
@@ -236,7 +236,7 @@ def totals(records: list[CallRecord]) -> dict:
 
 
 class MemoryCallLedger:
-    """Deterministic fake ledger for tests; never a production persistence fallback."""
+    """用于测试的确定性模拟账本，绝不作为生产持久化回退。"""
 
     def __init__(self, *, unknown_seconds=300):
         self.records, self.dispatches = {}, {}

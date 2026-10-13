@@ -1,7 +1,7 @@
-"""Versioned rule semantics, independent of persistence and extraction execution.
+"""独立于持久化和提取执行的版本化规则语义。
 
-New rules persist the contract in ``strategy.semantic_contract``. Normalization
-never mutates a source rule, so a child run can freeze its own snapshot safely.
+新规则将契约持久化在 strategy.semantic_contract 中。规范化不会修改来源规则，
+因此子运行可以安全冻结自己的快照。
 """
 
 import hashlib
@@ -54,7 +54,7 @@ class RetrievalPolicy(BaseModel):
     ocr_variants: list[str] = Field(default_factory=list)
     formula_patterns: list[str] = Field(default_factory=list)
     table_patterns: list[str] = Field(default_factory=list)
-    # Legacy retrieval hints remain part of the semantic identity.
+    # 旧版检索提示仍属于语义身份的一部分。
     labels: list[str] = Field(default_factory=list)
     exclude_terms: list[str] = Field(default_factory=list)
     units: list[str] = Field(default_factory=list)
@@ -139,10 +139,10 @@ def _get(rule: Any, key: str, default=None):
 
 
 def normalize_rule_semantics(rule: Any) -> dict:
-    """Adapt v1 rules to v2 without inventing an all-occurrences obligation.
+    """将 v1 规则适配到 v2，不虚构“全部出现项”的义务。
 
-    Return a detached JSON-compatible snapshot. Dimensions outside the identity
-    remain applicable by default; absence of a dimension value is never N/A.
+    返回独立的 JSON 兼容快照。身份之外的维度默认仍然适用；
+    缺少维度值永远不等于 N/A。
     """
     strategy = deepcopy(_get(rule, "strategy") or {})
     knowledge = strategy.get("agent_extract") or {}
@@ -177,8 +177,8 @@ def normalize_rule_semantics(rule: Any) -> dict:
         raise ValueError("身份维度必须是适用维度")
     if _get(rule, "unit") and contract["unit_policy"]["mode"] == "not_applicable":
         raise ValueError("配置了期望单位的规则不能声明单位不适用")
-    # Metadata is deliberately excluded: publishing/reordering an unchanged
-    # rule does not change its meaning. All extraction-affecting settings remain.
+    # 有意排除元数据：发布或重新排序未改变的规则不会改变其含义。
+    # 所有影响提取的设置都会保留。
     return {
         "field_key": _get(rule, "field_key"),
         "field_name_cn": _get(rule, "field_name_cn"),
@@ -197,7 +197,7 @@ def normalize_rule_semantics(rule: Any) -> dict:
 
 
 def rule_semantic_hash(rule: Any) -> str:
-    """Hash actual frozen semantics, never field_key or version alone."""
+    """对实际冻结语义计算摘要，不能只对 field_key 或版本计算摘要。"""
     payload = json.dumps(
         normalize_rule_semantics(rule),
         ensure_ascii=False,

@@ -1,8 +1,7 @@
-"""P19 runtime integration checks for real Redis Lua and a non-eager Celery worker.
+"""P19 运行时集成检查，使用真实 Redis Lua 和非立即执行的 Celery 工作进程。
 
-These tests are deliberately opt-in through ``P05_TEST_DATABASE_NAME``.  They
-use only synthetic rows in the isolated G1 database and never call a model
-service.  Redis keys are namespaced per test and cleaned by that namespace.
+这些测试必须通过 P05_TEST_DATABASE_NAME 显式启用。它们只使用隔离 G1 数据库中的模拟记录，
+从不调用模型服务。Redis 键按测试隔离命名空间，并通过该命名空间清理。
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ from tests.test_field_scheduler_postgres import seed
 
 
 class _ExpiringRedis:
-    """Run the production Lua unchanged, then bound each test key's lifetime."""
+    """原样运行生产 Lua，并限制每个测试键的生命周期。"""
 
     def __init__(self, redis):
         self.redis = redis
@@ -89,7 +88,7 @@ async def test_real_redis_lua_circuit_is_shared_and_epoch_fenced():
         recovered = await circuit.acquire(key)
         assert recovered.allowed and recovered.epoch > probe.epoch
 
-        # A stale report from the old epoch cannot reopen or close the circuit.
+        # 旧版本的过期报告不能重新打开或关闭熔断器。
         await circuit.failure(key, probe)
         still_open = await circuit.acquire(key)
         assert still_open.allowed
@@ -114,7 +113,7 @@ async def test_non_eager_celery_worker_delivers_outbox_and_runs_multiple_quantum
             return QuantumOutcome("yielded", {"cursor": 1})
         return QuantumOutcome("done", {"cursor": 2}, semantic_state="completed")
 
-    # A first bounded window leaves durable wakeup work in the outbox.
+    # 第一个有界窗口会在发件箱中留下持久化唤醒工作。
     initial = await reliable_extraction_service.process_run(
         sessions, run_id, executor=executor, owner="p19-seed", max_quantums=1
     )
@@ -162,8 +161,8 @@ async def test_non_eager_celery_worker_delivers_outbox_and_runs_multiple_quantum
     assert delivered and delivered[0]["payload"]["run_id"] == str(run_id)
 
     with start_worker(app, perform_ping_check=False, concurrency=1, pool="solo", loglevel="WARNING", queues=[queue]):
-        # The worker is started after enqueueing so the test proves broker
-        # delivery, while the bounded wait avoids hanging on a broken worker.
+        # 工作进程在入队后启动，以证明消息代理确实完成投递；
+        # 有界等待可避免工作进程故障时测试挂起。
         await asyncio.wait_for(asyncio.to_thread(finished.wait, 15), timeout=20)
         assert finished.is_set()
         for message in list(broker_results):
@@ -176,4 +175,3 @@ async def test_non_eager_celery_worker_delivers_outbox_and_runs_multiple_quantum
     assert sum(calls.values()) == 4
     assert result["remaining_runnable"] == 0
     app.close()
-

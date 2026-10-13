@@ -39,7 +39,7 @@ class DimensionSpec(BaseModel):
 
 
 class AgentKnowledge(BaseModel):
-    """Versioned field background, instructions and auditable retrieval hints."""
+    """字段的版本化背景、说明和可审计检索提示。"""
 
     model_config = ConfigDict(extra="forbid")
     background: str = Field(default="", max_length=4000)

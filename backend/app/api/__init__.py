@@ -1,4 +1,4 @@
-"""API routes package"""
+"""API 路由包。"""
 
 from app.api.artifacts import router as artifacts_router
 from app.api.batches import router as batches_router

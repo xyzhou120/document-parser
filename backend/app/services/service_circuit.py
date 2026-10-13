@@ -1,7 +1,7 @@
-"""Shared, non-blocking service circuit for OCR and model calls.
+"""供 OCR 和模型调用共享的非阻塞服务熔断器。
 
-Production uses Redis atomic transitions. Separate service kinds and deployment
-config hashes prevent an OCR outage from stopping a healthy model service.
+生产环境使用 Redis 原子状态转换。独立的服务类型和部署配置摘要
+可以防止 OCR 故障影响健康的模型服务。
 """
 
 import asyncio
@@ -51,7 +51,7 @@ def transition(state, operation, now, policy, epoch=None, probe=False):
         elif state["until"] == 0:
             result["allowed"] = True
         elif now >= state["until"]:
-            # A lost probe lease must not hold the service open forever.
+    # 丢失的探测租约不能让服务一直保持开放。
             if state["probes"]:
                 state["probes"] = 0
                 state["epoch"] += 1
@@ -78,7 +78,7 @@ def transition(state, operation, now, policy, epoch=None, probe=False):
 
 
 class MemoryCircuitStore:
-    """Fake shared store; inject RedisCircuitStore in workers."""
+    """用于测试的共享存储；工作进程中注入 RedisCircuitStore。"""
 
     def __init__(self):
         self.states, self.lock = {}, asyncio.Lock()

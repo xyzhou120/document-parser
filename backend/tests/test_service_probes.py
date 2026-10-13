@@ -22,7 +22,7 @@ async def test_slow_http_client_initialization_does_not_block_other_dependency_p
     with patch("app.api.services.httpx.AsyncClient", side_effect=factory):
         task = asyncio.create_task(_probe_http_client(8))
         assert await asyncio.to_thread(started.wait, 1)
-        # An independent probe can progress while certificate setup is blocked.
+        # 证书初始化阻塞时，独立探测仍可继续。
         progress = await asyncio.wait_for(asyncio.sleep(0, result=True), .5)
         assert progress
         release.set()

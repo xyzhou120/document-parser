@@ -1,12 +1,10 @@
-"""Plan B defect fixes (2026-10-10).
+"""方案 B 缺陷修复（2026-10-10）。
 
-1. The pre-call estimate is corrected from the gateway's real usage, so it tracks the provider
-   instead of a fixed constant that over-counted text by about 1.4-1.5x.
-2. The answer cap is never shrunk below ``min_output_tokens``.  When the remaining allowance
-   cannot pay for a prompt plus that floor, the call is refused by the budget check; it is no
-   longer sent with a tiny cap that the model then truncates.
+1. 调用前估算根据网关实际用量校正，从而跟随提供方，而不是使用高估文本约 1.4 至 1.5 倍的固定常量。
+2. 答案上限不会低于 min_output_tokens。剩余预算无法同时支付提示和该下限时，
+   预算检查会拒绝调用，不再用很小的上限发送请求后让模型截断答案。
 
-Uses the same fake client pattern as the other agent tests, without any network.
+使用与其他代理测试相同的模拟客户端模式，不访问网络。
 """
 
 import asyncio
@@ -19,7 +17,7 @@ from app.rules.spec import RuleSpec
 
 
 class UsageClient:
-    """Reports a fixed prompt-token count so calibration can be checked exactly."""
+    """报告固定的提示 token 数，使校准结果可精确核对。"""
 
     def __init__(self, responses, prompt_tokens=None, completion_tokens=50):
         self.responses = iter(responses)
@@ -66,7 +64,7 @@ def run(client, settings):
     return agent, asyncio.run(agent.extract_all(PAGES, [rule()], provider))
 
 
-# --- defect 2: output floor -----------------------------------------------------------------
+# --- 缺陷 2：输出下限 -----------------------------------------------------------------
 
 def test_answer_cap_is_never_below_the_floor_when_a_call_is_made():
     client = UsageClient([{"actions": [{"type": "view_page", "page_number": 1}]}, {"fields": []}])
@@ -76,8 +74,8 @@ def test_answer_cap_is_never_below_the_floor_when_a_call_is_made():
 
 
 def test_small_remaining_budget_refuses_the_call_instead_of_truncating_it():
-    # The initial prompt alone is several hundred tokens, so a 2600-token allowance leaves
-    # less than the 2500-token answer floor once the prompt is counted: no call is paid for.
+    # 初始提示已占数百 token，因此 2600 token 的预算在计入提示后
+    # 不足 2500 token 的答案下限：不应发起付费调用。
     client = UsageClient([{"fields": []}])
     _, (fields, details, runtime) = run(client, {"max_rounds": 5, "max_total_tokens": 2600})
     assert client.calls == []
@@ -96,14 +94,14 @@ def test_cap_is_at_least_the_floor_when_a_call_is_made_near_the_limit():
     assert result["max_tokens"] >= 2500
 
 
-# --- defect 1: calibrated estimate ----------------------------------------------------------
+# --- 缺陷 1：校准估算 ----------------------------------------------------------
 
 def test_estimate_starts_from_measured_factor_and_tracks_real_usage():
     agent = ChecklistAgent(settings_override={})
     messages = [{"role": "user", "content": "字" * 1000}]
     assert agent._estimate_tokens(messages) == math.ceil(1000 * agent._token_per_char)
     assert agent._token_per_char == 0.55
-    # The provider reports far fewer prompt tokens than the start factor predicts.
+    # 提供方报告的提示 token 数远低于初始系数预测值。
     agent._observe_usage(messages, {"prompt_tokens": 300, "completion_tokens": 10,
                                     "total_tokens": 310})
     assert agent._token_per_char < 0.55

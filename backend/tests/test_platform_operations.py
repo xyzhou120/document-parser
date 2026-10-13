@@ -93,7 +93,7 @@ def test_migration_chain_matches_all_current_model_columns():
     indexes = {}
 
     def add_column(table_name, column, **kwargs):
-        # Additive v2 migrations extend ParseRun without replacing the baseline.
+        # 增量 v2 迁移扩展 ParseRun，但不替换基线。
         captured[table_name] = (*captured[table_name], column)
 
     for migration in reversed(list(directory.walk_revisions())):

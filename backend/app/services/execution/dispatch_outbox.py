@@ -1,4 +1,4 @@
-"""At-least-once dispatch for execution outbox rows."""
+"""执行发件箱记录的至少一次投递。"""
 
 from __future__ import annotations
 
@@ -21,11 +21,11 @@ class DispatchOutbox:
 
     async def claim_field_runs(self, *, now: datetime | None = None, limit: int = 100,
                                run_id=None, run_ids=None) -> list[ExecutionOutbox]:
-        """Claim at most one wake per run, ordered by the last dispatched turn.
+        """每次运行最多领取一个唤醒事件，并按上次投递轮次排序。
 
-        All due field events for the selected run are coalesced in one SQL
-        update. The representative remains retryable on a broker failure.
-        Run locks serialize concurrent dispatchers without a provider call.
+        所选运行中到期的字段事件在一次 SQL 更新中合并。
+        消息代理故障时代表事件仍可重试。运行锁在不调用提供方的情况下
+        串行化并发调度器。
         """
         now = now or datetime.utcnow()
         due = (ExecutionOutbox.dispatch_state.in_(["pending", "failed"]),
@@ -70,8 +70,8 @@ class DispatchOutbox:
                             "dispatch_outstanding": True, "dispatch_event_id": str(wake.event_id),
                             "dispatch_attempt": wake.attempts}
             representatives.append(wake)
-        # Terminal/control runs can retain audit events, but must not enter
-        # Celery. This also absorbs old queued events after cancellation.
+        # 终止或受控运行可以保留审计事件，但不能进入 Celery。
+        # 这也会吸收取消后遗留的旧队列事件。
         blocked_jobs = select(ParseFieldJob.job_id).join(ParseRun, ParseRun.parse_run_id == ParseFieldJob.run_id).where(
             ParseRun.status.not_in(ACTIVE_RUN_STATES))
         await self.db.execute(update(ExecutionOutbox).where(

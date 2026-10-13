@@ -1,4 +1,4 @@
-"""Read-only fact projections. Scores never replace evidence, risks, or human provenance."""
+"""只读事实投影。分数不能替代证据、风险或人工来源信息。"""
 
 import hashlib
 import json
@@ -53,9 +53,9 @@ def _unique(items):
     return list({_json(item): item for item in items}.values())
 
 
-# Plan C6 (2026-10-10): statuses that must not be offered downstream.  partial_candidates means the
-# search did not finish; not_found means it finished without a candidate; incomplete means budget,
-# output or page-readability limits stopped it.  Each keeps its reason codes for review.
+# 方案 C6（2026-10-10）：以下状态不能提供给下游。
+# partial_candidates 表示搜索未完成；not_found 表示已完成搜索但没有候选；
+# incomplete 表示预算、输出或页面可读性限制导致停止。每种状态都保留原因码供复核。
 UNAVAILABLE_VALIDATION_STATUSES = {"partial_candidates", "not_found", "incomplete"}
 
 
@@ -68,7 +68,7 @@ def _risks(item):
 
 
 def _evidence(item, registry):
-    """Resolve registry refs and retain native/OCR page/context evidence without inventing bbox."""
+    """解析注册表引用，并保留原生文本或 OCR 的页面、上下文证据，不伪造 bbox。"""
     result = deepcopy(item.get("evidence") or [])
     if isinstance(result, dict):
         result = [result]
@@ -169,8 +169,8 @@ def _fact(field, item, run, rule, index, *, reviewed=False):
         for ref in evidence
     )
     coverage = deepcopy(item.get("coverage") or detail.get("coverage") or {"status": "UNKNOWN"})
-    # Plan C6: coverage is judged per field.  A field's own failures count; failures recorded for
-    # other fields of the same run do not make this field partial.
+    # 方案 C6：按字段判断覆盖率。字段自身的失败计入；同一次运行其他字段的失败
+    # 不会使当前字段变为 partial。
     field_failures = coverage["failures"] if "failures" in coverage else detail.get("failures")
     partial = bool(
         coverage.get("unvisited_pages")
@@ -358,7 +358,7 @@ def _merge_facts(facts):
 
 
 def build_fact_view(run, fields, *, view="automatic", revisions=(), invalidations=(), invalidation_resolver=None):
-    """Project immutable automatic rows or explicitly human-reviewed revisions."""
+    """投影不可变的自动记录或显式人工复核修订。"""
     requested_view = view
     if view == "available":
         view = "automatic"
@@ -397,7 +397,7 @@ def build_fact_view(run, fields, *, view="automatic", revisions=(), invalidation
                 fact = _fact(field, item, run, rules.get(key, {}), index, reviewed=True)
                 fact.fact_id = "fact-" + _digest([fact.fact_id, str(row.review_id), row.revision])
                 fact.provenance.update(review)
-                # Correction is a new assertion, not the previous automatic probability.
+                # 修正是新的断言，不是之前的自动概率。
                 fact.provenance["automatic_confidence"] = _get(field, "confidence")
                 facts.append(fact)
     elif view == "automatic":
@@ -423,7 +423,7 @@ def build_fact_view(run, fields, *, view="automatic", revisions=(), invalidation
             for index, item in enumerate(items):
                 if not isinstance(item, dict) or not _present(item.get("value")):
                     continue
-                # Group projections retain all occurrence-level validation and dimension evidence.
+                # 聚合投影保留所有出现项级别的校验和维度证据。
                 if groups:
                     occurrence_ids = set(item.get("occurrence_ids") or [])
                     related = [
@@ -496,7 +496,7 @@ def build_fact_view(run, fields, *, view="automatic", revisions=(), invalidation
 
 
 def compare_fact_views(before: FactViewResponse, after: FactViewResponse):
-    """Compare all facts semantically, preserving duplicate unknown-identity occurrences."""
+    """比较所有事实的语义，同时保留身份未知的重复出现项。"""
     if before.document_id != after.document_id:
         raise ValueError("Runs must belong to the same document")
 
@@ -561,12 +561,12 @@ def compare_fact_views(before: FactViewResponse, after: FactViewResponse):
 
 
 def build_run_facts(run, fields, *, invalidations=()):
-    """Convenience projection for consumers that need only the automatic fact list."""
+    """为只需要自动事实列表的消费者提供便捷投影。"""
     return build_fact_view(run, fields, invalidations=invalidations).facts
 
 
 async def build_fact_view_with_invalidations(db, run, fields, **kwargs):
-    """Current fact reader: apply all effective document source invalidations."""
+    """当前事实读取器：应用文档来源的全部有效失效记录。"""
     from app.services.fact_policy_v2 import load_invalidations
 
     return build_fact_view(run, fields, invalidations=await load_invalidations(db, run.document_id), **kwargs)

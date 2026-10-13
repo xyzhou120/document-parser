@@ -1,4 +1,4 @@
-"""Upload routing must honor the local reliable switch before queueing work."""
+"""上传路由必须在任务入队前遵循本地可靠提取开关。"""
 
 import io
 from types import SimpleNamespace
@@ -63,7 +63,7 @@ async def test_default_upload_goes_directly_to_content_build_when_reliable_enabl
     assert response.build_id == build_id and response.parse_run_id is None
     assert response.contract_version == "reliable-extraction-v2"
     ctx.legacy.assert_not_called()
-    assert ctx.db.add.call_count == 1  # Only Document; no legacy run.
+    assert ctx.db.add.call_count == 1  # 只创建 Document，不创建旧版运行。
     ctx.build.assert_called_once_with(args=[str(build_id)], queue="reliable-execution")
 
 

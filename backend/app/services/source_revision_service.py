@@ -1,4 +1,4 @@
-"""Conservative source correction: immutable parents and explicit full re-extraction."""
+"""保守的来源修正：父记录不可变，并显式执行完整重新提取。"""
 
 import hashlib
 import math
@@ -21,7 +21,7 @@ def text_hash(value: str) -> str:
 
 
 def correct_page(page: dict, payload: SourceRevisionPayload, revision_id: UUID) -> dict:
-    """Apply an exact span, shifting intact blocks and invalidating overlapping structure."""
+    """应用精确文本范围，移动未受影响的块，并使重叠结构失效。"""
     updated = deepcopy(page)
     original = str(page.get("text") or "")
     start, end = payload.start_offset, payload.end_offset
@@ -36,8 +36,8 @@ def correct_page(page: dict, payload: SourceRevisionPayload, revision_id: UUID) 
                    if isinstance(block.get("start_offset"), int) and isinstance(block.get("end_offset"), int)
                    and block["start_offset"] < end and block["end_offset"] > start]
     ocr_based = any(block.get("source") in {"ocr", "automatic_ocr"} or block.get("ocr_based") for block in overlapping)
-    # Keep the raw native layer separate on mixed/scanned pages.  A human correction
-    # of an OCR span must never turn the entire OCR page into a native text layer.
+    # 在混合或扫描页面上保持原始原生文本层独立。
+    # 人工修正 OCR 范围时，不能把整个 OCR 页面变成原生文本层。
     if not ocr_based and end <= len(native_original) and native_original[start:end] == payload.original_text:
         updated["native_text"] = native_original[:start] + replacement + native_original[end:]
     else:
@@ -63,8 +63,8 @@ def correct_page(page: dict, payload: SourceRevisionPayload, revision_id: UUID) 
                    "corrected_transcription": replacement,
                    "source_revision_id": str(revision_id)})
     updated["text_blocks"] = sorted(blocks, key=lambda block: block["start_offset"])
-    # Exact table-cell/ocr dependencies are not currently tracked.  Keeping these
-    # would let a strategy read the superseded value after a text correction.
+    # 当前未跟踪精确的表格单元格和 OCR 依赖。保留这些依赖会让策略在文本修正后
+    # 继续读取已被替代的值。
     updated["tables"] = []
     updated["ocr_blocks"] = []
     updated["source_review_status"] = "PARTIALLY_REVIEWED"
@@ -131,7 +131,7 @@ class SourceRevisionService:
             from app.services.artifact_service import preprocessing_profile
             from app.services.parse_service import snapshot_rules
             engine = run.extraction_profile.get("extraction_engine", "rules")
-            # Keep rules/model settings immutable, but reset run-result metadata.
+            # 保持规则和模型设置不可变，但重置运行结果元数据。
             profile = rule_snapshot(snapshot_rules(run.extraction_profile), document.checklist_type, engine)
             for key in ("agent_config", "agent_model", "rule_bundle_id"):
                 if key in run.extraction_profile:
@@ -199,8 +199,7 @@ class SourceRevisionService:
             if start is None or end is None or (page.get("text") or "")[start:end] != payload.original_text:
                 raise HTTPException(409, "确认区域原文与 Artifact 不一致")
         if settings.app.reliable_enabled:
-            # Content changes preserve the existing frozen rule/model denominator.
-            # No current rule repository lookup is allowed on this branch.
+            # 内容变更保留已有的冻结规则和模型分母；此分支不能查询当前规则仓库。
             from app.models.content import DocumentProcessingHead
             head = await db.get(DocumentProcessingHead, document.document_id)
             selected_run = await db.get(ParseRun, payload.parent_run_id) if payload.parent_run_id else await db.scalar(
@@ -214,8 +213,7 @@ class SourceRevisionService:
         else:
             selected_run = None
             profile = await self._rules_profile(db, document, payload)
-        # User supplied field lists are hints only; absent dependency tracking
-        # requires conservative full re-extraction of every active field.
+            # 用户提供的字段列表仅作提示；由于没有依赖跟踪，必须保守地重新提取所有启用字段。
         fields = [rule["field_key"] for rule in profile["rules"]]
         revision = SourceRevision(revision_id=revision_id, document_id=document.document_id,
                                   parent_artifact_id=artifact.artifact_id,
@@ -237,8 +235,7 @@ class SourceRevisionService:
         db.add(revision)
         await db.flush()
         if settings.app.reliable_enabled:
-            # Reliable mode bridges the append-only human audit into P11's content
-            # publisher.  Legacy mode above remains byte-for-byte compatible.
+            # 可靠模式将只追加的人工审计接入 P11 内容发布器；上方旧版模式保持字节级兼容。
             from app.services.content_publish_service import content_publish_service
             head = await content_publish_service._head(db, document.document_id, lock=True)
             if head.active_content_revision_id:
@@ -261,12 +258,12 @@ class SourceRevisionService:
                     expected_invalidation_watermark=head.invalidation_watermark,
                 )
                 successor = result.get("successor")
-                # SourceRevision has already been appended and is immutable.  The
-                # successor is resolved through ContentRevision.origin_source_revision_id.
+                # SourceRevision 已追加且不可变；后继记录通过
+                # ContentRevision.origin_source_revision_id 解析。
                 await db.commit()
                 return revision, successor
-            # CONFIRM has no derived text; retain an audit row without inventing a
-            # content revision.  A later explicit enrichment can publish it.
+            # CONFIRM 没有派生文本；保留审计记录，不伪造内容修订。
+            # 后续显式补充信息时再发布内容修订。
             await db.commit()
             return revision, None
         await db.commit()
@@ -351,7 +348,7 @@ class SourceRevisionService:
     async def extract(self, db: AsyncSession, revision_id: UUID, payload):
         revision = await self.revision(db, revision_id)
         document = await self.document(db, revision.document_id, lock=True)
-        # This idempotency key is scoped to both document and source revision.
+        # 此幂等键同时限定在文档和来源修订范围内。
         existing = await db.scalar(select(ParseRun).where(
             ParseRun.document_id == document.document_id,
             ParseRun.extraction_profile["source_revision_id"].as_string() == str(revision_id),
@@ -387,7 +384,7 @@ class SourceRevisionService:
 
 
 async def source_state(db: AsyncSession, run: ParseRun) -> dict:
-    """Fact consumers can flag changed upstream content without accepting any fact."""
+    """事实消费者可以标记上游内容变更，但不能据此接受任何事实。"""
     if not run.artifact_id:
         return {"source_review_status": "UNVERIFIED", "stale_source": False, "revision_ids": [],
                 "source_state_evaluated": False}

@@ -1,4 +1,4 @@
-"""Read artifact lineage and append source corrections; originals remain immutable."""
+"""读取产物沿袭关系并追加来源修正；原始产物保持不可变。"""
 
 from uuid import UUID
 

@@ -1,4 +1,4 @@
-"""Services package"""
+"""服务模块包。"""
 
 from app.services.parse_service import ParseService
 from app.services.quality_service import assess_page_quality

@@ -1,9 +1,8 @@
-"""Fair, resumable field scheduling state machine.
+"""公平且可恢复的字段调度状态机。
 
-This module owns field-level control state.  It does not know how a model is
-called or how candidates are produced.  Every mutation that can publish work
-is guarded by a :class:`LeaseToken`; an old worker therefore gets a
-``StaleLeaseError`` instead of silently overwriting a newer attempt.
+本模块负责字段级控制状态，不关心模型调用方式或候选项生成方式。
+所有可能发布工作的变更都受 LeaseToken 保护，因此旧工作进程会收到
+而不是静默覆盖更新的尝试，并抛出 StaleLeaseError。
 """
 
 from __future__ import annotations
@@ -33,25 +32,25 @@ TERMINAL_FIELD_STATES = {"done", "failed_terminal", "cancelled", "superseded"}
 
 
 def wakeup_dedupe_key(job_id: UUID, progress_seq: int) -> str:
-    """Stable idempotency key for one persisted progress transition."""
+    """一次持久化进度转换的稳定幂等键。"""
     return f"{job_id}:{progress_seq}"
 
 
 class FieldExecutionError(RuntimeError):
-    """A worker attempted an invalid field transition."""
+    """工作进程尝试了无效的字段状态转换。"""
 
 
 class StaleLeaseError(FieldExecutionError):
-    """A lease expired or was revoked by takeover or run control."""
+    """租约已过期，或因接管、运行控制而被撤销。"""
 
 
 class RunControlError(RuntimeError):
-    """A run control operation is not valid for its current state."""
+    """运行控制操作对于当前状态无效。"""
 
 
 @dataclass(frozen=True, slots=True)
 class LeaseToken:
-    """Capabilities captured when a worker claims a job."""
+    """工作进程领取任务时记录的能力信息。"""
 
     run_id: UUID
     job_id: UUID
@@ -62,7 +61,7 @@ class LeaseToken:
 
 @dataclass(slots=True)
 class QuantumOutcome:
-    """Minimal P13 runner result; model/retrieval details stay outside P05."""
+    """最小 P13 运行结果；模型和检索细节留在 P05 之外。"""
 
     state: str
     checkpoint: dict[str, Any]
@@ -75,13 +74,12 @@ QuantumExecutor = Callable[[LeaseToken, dict[str, Any]], Awaitable[QuantumOutcom
 
 
 class FieldSchedulerRunner:
-    """Claim -> external quantum -> short guarded result transaction.
+    """领取任务 -> 执行外部量子 -> 短事务保护结果。
 
-    ``sessions`` is an async_sessionmaker (or a compatible injected factory).
-    The result writer may persist P06 candidate decisions and P10 validated
-    facts; it runs only after the lease guard and in the same transaction as
-    the checkpoint and wake-up event.  Provider billing is independently
-    persisted by P07, including when this result loses its lease.
+        sessions 是 async_sessionmaker（或兼容的注入工厂）。
+        结果写入方可以持久化 P06 候选决策和 P10 已校验事实；它只在租约防护后
+        运行，并与检查点和唤醒事件处于同一事务。即使本结果失去租约，
+        P07 仍会独立持久化提供方计费信息。
     """
 
     def __init__(self, sessions: Any):
@@ -98,7 +96,7 @@ class FieldSchedulerRunner:
                 return None
             job = await db.get(ParseFieldJob, token.job_id)
             checkpoint = deepcopy(job.checkpoint or {})
-        # No SQL transaction is held across a model/OCR request.
+        # 模型或 OCR 请求期间不持有 SQL 事务。
         outcome = await execute(token, checkpoint)
         async with self.sessions() as db, db.begin():
             repository = JobRepository(db)
@@ -135,7 +133,7 @@ def require_lease(job: ParseFieldJob, run: ParseRun, token: LeaseToken, *, now: 
 
 
 class Scheduler:
-    """Pure transition helper used by ``JobRepository`` and deterministic tests."""
+    """供 JobRepository 和确定性测试使用的纯转换辅助函数。"""
 
     @staticmethod
     def claim(job: ParseFieldJob, run: ParseRun, owner: str, *, now: datetime | None = None,
@@ -176,10 +174,9 @@ class Scheduler:
     @staticmethod
     def yield_quantum(job: ParseFieldJob, run: ParseRun, token: LeaseToken, checkpoint: dict[str, Any],
                       *, retry_at: datetime | None = None, now: datetime | None = None) -> None:
-        """Persist progress and give the quantum back to the scheduler.
+        """持久化进度，并将本次量子执行权交还调度器。
 
-        ``yielded`` is an observable internal state.  The due scanner changes
-        it back to ``queued`` without user interaction.
+        yielded 是可观测的内部状态。到期扫描器无需用户操作即可将其改回 queued。
         """
         require_lease(job, run, token, now=now)
         job.checkpoint = dict(checkpoint)
@@ -235,7 +232,7 @@ class Scheduler:
 
 
 def aggregate_run_status(run: ParseRun, jobs: list[ParseFieldJob]) -> str:
-    """Return the canonical control-first aggregate status for a run."""
+    """返回以控制状态优先的运行聚合状态。"""
     if run.status in {"PAUSED", "CANCELLED", "SUPERSEDED"}:
         return run.status
     if not jobs:

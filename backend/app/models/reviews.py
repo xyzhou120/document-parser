@@ -1,4 +1,4 @@
-"""Append-only human review revisions, separate from automatic extraction rows."""
+"""只追加的人工复核修订，与自动提取记录分离。"""
 
 import uuid
 from datetime import datetime

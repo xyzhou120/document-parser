@@ -1,4 +1,4 @@
-"""Human review APIs with optimistic concurrency and append-only audit rows."""
+"""人工复核接口，采用乐观并发控制和只追加的审计记录。"""
 
 import asyncio
 import hashlib
@@ -31,7 +31,7 @@ def _field_snapshot(field: ExtractedFieldModel | None) -> dict:
         "extraction_detail": deepcopy(field.extraction_detail or {}),
         "evidence": deepcopy(field.evidence or {}),
         "validation_status": field.validation_status,
-        # Automatic confidence is deliberately retained as provenance only.
+        # 自动置信度仅作为来源信息保留。
         "confidence": field.confidence,
     }
 
@@ -106,7 +106,7 @@ def _validate_facts(facts, field: ExtractedFieldModel, artifact_pages: list[dict
 
 
 async def _source_pages(doc: Document) -> list[dict]:
-    """Use the hashed original for geometry; cached OCR is never the authority."""
+    """使用哈希校验后的原件确定几何位置；缓存 OCR 不是权威来源。"""
     source = await asyncio.to_thread(minio_client.download, doc.file_path)
     if hashlib.sha256(source).hexdigest() != doc.file_hash:
         raise HTTPException(status_code=409, detail="对象存储源PDF与登记hash不一致")
@@ -180,7 +180,7 @@ async def review_field(
     payload: FieldReviewRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    # Serializes submissions on the same run, including the first revision.
+    # 串行处理同一次运行的提交，包括首次修订。
     locked = await db.execute(select(ParseRun).where(ParseRun.parse_run_id == parse_run_id).with_for_update())
     if locked.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="解析运行不存在")

@@ -1,8 +1,7 @@
-"""Gold-matrix-v2 scorer for reliable extraction.
+"""可靠提取的 gold-matrix-v2 评分器。
 
-This module is deliberately independent from the legacy checklist scorer.  It
-scores a closed ``document x rule`` matrix and treats incomplete work as a
-measured outcome instead of silently removing it from the denominator.
+本模块有意独立于旧版清单评分器。它对封闭的 document x rule 矩阵评分，
+并将未完成工作作为可度量结果，而不是静默从分母中删除。
 """
 
 from __future__ import annotations
@@ -46,10 +45,9 @@ def _number(value: Any) -> Decimal | None:
 
 
 def _norm(value: Any) -> str:
-    """Normalize only harmless textual/number formatting.
+    """只规范化无影响的文本和数字格式。
 
-    Unit conversion is intentionally not inferred.  A rule may opt into an
-    explicit ``unit_conversions`` table in a future contract extension.
+    单位换算不会被自动推断。未来契约扩展中，规则可以显式启用 unit_conversions 表。
     """
 
     number = _number(value)
@@ -90,8 +88,8 @@ def _occurrences(fact: dict[str, Any]) -> list[dict[str, Any]]:
     values = fact.get("occurrences")
     if isinstance(values, list):
         return [item for item in values if isinstance(item, dict)]
-    # Older prediction adapters may call these evidence.  They are accepted as
-    # locations, while the gold-matrix contract remains occurrence-first.
+    # 较旧的预测适配器可能将这些字段称为 evidence。
+    # 将其按位置接受，同时保持 gold-matrix 契约以出现项为先。
     values = fact.get("evidence")
     return [item for item in values if isinstance(item, dict)] if isinstance(values, list) else []
 
@@ -313,8 +311,8 @@ def _maximum_matching(observed: list[Any], expected: list[Any], predicate) -> di
 
 def _match_facts(expected: list[dict[str, Any]], observed: list[dict[str, Any]],
                  rule: dict[str, Any], threshold: float) -> tuple[int, int, int, int]:
-    # Maximum bipartite matching avoids order-dependent greedy assignments when
-    # two gold facts have equal attributes but different acceptable evidence.
+    # 最大二分匹配避免在两个 gold 事实属性相同但可接受证据不同时，
+    # 因顺序而产生的贪心分配差异。
     def predicate(p, g):
         return _fact_matches(p, g, rule, threshold)
     assigned = _maximum_matching(observed, expected, predicate)
@@ -327,11 +325,10 @@ def _match_facts(expected: list[dict[str, Any]], observed: list[dict[str, Any]],
 
 def evaluate(gold: dict[str, Any], predictions: dict[str, Any], *,
              evidence_iou: float = 1.0, require_adjudicated: bool = False) -> dict[str, Any]:
-    """Score a gold-matrix-v2 payload and a prediction export.
+    """对 gold-matrix-v2 载荷和预测导出结果评分。
 
-    The returned ``summary`` contains fixed document×rule task counts.  Gold
-    records with pending/draft adjudication are reported separately and never
-    enter automatic present/absent denominators.
+    返回的 summary 包含固定的文档 x 规则任务数。待处理或草稿裁定记录会单独报告，
+    永远不进入自动存在或不存在分母。
     """
 
     errors = validate_gold_matrix(gold, require_adjudicated=require_adjudicated)
@@ -434,8 +431,8 @@ def evaluate(gold: dict[str, Any], predictions: dict[str, Any], *,
                 totals["determinate_positive_outputs"] += len(observed)
             if manual:
                 totals["manual_output_tasks"] += 1
-            # A present rule answered not_found is an incorrect determined
-            # absence; an absent rule with facts is an incorrect determination.
+            # 已存在规则回答 not_found 属于错误地判定不存在；
+            # 不存在的规则却有事实，属于错误判定。
             wrong_determination = not manual_rule and (
                 (answerability == "present" and semantic_state == "not_found")
                 or (answerability == "absent" and bool(observed))

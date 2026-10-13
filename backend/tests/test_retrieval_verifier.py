@@ -1,8 +1,7 @@
-"""Plan C3-C5 checks: verification of deterministic candidates, platform acceptance, per-field budgets.
+"""方案 C3-C5 检查：确定性候选核验、平台接受规则及字段级预算。
 
-The fake model reads the candidate ids it is shown and answers from their text, so each test
-exercises the platform rules (acceptance, evidence, image policy, budgets) rather than model
-accuracy.  No network, no OCR, no database.
+模拟模型读取展示给它的候选 ID，并根据候选文本回答，因此每个测试验证的是平台规则
+（接受、证据、图像策略和预算），而不是模型准确率。不访问网络、OCR 或数据库。
 """
 
 import asyncio
@@ -20,7 +19,7 @@ def png(width=200, height=100):
 
 
 class ScriptedClient:
-    """Answers each request with ``respond(payload)``; records every request."""
+    """使用 respond(payload) 回答每个请求，并记录所有请求。"""
 
     def __init__(self, respond, prompt_tokens=800, completion_tokens=150):
         self.respond = respond
@@ -47,7 +46,7 @@ class ScriptedClient:
 
 
 def answer_if_contains(needle, value, unit="m³/t"):
-    """A model that accepts exactly the candidates whose text contains ``needle``."""
+    """只接受文本中包含 needle 的候选项的模型。"""
     def respond(payload):
         rows = []
         for cand in payload["candidates"]:
@@ -104,7 +103,7 @@ def run(pages, rules, client, **overrides):
     return asyncio.run(agent.extract_all(pages, rules, image_provider))
 
 
-# --- acceptance rules ------------------------------------------------------------------------
+# --- 接受规则 ------------------------------------------------------------------------
 
 def test_native_strong_candidate_is_accepted_from_text_without_an_image():
     client = ScriptedClient(answer_if_contains("2.23", "2.23"))
@@ -117,7 +116,7 @@ def test_native_strong_candidate_is_accepted_from_text_without_an_image():
     assert instance["image_checked"] is False
     assert instance["quote"] == "残余瓦斯含量 2.23 m³/t"
     assert instance["evidence_ids"] and runtime["evidence_registry"][instance["evidence_ids"][0]]["scope"] == "text"
-    # One text-only request: no image part was sent for an unambiguous native window.
+    # 一次纯文本请求：无歧义原生窗口不发送图像部分。
     content = client.calls[0]["messages"][-1]["content"]
     assert [p["type"] for p in content] == ["text"]
     assert runtime["status"] == "COMPLETED"
@@ -143,7 +142,7 @@ def test_ocr_candidate_is_accepted_only_with_an_attached_crop():
 def test_six_ocr_crops_are_split_across_calls_never_dropped_for_image_count():
     client = ScriptedClient(answer_if_contains("2.23", "2.23"))
     pages = [ocr_page(i, "残余瓦斯含量 2.23 m³/t", [50, 100, 300, 110]) for i in range(1, 7)]
-    # Six distinct OCR crops with a cap of four images per call: two calls, each within the cap.
+    # 六张不同的 OCR 裁剪图，每次最多四张：分两次调用，均未超过上限。
     for index, page in enumerate(pages):
         page["text_blocks"][0]["bbox"] = [50, 100 + index * 30, 300, 110 + index * 30]
     fields, details, runtime = run(pages, [rule()], client, max_images_per_call=4)
@@ -159,8 +158,8 @@ def test_six_ocr_crops_are_split_across_calls_never_dropped_for_image_count():
 
 def test_whole_page_images_are_limited_by_estimated_image_tokens():
     client = ScriptedClient(answer_if_contains("2.23", "2.23"))
-    # Whole-page OCR (no box): each page image is about 1.3k tokens at 120 DPI for an A4-sized page,
-    # so one call carries at most ~3 under a 4000-token image cap.
+    # 整页 OCR（无框）：A4 页面在 120 DPI 下每张约需 1300 token，
+    # 因此 4000 token 的图像上限下每次最多携带约三页。
     pages = [{"page_number": i, "width": 595, "height": 842, "text": "残余瓦斯含量 2.23 m³/t",
               "text_blocks": [{"text": "残余瓦斯含量 2.23 m³/t", "bbox": None, "source": "ocr"}],
               "tables": [], "image_count": 1, "ocr_status": "ok"} for i in range(1, 5)]
@@ -201,13 +200,13 @@ def test_threshold_judged_as_a_value_is_accepted_only_with_the_hint_kept_for_rev
                             for c in payload["candidates"]]}
     client = ScriptedClient(model_claims_threshold)
     fields, details, runtime = run([native_page(4, "残余瓦斯含量限值不得超过 8 m³/t")], [rule()], client)
-    # "8" is in the text, so the platform accepts the model's claim as written, but the threshold
-    # hint stays on the instance so a reviewer can see why it was flagged.
+    # 文本中存在“8”，因此平台按模型原样接受断言；但阈值提示仍保留在实例上，
+    # 供复核人员查看标记原因。
     instance = details[0]["instances"][0]
     assert "threshold_context" in instance["candidate_hints"]
 
 
-# --- failures and reasons ---------------------------------------------------------------------
+# --- 失败和原因 ---------------------------------------------------------------------
 
 def test_unreadable_page_makes_an_empty_search_incomplete_not_absent():
     client = ScriptedClient(lambda payload: {"results": []})
@@ -254,7 +253,7 @@ def test_image_failure_for_an_ocr_candidate_is_reported_not_faked():
 def test_candidates_beyond_the_call_capacity_make_the_field_partial():
     client = ScriptedClient(answer_if_contains("残余瓦斯含量", "2.23"))
     lines = [f"残余瓦斯含量 2.{i:02d} m³/t" for i in range(20)]
-    # The model accepts the candidates it is shown, each with the number printed in its own window.
+    # 模型接受展示给它的候选项，每个候选窗口都包含对应数字。
     client.respond = lambda payload: {"results": [
         {"id": c["id"], "is_target": True, "value": c["numbers"][0], "unit": "m³/t"}
         for c in payload["candidates"]]}
@@ -266,7 +265,7 @@ def test_candidates_beyond_the_call_capacity_make_the_field_partial():
     assert "candidates_truncated" in details[0]["incomplete_reasons"]
 
 
-# --- per-field budgets ------------------------------------------------------------------------
+# --- 字段级预算 ------------------------------------------------------------------------
 
 def test_one_field_exhausting_its_budget_does_not_starve_another():
     many = [f"残余瓦斯含量 {i}.50 m³/t" for i in range(13)]
@@ -284,7 +283,7 @@ def test_one_field_exhausting_its_budget_does_not_starve_another():
                          "unit": "MPa" if "MPa" in cand["text"] else "m³/t"})
         return {"results": rows}
 
-    # The first call reports a large prompt, so the heavy field's second call finds no room.
+    # 首次调用报告提示内容较长，导致重字段的第二次调用没有预算空间。
     client = ScriptedClient(respond, prompt_tokens=9000, completion_tokens=150)
     fields, details, runtime = run([heavy, other_page], [heavy_rule, light_rule], client)
     by_key = {d["field_key"]: d for d in details}

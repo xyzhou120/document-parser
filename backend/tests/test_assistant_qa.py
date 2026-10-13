@@ -236,7 +236,7 @@ def test_evidence_attributes_require_same_quote_object_unit_and_kind():
         await ready(service, content)
         session = await service.create_session(document_id=content.revision.document_id, request_id="s")
         message, _ = await service.submit_message(session["session_id"], request_id="m", question="压力")
-        # Answerer has no free text shortcut: claim text is derived from the quote.
+        # 答案生成器没有自由文本捷径：断言文本来自引文。
         result = await service.run_message(message["message_id"])
         assert result["claims"][0]["quote"] in result["answer"]
     asyncio.run(run())

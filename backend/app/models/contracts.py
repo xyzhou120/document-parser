@@ -67,7 +67,7 @@ class ExtractedField(BaseModel):
 
     field_key: str
     field_value: str | None = None
-    extraction_method: str  # keyword, regex, llm, vision, multipath
+    extraction_method: str  # keyword、regex、llm、vision、multipath
     confidence: float = Field(ge=0.0, le=1.0)
     evidence: EvidenceRef | None = None
 
@@ -109,10 +109,9 @@ class TextBlock(BaseModel):
     text: str
     locator: Locator | None = None
     location_status: str = "unavailable"
-    # None when the OCR service reports no score (region OCR, plan C1); never a fabricated 1.0.
+    # 区域 OCR（方案 C1）未返回分数时为 None，不能伪造为 1.0。
     confidence: float | None = Field(ge=0.0, le=1.0, default=1.0)
-    label: str | None = None  # layout label of a region, e.g. "table" (plan C1)
-
+    label: str | None = None  # 区域布局标签，例如 "table"（方案 C1）
 
 class PageInspection(BaseModel):
     """页面检测结果"""

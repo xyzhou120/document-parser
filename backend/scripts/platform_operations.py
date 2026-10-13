@@ -1,8 +1,7 @@
-"""Local operational reports and immutable backup handoff packages.
+"""本地运行报告与不可变备份交接包。
 
-No command connects or changes a live service by default. Backup packages contain
-an operator-produced PostgreSQL custom dump and a logical MinIO object export,
-never a copy of running database/object-store data directories.
+默认没有命令会连接或修改线上服务。备份包包含操作员生成的 PostgreSQL 自定义格式转储
+和 MinIO 逻辑对象导出，不包含正在运行的数据库或对象存储数据目录副本。
 """
 
 import argparse
@@ -107,7 +106,7 @@ def create_backup(database_dump, objects, target, consistency_note, dry_run=True
         destination = safe_member(target, name)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
-    # Recheck copied bytes; never label a package valid following concurrent change.
+    # 重新检查复制后的字节；并发变更后不能把交接包标记为有效。
     for item in manifest["files"]:
         destination = safe_member(target, item["path"])
         if destination.stat().st_size != item["bytes"] or sha256(destination) != item["sha256"]:
@@ -167,7 +166,7 @@ def restore_plan(package, target, database_name, bucket, execute=False):
     verify_backup(package)
     if not database_name or not bucket:
         raise ValueError("Explicit isolated database name and bucket are required")
-    # Do not accept URLs/passwords/commands as target identifiers.
+    # 不能接受 URL、密码或命令作为目标标识。
     import re
 
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,62}", database_name):
@@ -192,7 +191,7 @@ def restore_plan(package, target, database_name, bucket, execute=False):
         ],
     }
     if execute:
-        # Only stage verified local files. Never connect to or overwrite live DB/storage.
+        # 只暂存已核验的本地文件，不能连接或覆盖线上数据库和存储。
         target.mkdir(parents=True)
         shutil.copytree(package, target / "package")
         verify_backup(target / "package")
@@ -274,7 +273,7 @@ class LocalRedirectHandler(HTTPRedirectHandler):
 
 
 async def dependency_check(execute=False):
-    """Read-only local DB SELECT 1, Redis PING/LLEN and MinIO bucket HEAD."""
+    """只读探测本地数据库 SELECT 1、Redis PING/LLEN 和 MinIO bucket HEAD。"""
     names = ["postgresql", "redis", "minio"]
     if not execute:
         return {"dry_run": True, "checks": names, "queue_depth": None}
@@ -372,13 +371,13 @@ def observe(base_url, execute=False):
     data, checks = {}, []
     for path in paths:
         try:
-            # Refuse redirects outside the explicitly authorized local host.
+            # 拒绝跳转到明确授权的本地主机之外。
             with build_opener(LocalRedirectHandler).open(base_url + path, timeout=15) as response:
                 local_url(response.geturl().split("?")[0])
                 data[path] = json.load(response)
             checks.append({"path": path.split("?")[0], "status": "online"})
         except Exception:
-            # Exception strings/response bodies may expose secrets. Report classification only.
+            # 异常字符串或响应正文可能暴露密钥，只报告分类结果。
             checks.append({"path": path.split("?")[0], "status": "unavailable"})
     snapshot = {
         "runs": data.get(paths[1], {}).get("items", []),
@@ -513,7 +512,7 @@ def main(argv=None):
             else 0
         )
     except Exception as exc:
-        # Known validation errors are controlled messages; other errors remain classified.
+        # 已知校验错误属于受控消息；其他错误继续按分类报告。
         print(
             json.dumps({"error": str(exc) if isinstance(exc, ValueError) else type(exc).__name__})
         )

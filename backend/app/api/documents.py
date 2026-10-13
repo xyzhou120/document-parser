@@ -1,4 +1,4 @@
-"""Document workspace: explicit context, relationships and extraction impact previews."""
+"""文档工作区：显式上下文、关联关系与提取影响预览。"""
 
 import copy
 from uuid import UUID
@@ -185,7 +185,7 @@ async def get_context(document_id: UUID, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{document_id}/context")
 async def set_context(document_id: UUID, payload: ContextInput, db: AsyncSession = Depends(get_db)):
-    # Lock the parent even for the first revision, where there is no context row yet.
+    # 即使首次修订还没有上下文记录，也要锁定父记录。
     await require_document(db, document_id, lock=True)
     current = await db.scalar(
         select(DocumentContext)
@@ -311,7 +311,7 @@ async def list_relations(document_id: UUID, db: AsyncSession = Depends(get_db)):
 async def link_document(
     document_id: UUID, payload: RelationInput, db: AsyncSession = Depends(get_db)
 ):
-    # Ordered locks avoid opposite-direction linkage deadlocks.
+    # 按固定顺序加锁，避免双向关联产生死锁。
     documents = {}
     for current_id in sorted({document_id, payload.target_document_id}, key=str):
         documents[current_id] = await require_document(db, current_id, lock=True)
@@ -429,7 +429,7 @@ async def related_facts(document_id: UUID, db: AsyncSession = Depends(get_db)):
     sources = []
     for current_id in sorted(roles, key=str):
         other = document if current_id == document_id else await db.get(Document, current_id)
-        # Defensive check: changed metadata cannot silently create cross-mine exposure.
+        # 防御性检查：元数据变更不能悄然导致跨矿数据暴露。
         if not other or (
             current_id != document_id
             and (not document.mine_id or other.mine_id != document.mine_id)

@@ -1,4 +1,4 @@
-"""Source revision commands and impact/read models."""
+"""来源修订命令与影响、读取模型。"""
 
 from datetime import datetime
 from typing import Any, Literal
@@ -42,7 +42,7 @@ class SourceRevisionPayload(BaseModel):
         if self.revision_type == "UNREADABLE" and not self.comment.strip():
             raise ValueError("UNREADABLE 必须说明不可读原因")
         if self.revision_type == "CONFIRM" and self.start_extraction:
-            # Confirmation does not change text; callers can opt into a full rerun explicitly.
+            # 确认不会改变文本；调用方可以显式选择完整重跑。
             return self
         return self
 

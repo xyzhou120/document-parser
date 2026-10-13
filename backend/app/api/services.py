@@ -22,9 +22,8 @@ router = APIRouter(prefix="/api/v1/services", tags=["服务管理"])
 
 
 async def _probe_http_client(timeout: float):
-    # Loading platform certificates/proxy configuration can block on Windows.
-    # Do it off the event loop so independent Redis/DB probes retain their own
-    # timeout budget rather than expiring behind HTTP client construction.
+    # Windows 上加载系统证书或代理配置可能阻塞，因此在线程中创建客户端，
+    # 避免 Redis 和数据库探测在等待时耗尽各自的超时预算。
     return await asyncio.to_thread(httpx.AsyncClient, timeout=timeout)
 
 
@@ -60,9 +59,8 @@ async def _check_redis() -> dict:
                              db=settings.redis.db, password=settings.redis.password or None,
                              socket_timeout=5, socket_connect_timeout=5) as client:
                 client.ping()
-                # INFO may be denied by a least-privilege Redis account. PING
-                # is the connectivity check; optional metadata must not turn
-                # a reachable queue into a false offline result.
+                # 最小权限的 Redis 账号可能无法执行 INFO；连接性以 PING 为准，
+                # 可选元数据读取失败不应把可用队列误判为离线。
                 try:
                     return client.info("server").get("redis_version", "未知")
                 except redis.exceptions.ResponseError:

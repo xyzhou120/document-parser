@@ -1,4 +1,4 @@
-"""P18 optional capabilities remain independent of QA and extraction."""
+"""P18 可选能力与问答、提取保持独立。"""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock

@@ -1,7 +1,6 @@
-"""Reliable extraction execution primitives.
+"""可靠提取执行基础组件。
 
-The modules in this package deliberately do not start Celery tasks.  They are
-transactional building blocks used by the integration layer (P13).
+本包中的模块有意不启动 Celery 任务。它们是集成层（P13）使用的事务基础组件。
 """
 
 from .dispatch_outbox import DispatchOutbox

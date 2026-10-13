@@ -1,9 +1,8 @@
-"""A bounded tool-driven agent for extracting fields from irregular reports.
+"""从非规范报告中提取字段的有界工具代理。
 
-The agent is deliberately a small orchestration layer.  It does not treat OCR
-or a model's confidence as truth: values are emitted as unverified candidates
-and every accepted evidence reference must point at a page/region the platform
-actually exposed to the model.
+代理有意保持为小型编排层。OCR 和模型置信度都不作为真实结论：
+取值以未经核验的候选项输出；接受的每条证据引用都必须指向
+平台实际向模型展示过的页面或区域。
 """
 
 from __future__ import annotations
@@ -38,45 +37,44 @@ class AgentLimits:
     max_context_chars: int = 24000
     field_batch_size: int = 1
     max_search_results: int = 8
-    # Plan B: keep fewer retained page images per call (each full page costs ~3k tokens).
+    # 方案 B：减少每次调用保留的页面图像（每张整页图像约需 3000 个 token）。
     history_images: int = 2
-    # Plan B: reasoning output can be disabled per request; default keeps current behaviour until A/B.
+    # 方案 B：可按请求关闭推理输出；A/B 结果明确前默认行为保持不变。
     thinking_enabled: bool = True
-    # Plan B: pre-call estimate. The start value is the measured Chinese/JSON factor (about
-    # 0.55 token per character); it is then corrected per call from the gateway's usage.
+    # 方案 B：调用前估算。初始值使用实测的中文/JSON 系数（每字符约 0.55 个 token），
+    # 再根据网关返回的用量逐次校正。
     token_per_char: float = 0.55
     image_tokens_per_kpx: float = 1.0
-    # Plan B defect fix: an answer is never capped below this floor; a call that cannot
-    # leave this much room is refused by the budget check instead of truncating the answer.
+    # 方案 B 缺陷修复：答案上限不能低于此下限。预算无法留下足够空间时拒绝调用，
+    # 避免答案被截断。
     min_output_tokens: int = 2500
-    # page_batch traverses every prepared page once and extracts all fields from
-    # shared page evidence. legacy/retrieval remain available for comparison.
+    # page_batch 遍历每个已准备页面一次，并从共享的页面证据中抽取全部字段。
+    # legacy 与 retrieval 仍可用于对照。
     agent_mode: str = "legacy"
     field_token_budget: int = 12000
     max_calls_per_field: int = 3
     candidates_per_call: int = 12
     max_candidates_per_field: int = 24
     max_candidates_multi: int = 36
-    # Crops are small (a DGC line is a few dozen tokens), whole pages are about 1.4k tokens:
-    # a call is bounded by image count and by estimated image tokens, not by candidate count alone.
+    # 裁剪图较小（DGC 的一行只需几十个 token），整页约需 1400 个 token；
+    # 每次调用同时受图像数量和估算图像 token 限制，不只按候选数量限制。
     max_images_per_call: int = 12
     max_image_tokens_per_call: int = 4000
     render_dpi: int = 120
     region_render_dpi: int = 180
-    # Measured (2026-10-10): even a small crop costs a few hundred tokens; estimates never go below this.
+    # 实测（2026-10-10）：即使小裁剪也需数百 token，估算值不能低于此值。
     min_image_tokens: int = 160
     candidate_window_chars: int = 300
-    # "auto": native text that is unambiguous is judged from text; OCR and table candidates get crops.
-    # "always": every candidate gets a crop (more tokens, stricter visual check).
+    # auto：无歧义的原生文本直接按文本判断；OCR 和表格候选使用裁剪图。
+    # always：每个候选都使用裁剪图（消耗更多 token，视觉核验更严格）。
     retrieval_image_policy: str = "auto"
 
 
 class ChecklistAgent:
-    """Run a checklist knowledge package against a bounded page tool set.
+    """使用受限的页面工具集运行清单知识包。
 
-    ``client`` and ``image_provider`` are injectable, making the orchestration
-    testable without a network or OCR service.  A client is expected to expose
-    ``chat.completions.create`` as the OpenAI compatible SDK does.
+    client 和 image_provider 可注入，使编排逻辑无需网络或 OCR 服务即可测试。
+    客户端应像 OpenAI 兼容 SDK 一样提供 chat.completions.create。
     """
 
     def __init__(self, settings_override: Any = None, client: Any = None, model_config: Any = None):
@@ -92,7 +90,7 @@ class ChecklistAgent:
             self.limits.agent_mode = "legacy"
         if self.limits.retrieval_image_policy not in {"auto", "always"}:
             self.limits.retrieval_image_policy = "auto"
-        # Calibrated text factor for the pre-call estimate; updated after every real usage report.
+        # 调用前估算使用的文本系数，收到每次实际用量报告后更新。
         self._token_per_char = self.limits.token_per_char
 
     @staticmethod
@@ -106,7 +104,7 @@ class ChecklistAgent:
             if value is None:
                 continue
             try:
-                # Typed by the dataclass default so bool/float/str keys are not truncated to int.
+                # 使用数据类默认值的类型，防止 bool、float、str 键被截断为 int。
                 if isinstance(spec.default, bool):
                     values[name] = value if isinstance(value, bool) else (
                         str(value).strip().lower() in {"1", "true", "yes", "on"})
@@ -139,7 +137,7 @@ class ChecklistAgent:
         rules: list[RuleSpec],
         image_provider: ImageProvider,
     ) -> tuple[list[ExtractedField], list[dict], dict]:
-        """Extract all rules, returning compatibility fields and audit details."""
+        """提取所有规则，返回兼容字段和审计详情。"""
         runtime: dict[str, Any] = {
             "engine": "checklist-tool-agent-v1",
             "model": None,
@@ -205,7 +203,7 @@ class ChecklistAgent:
                     {"role": "user", "content": self._initial_prompt(pages, batch)},
                 ]
                 finished = False
-                # Failures recorded from here on belong to this batch (per-field reasons).
+                # 从这里开始记录的失败属于当前批次，并按字段保留原因。
                 failures_start = len(runtime["failures"])
                 if len(messages[1]["content"]) > self.limits.max_context_chars:
                     runtime["failures"].append(f"knowledge_context_budget_exhausted:{batch_start}")
@@ -239,7 +237,7 @@ class ChecklistAgent:
                         break
                     rounds_used += 1
                     if outcome["status"] in {"error", "truncated"}:
-                        # Remote failure must be visible, never fabricated into candidates.
+                        # 远程失败必须可见，不能伪造成候选项。
                         runtime["failures"].append(outcome["failure"])
                         break
                     content = outcome["content"]
@@ -266,9 +264,8 @@ class ChecklistAgent:
                             page_index,
                             runtime,
                         )
-                        # Progressive responses may resend the same payload.
-                        # Remove identical transport duplicates. Distinct
-                        # evidence or unknown identities still remain separate.
+                        # 渐进式响应可能重复发送相同载荷。移除完全相同的传输重复项，
+                        # 但不同证据或身份未知的项目仍要分开保留。
                         prior_keys = {self._candidate_submission_key(c) for c in candidates}
                         for candidate in new_candidates:
                             if self._candidate_submission_key(candidate) in prior_keys:
@@ -295,9 +292,8 @@ class ChecklistAgent:
                             )
                             messages = self._bounded_history(messages)
                             continue
-                        # Candidate facts may be submitted before the search is
-                        # finished. Retain them while the same batch requests
-                        # more evidence; a later timeout must not erase them.
+                        # 搜索完成前可能已提交候选事实。当同一批次继续请求证据时要保留它们；
+                        # 后续超时不能抹掉已有候选。
                         if payload.get("finish") is not False and not actions:
                             finished = True
                             break
@@ -392,8 +388,8 @@ class ChecklistAgent:
                                     + json.dumps(result, ensure_ascii=False),
                                 }
                             )
-                    # Keep the system and task fixed; truncate older text exchanges
-                    # without truncating JSON or dropping current visual evidence.
+                    # 固定系统和任务消息；截断较旧的文本对话，
+                    # 不截断 JSON，也不丢弃当前视觉证据。
                     messages = self._bounded_history(messages)
                     if not tool_results:
                         break
@@ -531,7 +527,7 @@ class ChecklistAgent:
         return fields, details, self._finish_runtime(runtime, status)
 
     async def _extract_retrieval(self, pages, rules, image_provider, client, model, runtime):
-        """Plan C: deterministic candidates verified per field (see app.agents.retrieval)."""
+        """方案 C：按字段核验确定性候选项（见 app.agents.retrieval）。"""
         from app.agents.retrieval import RetrievalVerifier
 
         verifier = RetrievalVerifier(self, client, model, image_provider)
@@ -540,7 +536,7 @@ class ChecklistAgent:
         runtime["evidence_registry"] = registry
         runtime["rounds_used"] = verifier.rounds_used
         runtime["coverage"]["visited_pages"] = sorted(verifier.image_pages)
-        # Retrieval searched every page's text; unvisited-by-image pages are not a gap.
+        # 检索已搜索每页文本；未查看图像的页面不算搜索缺口。
         runtime["coverage"]["unvisited_pages"] = []
         runtime["coverage"]["basis"] = "candidate_retrieval"
         details = self._make_details(accepted, registry, runtime, list(rules))
@@ -624,9 +620,8 @@ class ChecklistAgent:
         page_map = [
             {
                 "page_number": self._page_no(p),
-                # The page map is navigation metadata, not a second document
-                # payload. Long snippets crowd the visual tool loop and cause
-                # gateways to truncate action JSON before any field is emitted.
+                # 页面映射是导航元数据，不是第二份文档载荷。
+                # 过长片段会挤占视觉工具循环，导致网关在输出字段前截断操作 JSON。
                 "text": self._clip(str(p.get("text", "")), 40),
                 "width": p.get("width"),
                 "height": p.get("height"),
@@ -637,8 +632,7 @@ class ChecklistAgent:
         backgrounds: list[str] = []
         for r in rules:
             agent = (r.strategy or {}).get("agent_extract") or {}
-            # Deduplicate shared background without dropping configured
-            # instructions or constraints. Oversized knowledge fails explicitly.
+            # 对共享背景去重，但不丢弃已配置的指令或约束；知识内容超限时明确失败。
             background = agent.get("background", "")
             if background and background not in backgrounds:
                 backgrounds.append(background)
@@ -680,11 +674,10 @@ class ChecklistAgent:
         )
 
     def _navigation_shortlist(self, pages: list[dict], rules: list[RuleSpec]) -> dict:
-        """Rank native-text hints for navigation; never create candidate facts.
+        """对用于导航的原生文本提示排序，不创建候选事实。
 
-        Partial lexical matches tolerate spacing and intervening numbers, e.g.
-        施工1239个钻孔 versus the configured hint 施工钻孔. A miss says nothing
-        about an image-only page, and all returned snippets remain untrusted.
+        部分词法匹配允许空格和插入的数字，例如“施工1239个钻孔”与配置的
+        “施工钻孔”提示。未匹配不能说明纯图像页面的内容；返回的片段均不可信。
         """
         result = {}
         for rule in rules:
@@ -703,7 +696,7 @@ class ChecklistAgent:
                 score = len(exact) * 10 + len(partial)
                 if not score:
                     continue
-                # Snippets are only hints: values still need an actual image.
+                # 片段仅作提示：取值仍需要真实图像。
                 anchor = min((text.find(t) for t in exact or partial), default=0)
                 ranked.append({
                     "page_number": self._page_no(page), "score": score,
@@ -726,9 +719,9 @@ class ChecklistAgent:
             and sum(text_size(m) for m in messages) > self.limits.max_context_chars
         ):
             messages.pop(2)
-        # Images do not count as text chars; cap retained images separately.
+        # 图像不计入文本字符数，保留图像数量单独限制。
         images = [i for i, m in enumerate(messages) if isinstance(m["content"], list)]
-        # Plan B: retained image count is configurable (default 2, was a hard-coded 3).
+        # 方案 B：保留图像数量可配置（默认 2，原先固定为 3）。
         keep = max(1, self.limits.history_images)
         for i in reversed(images[:-keep]):
             messages.pop(i)
@@ -1157,14 +1150,14 @@ class ChecklistAgent:
                 "review_status": "UNVERIFIED",
                 "quality_status": "REVIEW_REQUIRED",
                 "coverage": runtime["field_coverage"].get(rule.field_key, runtime["coverage"]),
-                # Plan B status semantics: separate "candidate unconfirmed", "searched but absent"
-                # and "incomplete" (budget / rounds / output problems), instead of one "unresolved".
+                # 方案 B 的状态语义：区分候选未确认、已搜索但不存在，以及预算、轮次或输出问题
+                # 导致的未完成，而不是统一使用 unresolved。
                 "validation_status": self._field_status(bool(instances), finished_field),
-                # Failures before any batch ran (e.g. no vision client) are global, not per field.
+                # 任何批次运行前的失败（例如没有视觉客户端）属于全局失败，不属于单个字段。
                 "incomplete_reasons": [] if finished_field else self._reason_codes(
                     coverage_info["failures"] if "failures" in coverage_info else runtime["failures"]),
                 "visited_page_count": len(coverage_info.get("visited_pages") or []),
-                # Plan C: candidate counts, dropped strengths, calls and tokens for this field.
+                # 方案 C：记录该字段的候选数量、被丢弃项强度、调用次数和 token 用量。
                 "retrieval": (runtime.get("retrieval") or {}).get(rule.field_key),
                 "trace": runtime["trace"],
                 "failures": runtime["failures"],
@@ -1174,11 +1167,11 @@ class ChecklistAgent:
 
     @staticmethod
     def _field_status(has_candidates: bool, finished: bool) -> str:
-        """Plan B status semantics.
+        """方案 B 的状态语义。
 
-        Candidates exist but the search did not finish -> needs confirmation.
-        Search finished without candidates -> searched and absent.
-        Search did not finish and nothing was found -> incomplete (budget, rounds, output).
+        有候选但搜索未结束：需要确认。
+        搜索已结束但无候选：已搜索且不存在。
+        搜索未结束且未找到值：未完成（预算、轮次或输出问题）。
         """
         if has_candidates:
             return "review_required" if finished else "partial_candidates"
@@ -1186,7 +1179,7 @@ class ChecklistAgent:
 
     @staticmethod
     def _reason_codes(failures: list[str]) -> list[str]:
-        """Map raw per-batch failure markers to stable reason codes for review and reporting."""
+        """将批次原始失败标记映射为稳定原因码，供复核和报告使用。"""
         codes: set[str] = set()
         for item in failures:
             if item.startswith("batch_token_budget_exhausted") or item == "token_budget_exhausted":
@@ -1255,13 +1248,12 @@ class ChecklistAgent:
         runtime: dict,
         trace: dict,
     ) -> dict:
-        """One budgeted chat call shared by the tool loop and the retrieval verifier.
+        """工具循环和检索核验器共用的一次有预算聊天调用。
 
-        ``room`` is the total token allowance (prompt plus completion) left for this call.
-        The call is refused when the prompt estimate leaves less than ``min_output_tokens``
-        for the answer.  The answer cap is never shrunk below that floor, so a small
-        remaining budget no longer produces a call that is truncated after being paid for.
-        Returns a dict whose ``status`` is ``budget``, ``error``, ``truncated`` or ``ok``.
+        room 是此次调用剩余的 token 总预算（提示加输出）。当提示估算后
+        留给答案的空间低于 min_output_tokens 时，拒绝调用。
+        答案上限不能降到该下限以下，避免预算不足时付费调用后仍被截断。
+        返回字典的 status 为 budget、error、truncated 或 ok。
         """
         estimate = self._estimate_tokens(messages)
         prompt_room = room - estimate
@@ -1275,12 +1267,12 @@ class ChecklistAgent:
             "max_tokens": max_tokens,
         }
         if not self.limits.thinking_enabled:
-            # The gateway forwards chat_template_kwargs for this model (plan B switch).
+            # 网关为此模型转发 chat_template_kwargs（方案 B 开关）。
             call_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
         try:
             response = await client.chat.completions.create(**call_kwargs)
             content, usage, finish_reason = self._response_content(response)
-        except Exception as exc:  # remote failure must be visible, never fabricated
+        except Exception as exc:  # 远程失败必须可见，不能伪造。
             reason = str(exc)
             if reason in {"model_response_truncated", "response_truncated"}:
                 failure = reason
@@ -1304,7 +1296,7 @@ class ChecklistAgent:
                 **trace,
                 "event": "model_response",
                 "finish_reason": finish_reason,
-                # Calibration evidence: pre-call estimate vs the provider's usage report.
+                # 校准依据：调用前估算与提供方用量报告的对比。
                 "estimate": estimate,
                 "image_count": self._image_count(messages),
                 "max_tokens": max_tokens,
@@ -1322,20 +1314,18 @@ class ChecklistAgent:
         return {"status": "ok", "content": content, "estimate": estimate, "max_tokens": max_tokens}
 
     async def verify_candidate_batch(self, gateway, request):
-        """V2 call boundary; the owning job transaction persists decisions and recovery.
+        """V2 调用边界；所属任务事务负责持久化决策和恢复信息。
 
-        The legacy tool loop above keeps its frozen budget semantics. V2 callers
-        supply a durable gateway instead of sharing its document token ceiling.
-        A successful batch is deliberately not a statement of field completeness.
+        上方旧版工具循环保持冻结预算语义。V2 调用方提供持久化网关，
+而不是共享文档 token 上限。批次成功并不代表字段已完成。
         """
         return await gateway.execute(request)
 
     def _observe_usage(self, messages: list[dict], usage: dict) -> None:
-        """Plan B defect fix: correct the text factor from the gateway's real prompt tokens.
+        """方案 B 缺陷修复：根据网关实际提示 token 数校正文本系数。
 
-        The image part of the prompt is estimated separately; the remainder is attributed to
-        text.  Blending with the previous factor keeps one unusual call from swinging the
-        budget, and the bounds stop an empty or degenerate prompt from moving it.
+        图像部分单独估算，剩余用量归因于文本。与先前系数混合可以避免一次异常调用
+        导致预算大幅波动；上下界防止空提示或退化提示改变系数。
         """
         prompt = int(usage.get("prompt_tokens") or 0)
         text_chars, image_tokens = self._message_sizes(messages)
@@ -1363,20 +1353,19 @@ class ChecklistAgent:
         return text_chars, image_tokens
 
     def _estimate_tokens(self, messages: list[dict]) -> int:
-        """Pre-call budget estimate (plan B), with the text factor calibrated per run.
+        """调用前预算估算（方案 B），文本系数按运行校准。
 
-        A page image costs about 1 token per 1000 pixels.  Text starts at the measured
-        factor (about 0.55 token per character for the JSON and Chinese prompts used here)
-        and is corrected after each call from the real usage, so the estimate tracks the
-        provider rather than a fixed constant.
+        页面图像每 1000 像素约消耗 1 个 token。文本从实测系数开始估算
+        （这里的 JSON 和中文提示约为每字符 0.55 个 token），每次调用后
+        按实际用量校正，使估算跟随提供方而非固定常量。
         """
         text_chars, image_tokens = self._message_sizes(messages)
         return int(math.ceil(text_chars * self._token_per_char + image_tokens))
 
     def _image_tokens(self, url: str) -> float:
-        """Token estimate for a PNG data URL, read from the IHDR header (width, height)."""
+        """从 IHDR 头部的宽高估算 PNG 数据 URL 的 token 数。"""
         try:
-            header = base64.b64decode(url.split(",", 1)[1][:32])  # 24 bytes hold the IHDR size
+            header = base64.b64decode(url.split(",", 1)[1][:32])  # 前 24 字节包含 IHDR 尺寸。
             if len(header) < 24 or header[:8] != b"\x89PNG\r\n\x1a\n":
                 raise ValueError("not a PNG header")
             width = int.from_bytes(header[16:20], "big")
@@ -1423,8 +1412,8 @@ class ChecklistAgent:
 
     @staticmethod
     def _dims_key(dimensions: dict) -> tuple:
-        # Unknown identities are deliberately unique; equal-looking unknowns
-        # cannot prove that two facts belong to the same workface/point.
+        # 身份未知的项目有意保持唯一；看起来相同的未知身份不能证明
+        # 两个事实属于同一工作面或测点。
         return tuple(
             sorted(
                 (str(k), str(v.get("value")) if isinstance(v, dict) else str(v))

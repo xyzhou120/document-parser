@@ -1,7 +1,7 @@
-"""New upload -> v2 preparation -> field extraction on authorized G1 PostgreSQL.
+"""在授权的 G1 PostgreSQL 上测试新上传 -> v2 准备 -> 字段提取。
 
-Storage uploads and broker sends are mocked. Preparation/parser/provider are explicit synthetic
-inputs; all document/build/outbox/run/job/candidate/fact persistence uses real PostgreSQL.
+存储上传和消息代理发送使用模拟对象。准备、解析器和提供方使用明确的模拟输入；
+文档、构建、发件箱、运行、任务、候选和事实的持久化全部使用真实 PostgreSQL。
 """
 
 import hashlib
@@ -34,7 +34,7 @@ sessions = pg_sessions
 
 
 class NativeOnePageParser:
-    """Small explicit page fixture; no actual PDF/OCR service dependency."""
+    """小型显式页面夹具；不依赖真实 PDF 或 OCR 服务。"""
 
     def extract_pages(self, path):
         text = "报告正文 瓦斯压力 1.23MPa 实测"

@@ -48,8 +48,8 @@ services:
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
-    # The upstream image does not guarantee curl/wget. Application storage
-    # initialization retries on demand; do not gate startup on a missing binary.
+    # 上游镜像不保证包含 curl/wget。应用存储初始化会按需重试；
+    # 不应因缺少这些可执行文件而阻断启动。
 
   # 后端API服务（开发模式）
   backend:
@@ -101,7 +101,7 @@ services:
         condition: service_started
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-  # Celery Worker
+  # Celery 工作进程
   celery-worker:
     build:
       context: ..

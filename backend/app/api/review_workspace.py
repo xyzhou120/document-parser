@@ -1,8 +1,7 @@
-"""Optional human-review work queue.
+"""可选的人工复核工作队列。
 
-This projection is deliberately read-only: it summarizes extraction rows and the
-latest append-only review audit without changing source fields or imposing a
-downstream approval gate.
+此投影有意保持只读：汇总提取记录和最新的只追加复核审计，
+不修改来源字段，也不为下游设置审批门槛。
 """
 
 from typing import Literal

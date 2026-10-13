@@ -1,4 +1,4 @@
-"""Explicit auxiliary assistant commands; every operation pins source versions."""
+"""显式的助手辅助命令；每个操作都会绑定来源版本。"""
 
 from typing import Any, Literal
 from uuid import UUID

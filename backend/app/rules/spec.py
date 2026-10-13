@@ -57,7 +57,7 @@ class RuleSpec:
 
     @property
     def semantic_contract(self) -> dict:
-        """Detached v2 semantic contract used by execution and snapshots."""
+        """供执行和快照使用的独立 v2 语义契约。"""
         snapshot = normalize_rule_semantics(self)
         return {
             key: snapshot[key]
@@ -95,7 +95,7 @@ class RuleSpec:
         return rule_semantic_hash(self)
 
     def semantic_snapshot(self) -> dict:
-        """Freeze original runtime fields plus normalized v2 identity."""
+        """冻结原始运行时字段及规范化的 v2 身份。"""
         return {
             **asdict(self),
             **self.semantic_contract,
@@ -151,9 +151,8 @@ class RuleSpec:
                 "context_window": 50,
             },
         }
-        # Config files may already carry the v2 contract at field level. Keep
-        # it inside strategy so the database-backed and seed paths share one
-        # semantic representation.
+            # 配置文件可能已经在字段层携带 v2 契约。将其保留在 strategy 中，
+            # 使数据库路径和种子路径共用同一种语义表示。
         contract = field.get("semantic_contract")
         if contract is None:
             contract = {

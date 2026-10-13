@@ -1,4 +1,4 @@
-"""Durable inbound idempotency records and outbound delivery receipts."""
+"""持久化入站幂等记录与出站投递回执。"""
 
 from datetime import UTC, datetime
 from uuid import UUID

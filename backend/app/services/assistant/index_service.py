@@ -1,4 +1,4 @@
-"""Build immutable, version-pinned assistant index generations."""
+"""构建不可变且绑定版本的助手索引。"""
 
 from __future__ import annotations
 
@@ -118,8 +118,7 @@ class IndexService:
                 chunks = await self._embed(chunks, config)
             except Exception as exc:
                 semantic, embedding_error = "failed", type(exc).__name__
-                # A generation must never mix an incomplete vector subset with
-                # a claim that semantic indexing succeeded.
+                # 索引版本不能在向量子集不完整时声称语义索引成功。
                 for chunk in chunks:
                     chunk["embedding"], chunk["embedding_config"] = None, None
                 manifest["embedding"] = {**manifest["embedding"], "status": semantic,
@@ -198,7 +197,7 @@ class IndexService:
                                                       "cell_ids": [cell.get("cell_id") for cell in cells],
                                                       "start_offset": offset, "end_offset": min(offset + config.chunk_chars, len(text))},
                                        "embedding": None, "embedding_config": None})
-        # Stable order is part of the snapshot identity and search pagination contract.
+        # 稳定顺序属于快照身份和搜索分页契约的一部分。
         if len({item["chunk_id"] for item in chunks}) != len(chunks):
             raise ValueError("duplicate block/table identity in revision")
         return sorted(chunks, key=lambda item: item["chunk_id"])

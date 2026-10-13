@@ -1,8 +1,7 @@
-"""Opt-in API key access control.
+"""可选启用的 API Key 访问控制。
 
-The platform remains local-development friendly while auth is disabled. Once enabled,
-missing or malformed credentials fail closed and secrets are never included in logs or
-responses.
+认证关闭时平台仍便于本地开发。启用后，缺失或格式错误的凭据会失败关闭，
+密钥不会出现在日志或响应中。
 """
 
 import hashlib
@@ -27,7 +26,7 @@ class Principal:
 
 
 def _auth_enabled() -> bool:
-    # A typo must never silently disable authentication.
+    # 配置值拼写错误时不能静默关闭认证。
     return os.getenv("PLATFORM_AUTH_ENABLED", "false").strip().lower() not in {"0", "false", "no", "off", ""}
 
 
@@ -109,7 +108,7 @@ def require_scope(request: Request, scope: str) -> Principal:
 
 
 def assert_actor(principal: Principal, actor: str | None) -> None:
-    """Prevent an authenticated request from writing another operator's identity."""
+    """防止已认证请求写入其他操作员的身份。"""
     if principal.authenticated and actor and actor.strip() != principal.actor:
         raise HTTPException(status_code=403, detail="提交身份必须与访问凭据的 actor 一致")
 

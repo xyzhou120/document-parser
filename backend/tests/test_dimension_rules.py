@@ -1,4 +1,4 @@
-"""Rules express optional business dimensions without assuming a workface."""
+"""规则表达可选业务维度，不预设工作面。"""
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 

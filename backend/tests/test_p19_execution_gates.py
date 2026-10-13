@@ -1,7 +1,7 @@
-"""P19 E02/E07/E08 engineering gates.
+"""P19 E02/E07/E08 工程检查。
 
-E02 and E07 are deterministic service tests. E08 uses the authorized G1 PostgreSQL
-fixture and is skipped unless the caller explicitly selects that database.
+E02 和 E07 是确定性的服务测试。E08 使用授权的 G1 PostgreSQL 夹具，
+除非调用方明确选择该数据库，否则跳过。
 """
 
 from copy import deepcopy
@@ -93,7 +93,7 @@ async def test_e08_new_rule_child_run_freezes_independent_denominator_and_parent
         assert child.requested_field_keys == ["holes"]
         assert child.extraction_profile["rules"] != parent.extraction_profile["rules"]
         child_id = child.parse_run_id
-    # Mutating the source rules after creation cannot alter either persisted snapshot.
+    # 创建后修改来源规则不能改变任何一个已持久化快照。
     parent_rule.field_name_cn = "运行后修改"
     child_rule.field_name_cn = "运行后新增规则又改名"
     async with sessions() as db:
@@ -109,7 +109,7 @@ async def test_e08_new_rule_child_run_freezes_independent_denominator_and_parent
 
 
 class RejectingProvider:
-    """Synthetic service responses; used to exercise transport/recovery, not model quality."""
+    """模拟服务响应，用于测试传输和恢复，不用于测试模型质量。"""
 
     def __init__(self, failures=0):
         self.calls = 0
@@ -156,7 +156,7 @@ async def test_e07_pg_one_hundred_fields_wait_once_then_automatically_resume(ses
     service = ReliableExtractionService()
     waiting = await service.process_run(sessions, run_id, executor=execute, owner="p19-outage", max_quantums=100)
     assert waiting["status"] == "WAITING_SERVICE"
-    assert provider.calls == 3  # A shared outage does not produce 100 timeouts.
+    assert provider.calls == 3  # 共享故障不会产生 100 次超时。
     async with sessions() as db:
         jobs = (await db.execute(select(ParseFieldJob).where(ParseFieldJob.run_id == run_id))).scalars().all()
         assert len(jobs) == 100 and all(job.execution_state == "waiting_service" for job in jobs)
@@ -176,7 +176,7 @@ async def test_e07_pg_one_hundred_fields_wait_once_then_automatically_resume(ses
 
 @pytest.mark.asyncio
 async def test_e02_pg_hundreds_of_candidates_reach_unlabelled_last_page_target(sessions):
-    """Real P06/P07/P10 writer and PG cursor; provider relevance remains synthetic."""
+    """真实 P06/P07/P10 写入方和 PG 游标；提供方相关性仍由模拟数据表示。"""
     import json
 
     class LastPageProvider(RejectingProvider):
@@ -202,7 +202,7 @@ async def test_e02_pg_hundreds_of_candidates_reach_unlabelled_last_page_target(s
                 "source": "native", "block_id": f"p19-{number}-{line}",
                 "bbox": [0, line * 20, 500, line * 20 + 10]})
         if number == 3:
-            # No configured label: only the complete-scope fallback can find this value.
+            # 没有配置标签时，只有完整范围回退能找到此值。
             blocks.append({"text": "报告正文 P19_FINAL_TARGET 最新测点 实测0.20MPa",
                 "source": "native", "block_id": "p19-final", "bbox": [0, 1300, 500, 1310]})
         pages.append({"page_number": number, "width": 600, "height": 2000,
@@ -234,7 +234,7 @@ async def test_e02_pg_hundreds_of_candidates_reach_unlabelled_last_page_target(s
         if result["status"] in {"COMPLETED", "FAILED", "COMPLETED_WITH_REVIEW"}:
             break
     assert result["status"] == "COMPLETED"
-    assert windows > 1  # Multiple internal quanta automatically continue without manual resume.
+    assert windows > 1  # 多个内部量子自动继续，无需手动恢复。
     async with sessions() as db:
         job = await db.scalar(select(ParseFieldJob).where(ParseFieldJob.run_id == run_id))
         candidates = (await db.execute(select(ParseCandidate).where(ParseCandidate.job_id == job.job_id))).scalars().all()
@@ -244,4 +244,3 @@ async def test_e02_pg_hundreds_of_candidates_reach_unlabelled_last_page_target(s
         assert any(candidate.state == "accepted" and candidate.block_ref["page"] == 3 for candidate in candidates)
         assert {fact["value"] for fact in field.instances} == {"0.20"}
         assert field.extraction_detail["field_completion"]["coverage_complete"] is True
-

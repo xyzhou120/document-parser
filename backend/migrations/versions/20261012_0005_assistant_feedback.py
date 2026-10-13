@@ -1,4 +1,4 @@
-"""Separate offline feedback from source and human-fact audit history."""
+"""将离线反馈与来源及人工事实审计历史分离。"""
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
@@ -46,4 +46,3 @@ FOR EACH ROW EXECUTE FUNCTION reject_platform_audit_mutation()""")
 
 def downgrade():
     raise RuntimeError("Feedback history downgrade is disabled; restore an isolated backup")
-

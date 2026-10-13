@@ -11,8 +11,8 @@ from scripts.reliable_evaluation_runner import adapt_run_export, run_evaluation
 
 @pytest.fixture(name="tmp_path")
 def workspace_tmp_path():
-    # Python 3.12 on Windows applies restrictive ACLs to pytest's mode=0o700
-    # directories. Use a uniquely owned workspace directory with inherited ACLs.
+    # Windows 上的 Python 3.12 会给 pytest 的 mode=0o700 目录设置严格 ACL。
+    # 使用具有继承 ACL 的独立工作区目录。
     root = Path(__file__).resolve().parents[2] / "output"
     path = root / f"p20-evaluation-test-{uuid4().hex}"
     path.mkdir(mode=0o777)

@@ -1,10 +1,8 @@
-"""Adapt immutable :class:`DocumentArtifact` pages to the content contract.
+"""将不可变 DocumentArtifact 页面适配为内容契约。
 
-The artifact remains the only source of document text.  This module is deliberately
-free of database writes so it can be used by extraction, indexing, and assistant
-workers in exactly the same way.  A content adapter must be deterministic: running it
-twice over the same artifact produces the same block/table/region identifiers and
-content digest.
+产物始终是文档文本的唯一来源。本模块有意不写数据库，因此提取、索引和助手
+工作进程可用相同方式使用。内容适配器必须具有确定性：对同一产物运行两次，
+应产生相同的块、表格、区域标识和内容摘要。
 """
 
 from __future__ import annotations
@@ -31,7 +29,7 @@ def _stable_id(prefix: str, value: Any) -> str:
 
 
 def normalize_text(value: Any) -> str:
-    """Return a comparison form while retaining the original text separately."""
+    """保留原始文本，同时返回用于比较的形式。"""
     text = unicodedata.normalize("NFKC", str(value or ""))
     return re.sub(r"\s+", " ", text).strip()
 
@@ -70,9 +68,8 @@ def _source_block(page_number: int, block: Mapping[str, Any], ordinal: int | Non
         "normalized": normalized,
         "bbox": bbox,
         "locator": locator,
-        # Existing producers may provide an explicit identity.  Otherwise the ordinal
-        # only disambiguates duplicate source spans; offsets are intentionally excluded
-        # because a correction can shift every later offset.
+        # 现有生产者可能提供显式身份。否则序号只用于区分重复的来源范围；
+        # 有意排除偏移量，因为修正可能移动后续所有偏移。
         "explicit_id": block.get("block_id") or block.get("segment_id"),
         "duplicate_ordinal": ordinal,
     }
@@ -169,16 +166,14 @@ def _page(page: Mapping[str, Any], ordinal: int) -> dict[str, Any]:
         occurrence = seen_blocks.get(raw_key, 0)
         seen_blocks[raw_key] = occurrence + 1
         blocks.append(_source_block(page_number, block, occurrence if counts[raw_key] > 1 else None))
-    # Some old artifacts keep OCR only in ocr_blocks.  Expose them as regions without
-    # changing the original text_blocks list.
+    # 一些旧产物只在 ocr_blocks 中保存 OCR。将其暴露为区域，但不修改原始 text_blocks 列表。
     existing_regions = [b for b in blocks if b["source"] in {"ocr", "automatic_ocr"}]
     for block in page.get("ocr_blocks") or []:
         block = dict(block)
         locator = block.get("locator") or block.get("original_locator")
         raw = str(block.get("text", "") or "")
-        # parse_service stores the same OCR result twice: a PDF_POINT text block
-        # plus its original PIXEL locator.  Compare the original locator to avoid
-        # introducing a second occurrence with a different coordinate space.
+        # parse_service 会保存两份相同 OCR 结果：PDF_POINT 文本块和原始 PIXEL 定位器。
+        # 比较原始定位器，避免在不同坐标系中引入第二个出现项。
         duplicate = any(
             b["raw_text"] == raw and (
                 (locator is not None and b.get("locator") == locator)
@@ -193,8 +188,7 @@ def _page(page: Mapping[str, Any], ordinal: int) -> dict[str, Any]:
             seen_blocks[raw_key] = occurrence + 1
             blocks.append(_source_block(page_number, {**block, "source": "ocr"}, occurrence if counts.get(raw_key, 0) > 1 else None))
     if not blocks and page.get("text"):
-        # Historical text-only artifacts still need searchable content, with page
-        # level location rather than invented geometry.
+        # 历史文本产物仍需要可搜索内容，此时使用页面级位置，不伪造几何位置。
         blocks.append(_source_block(page_number, {"text": page["text"], "source": "native", "start_offset": 0, "end_offset": len(page["text"])}, None))
     if not ocr_raw:
         ocr_raw = "\n".join(b["raw_text"] for b in blocks if b["source"] in {"ocr", "automatic_ocr"})
@@ -250,8 +244,7 @@ def _coverage(artifact: Any, pages: list[dict[str, Any]]) -> dict[str, Any]:
                 closed = False
             if state in {"unreadable", "failed"}:
                 failed.add(number)
-        # A producer must explicitly attest that the region list partitions the
-        # entire physical page; a successful crop alone is not full-page coverage.
+        # 生产者必须明确声明区域列表覆盖整个物理页面；裁剪成功本身不代表整页覆盖。
         if closed and item.get("scope_complete") is True:
             closed_pages.add(number)
     expected_pages = set(range(1, expected + 1))
@@ -259,8 +252,7 @@ def _coverage(artifact: Any, pages: list[dict[str, Any]]) -> dict[str, Any]:
     if declared:
         unknown |= expected_pages - covered - failed
     else:
-        # READY, page_count, or the presence of OCR are insufficient for a proof of
-        # exhaustive readability.  Historical artifacts have unknown scope.
+        # READY、page_count 或存在 OCR 都不足以证明页面已完整可读；历史产物的范围未知。
         unknown |= expected_pages
     unknown -= failed
     is_ready = str(getattr(artifact, "status", "")).upper() == "READY"
@@ -296,7 +288,7 @@ class AdaptedContent:
 
 
 class ContentAdapter:
-    """Deterministically expose content while keeping artifact JSON untouched."""
+    """在不修改产物 JSON 的前提下确定性地暴露内容。"""
 
     version = ADAPTER_VERSION
 
@@ -305,8 +297,8 @@ class ContentAdapter:
         pages = [_page(page, i) for i, page in enumerate(raw_pages)]
         pages.sort(key=lambda item: item["page_number"])
         coverage = _coverage(artifact, pages)
-        # Include raw text and geometry in the digest.  A normalization-only change
-        # must still be visible to downstream revision consumers.
+        # 摘要包含原始文本和几何信息。即使只发生规范化变更，
+        # 下游修订消费者也必须能够感知。
         digest_payload = {"adapter_version": self.version, "pages": pages}
         return AdaptedContent(
             artifact_id=str(getattr(artifact, "artifact_id", "")),
@@ -321,4 +313,3 @@ class ContentAdapter:
 
 
 content_adapter = ContentAdapter()
-

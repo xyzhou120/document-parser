@@ -1,4 +1,4 @@
-"""Statistics use the run's checklist and historical rule snapshot."""
+"""统计使用运行所属清单和历史规则快照。"""
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -146,7 +146,7 @@ async def test_same_identity_different_values_and_unbound_candidates_remain_visi
     assert item["candidate_found"] == 1
     assert item["fact_count"] == 2
     assert item["risk_count"] == 1
-    assert item["available_for_downstream"] == 1  # Supply both facts and their risk, without choosing.
+    assert item["available_for_downstream"] == 1  # 同时提供事实及风险，不代替业务选择。
     assert item["review_needed"] == 1
 
 

@@ -1,7 +1,7 @@
-"""P05 concurrency tests against an explicitly selected isolated PostgreSQL DB.
+"""针对显式选择的隔离 PostgreSQL 数据库执行 P05 并发测试。
 
-No SQLite/fake session is used for lock, fencing, or outbox claims.  The tests
-append uniquely named synthetic records; immutable content audits are kept.
+锁、栅栏或发件箱领取不使用 SQLite 或模拟会话。测试追加名称唯一的模拟记录，
+并保留不可变内容审计。
 """
 
 import asyncio
@@ -19,7 +19,7 @@ from app.config import settings
 from app.models.content import ContentRevision
 from app.models.database import Document, DocumentArtifact, ParseRun
 from app.models.execution import ExecutionOutbox, ParseFieldJob
-from app.models.source_revisions import SourceRevision  # noqa: F401 - register FK metadata
+from app.models.source_revisions import SourceRevision  # noqa: F401 - 注册外键元数据
 from app.services.execution import DispatchOutbox, JobRepository, StaleLeaseError
 
 

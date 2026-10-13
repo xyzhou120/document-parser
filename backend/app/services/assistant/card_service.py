@@ -1,4 +1,4 @@
-"""Independent, queued document cards built only from pinned source excerpts."""
+"""独立排队的文档卡片，仅基于绑定的来源摘录生成。"""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def _id(value):
 
 
 def extract_card(content, revision_id, generation_id):
-    """Source-backed excerpts and heading index; no extraction facts are inputs."""
+    """有来源支持的摘录和标题索引；不使用提取事实作为输入。"""
     headings, excerpts, citations = [], [], []
     for page in content.pages:
         blocks = page.get("text_blocks") or [{"text": page.get("text", ""), "block_id": None}]
@@ -50,7 +50,7 @@ def extract_card(content, revision_id, generation_id):
             heading = next((line.strip() for line in raw.splitlines() if re.match(r"^(?:第[一二三四五六七八九十百\d]+[章节]|[一二三四五六七八九十]+[、．.]|\d+(?:\.\d+)*[、．. ]|[（(][一二三四五六七八九十\d]+[）)])", line.strip()) and len(line.strip()) <= 100), None)
             used = False
             if heading and len(headings) < 20:
-                # Heading text is retained exactly, and its full quote must be present.
+                # 标题文本原样保留，且必须包含完整引文。
                 citation["quote"] = heading
                 headings.append({"title": heading, "page_number": page["page_number"], "citation_ids": [cid]})
                 used = True
@@ -173,7 +173,7 @@ class CardService:
                 card.status, card.error = "succeeded", None
                 return self.serialize(card)
         except Exception as exc:
-            # A card failure has no write path to sessions, QA messages or parse runs.
+            # 卡片失败不能写入会话、问答消息或解析运行。
             async with sessions() as db, db.begin():
                 card = await db.get(DocumentCard, _id(card_id), with_for_update=True)
                 if card and card.status != "succeeded":

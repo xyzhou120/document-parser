@@ -1,4 +1,4 @@
-"""Rule bundle dry-run, publication, rollback and immutable audit API."""
+"""规则包试运行、发布、回滚与不可变审计接口。"""
 
 from uuid import UUID
 

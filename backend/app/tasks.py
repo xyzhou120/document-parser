@@ -23,7 +23,7 @@ def _retryable(exc: Exception) -> bool:
 
 
 async def _set_run_status(parse_run_id: UUID, status: str, message: str) -> None:
-    """Mark an exhausted task without reusing a loop-bound pool."""
+    """标记已耗尽的任务，不复用绑定到旧事件循环的连接池。"""
     from app.models.database import ParseRun
 
     engine = create_async_engine(settings.database.url, poolclass=NullPool)
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 def content_build_failure_allowed(job, *, worker_id, initial_fence, file_hash, error, now):
-    """Check failure-write authority without revoking another delivery's lease."""
+    """检查失败写入权限，不撤销其他投递的租约。"""
     from app.services.content_build_service import ContentBuildError
     if isinstance(error, ContentBuildError) and (
         "already leased" in str(error) or "stale content build worker" in str(error)
@@ -71,8 +71,8 @@ def parse_document_task(self, document_id: str, parse_run_id: str, field_keys: l
 
     logger.info(f"Starting parse task: document_id={document_id}, parse_run_id={parse_run_id}")
 
-    # A valid run identifier lets us record a permanent document-input failure.
-    # Invalid run identifiers cannot identify a database record to update.
+    # 有效的运行标识可用于记录永久的文档输入失败。
+    # 无效运行标识无法定位要更新的数据库记录。
     run_id = UUID(parse_run_id)
     try:
         doc_id = UUID(document_id)
@@ -98,7 +98,7 @@ def parse_document_task(self, document_id: str, parse_run_id: str, field_keys: l
     except Exception as e:
         logger.error(f"Parse task failed: {e}", exc_info=True)
         if _retryable(e) and self.request.retries < self.max_retries:
-            # Keep the state visible while Celery schedules the next attempt.
+            # Celery 安排下次尝试期间，保持状态可见。
             try:
                 asyncio.run(_set_run_status(run_id, "RETRYING", str(e)))
             except Exception:
@@ -114,7 +114,7 @@ def parse_document_task(self, document_id: str, parse_run_id: str, field_keys: l
 @celery_app.task(name="reliable_execution_wakeup", bind=True, max_retries=3)
 def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: str | None = None,
                                  dispatch_attempt: int | None = None):
-    """Execute bounded real retrieval/model/validation quanta on the v2 queue."""
+    """在 v2 队列上执行有界的真实检索、模型和校验量子。"""
     import asyncio
 
     if not settings.app.reliable_enabled:
@@ -191,14 +191,14 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
                         thinking_enabled=model.get("thinking_enabled", True)), image_provider=images)
                 result = await reliable_extraction_service.process_run(sessions, run_id, executor=executor,
                     writer=executor.write_result, before_publish=executor.before_publish,
-                    # Keep a wake short so one long document cannot monopolize
-                    # the solo local worker while other runs wait in Redis.
+                    # 缩短每次唤醒处理时间，避免长文档独占本地单进程工作进程，
+                    # 使其他运行一直在 Redis 中等待。
                     owner=f"celery:{self.request.id}", max_quantums=3, lease_seconds=300)
                 if result.get("remaining_runnable"):
                     try:
                         await asyncio.to_thread(reliable_execution_dispatch_task.delay)
                     except Exception:
-                        # Durable wakes and beat still recover broker downtime.
+                        # 持久化唤醒和定时任务仍可从消息代理停机中恢复。
                         logger.warning("Reliable continuation waits for beat recovery")
                 return result
         finally:
@@ -212,7 +212,7 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
 
 @celery_app.task(name="reliable_execution_dispatch", max_retries=0)
 def reliable_execution_dispatch_task():
-    """Periodic lost-message, expired lease and service retry recovery."""
+    """定期恢复丢失消息、过期租约和服务重试。"""
     import asyncio
     if not settings.app.reliable_enabled:
         return {"status": "disabled"}
@@ -286,7 +286,7 @@ def reliable_content_build_task(self, build_id: str):
 
 @celery_app.task(name="assistant_message_execute", bind=True, max_retries=3)
 def assistant_message_execute_task(self, message_id: str):
-    """Run one queued assistant message on its dedicated worker queue."""
+    """在专用工作队列上运行一条待处理助手消息。"""
     import asyncio
     if not settings.app.assistant_enabled:
         return {"status": "disabled", "message_id": message_id}
@@ -304,7 +304,7 @@ def assistant_message_execute_task(self, message_id: str):
         engine = create_async_engine(settings.database.url, poolclass=NullPool)
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         try:
-            # QAService owns its repository/generation fence transaction.
+            # QAService 负责其仓库和索引版本栅栏事务。
             config = next((settings.models.get(key) for key in ("text_llm", "llm", "vision_llm")
                            if settings.models.get(key)), None)
             repository = IndexRepository(sessions)
@@ -321,7 +321,7 @@ def assistant_message_execute_task(self, message_id: str):
 
 @celery_app.task(name="assistant_outbox_dispatch", max_retries=0)
 def assistant_outbox_dispatch_task():
-    """Dispatch assistant events through the shared durable outbox."""
+    """通过共享的持久化发件箱投递助手事件。"""
     import asyncio
     if not settings.app.assistant_enabled:
         return {"status": "disabled"}
@@ -351,7 +351,7 @@ def assistant_outbox_dispatch_task():
 
 @celery_app.task(name="content_index_build", max_retries=0)
 def content_index_build_task(revision_id: str):
-    """Build an immutable assistant index after P11 content publication."""
+    """在 P11 内容发布后构建不可变助手索引。"""
     import asyncio
     if not settings.app.assistant_enabled:
         return {"status": "disabled"}

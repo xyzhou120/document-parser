@@ -1,4 +1,4 @@
-"""Document assistant HTTP boundary; execution is always queued/worker-owned."""
+"""文档助手的 HTTP 接口；执行始终由队列和工作进程负责。"""
 
 from __future__ import annotations
 

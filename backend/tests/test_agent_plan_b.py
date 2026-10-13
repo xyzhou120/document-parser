@@ -1,7 +1,7 @@
-"""Plan B checks (2026-10-10): calibrated estimate, configurable history images,
-reasoning switch, status semantics and reason codes.
+"""方案 B 检查（2026-10-10）：校准估算、可配置的历史图像，
+推理开关、状态语义和原因码。
 
-Uses the same fake client pattern as test_agent_checklist.py, without any network.
+使用与 test_agent_checklist.py 相同的模拟客户端模式，不访问网络。
 """
 
 import asyncio
@@ -84,7 +84,7 @@ def _png_data_url(width, height):
     return "data:image/png;base64," + base64.b64encode(header + b"\x00" * 16).decode()
 
 
-# --- B1: calibrated pre-call estimate -------------------------------------------------
+# --- B1：校准调用前估算 -------------------------------------------------
 
 def test_estimate_uses_measured_constants():
     agent = ChecklistAgent(settings_override={"token_per_char": 0.82, "image_tokens_per_kpx": 1.0})
@@ -95,7 +95,8 @@ def test_estimate_uses_measured_constants():
             {"type": "image_url", "image_url": {"url": _png_data_url(1000, 1500)}},
         ]},
     ]
-    # 1000 and 500 characters at 0.82 each, plus a 1000x1500 PNG at 1 token per 1000 pixels.
+    # 1000 和 500 个字符各按 0.82 估算，加上一张 1000x1500 的 PNG，
+    # 图像按每 1000 像素 1 token 估算。
     assert agent._estimate_tokens(messages) == math.ceil(1000 * 0.82 + 500 * 0.82 + 1500)
 
 
@@ -104,7 +105,7 @@ def test_unreadable_image_falls_back_to_fixed_estimate():
     assert agent._image_tokens("data:image/png;base64,AAAA") == 1500.0
 
 
-# --- B2: history images ----------------------------------------------------------------
+# --- B2：历史图像 ----------------------------------------------------------------
 
 def test_history_keeps_configured_number_of_images():
     agent = ChecklistAgent(settings_override={"history_images": 2})
@@ -124,7 +125,7 @@ def test_plan_b_defaults():
     assert limits.history_images == 2
     assert limits.thinking_enabled is True
     assert limits.max_tokens == 6000
-    # Plan B defect fix (2026-10-10): measured start factor is 0.55; corrected per call at run time.
+    # 方案 B 缺陷修复（2026-10-10）：实测初始系数为 0.55，运行时按调用校正。
     assert limits.token_per_char == 0.55
     assert limits.min_output_tokens == 2500
     assert limits.image_tokens_per_kpx == 1.0
@@ -139,7 +140,7 @@ def test_string_settings_are_parsed_by_type():
     assert limits.history_images == 3
 
 
-# --- B3: reasoning switch and output cap -------------------------------------------------
+# --- B3：推理开关和输出上限 -------------------------------------------------
 
 def test_thinking_switch_is_sent_only_when_disabled():
     responses = [{"actions": [{"type": "view_page", "page_number": 1}]}, {"fields": []}]
@@ -166,7 +167,7 @@ def test_trace_records_estimate_and_images_for_calibration():
     assert calls[0]["max_tokens"] == min(6000, calls[0]["max_tokens"])
 
 
-# --- B5: status semantics and reason codes ------------------------------------------------
+# --- B5：状态语义和原因码 ------------------------------------------------
 
 def test_field_status_matrix():
     assert ChecklistAgent._field_status(True, True) == "review_required"
@@ -176,8 +177,8 @@ def test_field_status_matrix():
 
 
 def test_candidate_without_finished_search_is_partial():
-    # Round 1 views page 1; round 2 submits a candidate but keeps searching,
-    # and the batch runs out of rounds before finishing.
+    # 第 1 轮查看第 1 页；第 2 轮提交候选但继续搜索，
+    # 批次在完成前耗尽轮次。
     result, _ = run(
         [
             {"actions": [{"type": "view_page", "page_number": 1}]},

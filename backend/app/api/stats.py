@@ -35,7 +35,7 @@ _REVIEW_STATUSES = {
     "low_confidence",
     "review_required",
     "unresolved",
-    # Plan B statuses: candidate awaiting confirmation, searched-and-absent, unfinished search.
+    # 方案 B 的状态：候选待确认、已搜索但不存在、搜索未完成。
     "partial_candidates",
     "not_found",
     "incomplete",
@@ -43,7 +43,7 @@ _REVIEW_STATUSES = {
 
 
 def _field_inventory(field: Any, rule: dict[str, Any], *, run=None, invalidations=()) -> dict[str, Any]:
-    """Inventory candidates and their structure, without approving business use."""
+    """统计候选事实及其结构，不据此批准业务使用。"""
     detail = getattr(field, "extraction_detail", None) or {}
     if is_v2(run, detail=detail):
         from types import SimpleNamespace
@@ -83,8 +83,8 @@ def _field_inventory(field: Any, rule: dict[str, Any], *, run=None, invalidation
     required_dims = [key for key, cfg in (rule.get("dimension_schema") or {}).items() if cfg.get("required")]
     agent_config = (rule.get("strategy") or {}).get("agent_extract") or {}
     required_dims = list(dict.fromkeys([*required_dims, *(agent_config.get("identity_dimensions") or [])]))
-    # Agent's blanket UNVERIFIED/review_required status is provenance, not a
-    # policy that every discovered fact requires an operator.
+    # 代理统一标记的 UNVERIFIED/review_required 只是来源状态，
+    # 不表示每个发现的事实都必须由操作员审核。
     risk = status in (_REVIEW_STATUSES - {"review_required"}) or status == "blocked"
     risk = risk or any(bool(item.get("quality_issues") or item.get("issues")) for item in instances)
     coverage = detail.get("coverage") or {}
@@ -100,7 +100,7 @@ def _field_inventory(field: Any, rule: dict[str, Any], *, run=None, invalidation
         bound = all(has_value(dimensions.get(key)) and str(dimensions[key]).lower() not in {"unknown", "未知"} for key in required_dims)
         refs = [registry[ref] for ref in (fact.get("evidence_ids") or []) if isinstance(ref, str) and ref in registry]
         refs += [ref if isinstance(ref, dict) else registry.get(ref, {}) for ref in (fact.get("evidence_refs") or []) if isinstance(ref, dict | str)]
-        # Native/OCR instances carry their own page/context instead of an Agent registry.
+        # 原生文本与 OCR 实例自带页码和上下文，不依赖代理证据注册表。
         evidence = any(isinstance(ref, dict) and isinstance(ref.get("page_number"), int) and ref["page_number"] > 0 for ref in refs)
         evidence = evidence or (isinstance(fact.get("page_num"), int) and fact["page_num"] > 0 and bool(fact.get("context")))
         unit_ok = not rule.get("unit") or fact.get("unit") == rule["unit"]
@@ -137,8 +137,8 @@ def _field_inventory(field: Any, rule: dict[str, Any], *, run=None, invalidation
 
 
 def _start_of_today() -> datetime:
-    # Persisted timestamps are UTC-naive (legacy schema); calculate the day
-    # boundary in Shanghai then convert back to UTC-naive for comparisons.
+    # 旧版数据库时间戳为不带时区的 UTC；先按上海时区计算日期边界，
+    # 再转回不带时区的 UTC 进行比较。
     local = datetime.now(ZoneInfo("Asia/Shanghai"))
     start = local.replace(hour=0, minute=0, second=0, microsecond=0)
     return start.astimezone(UTC).replace(tzinfo=None)
@@ -363,9 +363,8 @@ async def field_quality(
     db: AsyncSession = Depends(get_db),
 ):
     """按运行快照统计字段发现、结构可消费及风险；不代表业务放行。"""
-    # Coverage denominator is the number of completed runs whose snapshot
-    # expected this field, within the selected checklist. This avoids counting
-    # old runs or fields added after a run was created.
+    # 覆盖率分母为所选清单中，快照包含该字段且已完成的运行数；
+    # 不计入旧运行或运行创建后才新增的字段。
     observed = or_(ParseRun.status == "COMPLETED", and_(ParseRun.contract_version == VERSION,
         ParseRun.status.in_(["COMPLETED_WITH_REVIEW", "PARTIAL", "INCOMPLETE"])))
     runs_query = select(ParseRun).where(observed)
@@ -393,8 +392,8 @@ async def field_quality(
                 invalidations_by_document[document_key] = await load_invalidations(db, run.document_id)
             invalidations = invalidations_by_document[document_key]
         snapshot = (run.extraction_profile or {}).get("rules")
-        # Legacy runs have no snapshot: show observed values but leave coverage
-        # unknown; never substitute today's rules for historical requirements.
+        # 旧版运行没有快照：展示观测值，但覆盖率保持未知；
+        # 不能用当前规则替代历史要求。
         known = isinstance(snapshot, list)
         rules: list[dict[str, Any]] = (
             snapshot
@@ -485,8 +484,7 @@ async def field_quality(
         bucket["extracted"] = bucket.pop("observed")
         if bucket["availability_unknown"] and not bucket["available_for_downstream"]:
             bucket["available_for_downstream"] = None
-        # ``candidate_found`` is the new explicit name; ``extracted`` remains
-        # as a backward-compatible alias for existing dashboards.
+        # candidate_found 是新的明确字段名；extracted 作为旧仪表盘兼容别名保留。
         bucket["coverage"] = round(covered / expected * 100, 1) if expected else None
         bucket["completion_coverage"] = round(bucket.pop("scope_completed") / expected * 100, 1) if expected else None
         bucket["avg_confidence"] = (

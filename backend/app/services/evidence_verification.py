@@ -1,8 +1,7 @@
-"""Pure attribute evidence checks for reliable extraction v2.
+"""可靠提取 v2 的纯属性证据校验。
 
-The evidence argument is a platform-owned registry, never the model's receipt objects. A
-receipt identifies its source, immutable revision and candidate/block binding. Original-image
-receipts additionally carry attribute verification; attaching an image is not verification.
+证据参数是平台维护的注册表，不是模型提供的回执对象。回执标识来源、不可变修订
+以及候选或块的绑定关系。原图回执还携带属性核验信息；附加图像不等于完成核验。
 """
 
 from __future__ import annotations
@@ -177,7 +176,7 @@ def _assert(observed: Any, expected: Any, status: str, evidence_ids=(), basis=No
 
 
 def _kind_wording_supported(kind: str, quote: str, value: Any, numeric: bool) -> bool:
-    """Use the nearest explicit type marker for the target value, not any marker in the row."""
+    """使用目标值附近最近的明确类型标记，而不是该行中的任意标记。"""
     for clause in re.split(r"[。；;，,\n]", quote):
         normalized = _evidence_text(clause).lower()
         if not value_in_text(value, clause, numeric):
@@ -294,9 +293,8 @@ def _verify_attribute(key: str, observed: Any, expected: Any, decision: Mapping,
                     value_in_text(decision.get("value"), ev_text, numeric) and
                     value_in_text(decision.get("value"), quote, numeric) and
                     normalize(quote) in normalize(ev_text) and normalize(quote) in normalize(text)):
-                # "Reported" is the generic literal stated by the document. It
-                # does not assert measured/calculated/design semantics. OCR has
-                # already been excluded from this text-only branch above.
+                # “Reported” 是文档中的通用字面表达，不代表实测、计算或设计语义。
+                # OCR 已在上方的纯文本分支中排除。
                 valid, platform_basis = True, "source.reported_literal"
         elif key.startswith("dimensions."):
             valid = value_in_text(observed, scope_text, False) and (
@@ -318,7 +316,7 @@ def _verify_attribute(key: str, observed: Any, expected: Any, decision: Mapping,
 
 def validate_candidate_decision(decision: Mapping, candidate: Any, rule: Any,
                                 evidence: Mapping | None = None) -> dict:
-    """Return attribute assertions and a diagnostic fact; accepted means fully supported."""
+    """返回属性断言和诊断事实；accepted 表示证据完整支持。"""
     payload = _input(candidate)
     contract = semantic_contract(rule)
     cid = str(payload.get("candidate_id") or payload.get("id") or "")

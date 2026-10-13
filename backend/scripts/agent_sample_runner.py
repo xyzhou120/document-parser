@@ -1,12 +1,12 @@
-"""Run the production checklist agent on local PDF samples without API/queues.
+"""在没有 API 和队列的情况下，对本地 PDF 样本运行生产清单代理。
 
-From repository root:
+从仓库根目录执行：
   backend/.venv/Scripts/python.exe backend/scripts/agent_sample_runner.py \
     --manifest output/agent_evaluation/manifest.json --ids 131 \
     --fields actual_hole_count --out-dir output/agent_evaluation/runs/smoke
 
-Native text/table extraction is local; original PDF images go to the configured
-vision model only when the agent requests them. --dry-run makes no model calls.
+原生文本和表格提取在本地完成；只有代理请求时，原始 PDF 图像才会发送到配置的
+视觉模型。--dry-run 不调用模型。
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def seed_specs(field_keys: list[str] | None = None) -> tuple[list[RuleSpec], str
 
 
 def _safe_manifest_file(manifest_path: Path, relative: str, sample_root: Path | None) -> Path:
-    """Resolve a copied sample without silently escaping the package root."""
+    """解析复制后的样本，不能静默逃出包根目录。"""
     base = (sample_root or manifest_path.parent).resolve()
     if Path(relative).is_absolute() or PureWindowsPath(relative).is_absolute():
         raise ValueError(f"Manifest copied_file must be relative: {relative}")
@@ -92,8 +92,8 @@ def sources_from_manifest(
             path = _safe_manifest_file(manifest_path, copied_file, sample_root)
             resolution = "copied_file"
         else:
-            # Legacy manifests predate the self-contained package. Keep their
-            # repository-root path behaviour, but make the chosen root explicit.
+            # 旧版清单早于自包含包。保留其仓库根目录路径行为，
+            # 但明确记录选定的根目录。
             path = (sample_root or root) / row["path"].replace("\\", "/")
             resolution = "legacy_path"
         if not path.is_file():
@@ -125,7 +125,7 @@ def freeze_metadata(
                                   capture_output=True, text=True, check=False).stdout.strip() or None
     except OSError:
         revision = None
-    # Hash only audit-safe model configuration, never write credentials to reports.
+    # 只对可安全审计的模型配置计算哈希，不能把凭据写入报告。
     model_settings = {key: (config or {}).get(key) for key in (
         "model_name", "model_version", "temperature", "max_tokens", "max_retries")}
     return {
@@ -141,7 +141,7 @@ def freeze_metadata(
 
 
 class LocalPDFImages:
-    """Immutable verified PDF snapshot; source and rendered evidence cannot drift."""
+    """不可变的已核验 PDF 快照；来源与渲染证据不能发生漂移。"""
 
     def __init__(self, source: Path, expected_hash: str | None = None, dpi: int = 180):
         if not 72 <= dpi <= 300:
@@ -192,8 +192,8 @@ async def run_sample(
     started = time.monotonic()
     image_source = LocalPDFImages(Path(source["path"]), source.get("expected_hash"), dpi=dpi)
     try:
-        # Parse the same immutable bytes used for every visual tool response.
-        # Do not reread the original pathname after source verification.
+        # 解析供每次视觉工具响应使用的同一份不可变字节。
+        # 来源校验后不能重新读取原始路径。
         with tempfile.TemporaryDirectory(prefix="agent-sample-") as scratch:
             snapshot = Path(scratch) / "source.pdf"
             snapshot.write_bytes(image_source.pdf_bytes)
@@ -325,7 +325,7 @@ async def main(argv: list[str] | None = None) -> int:
             result = await run_sample(source, rules, knowledge_hash, limits, model_config=config,
                                       dpi=args.dpi, dry_run=args.dry_run)
         except Exception as exc:
-            # Failed samples remain in this run and in the success-rate denominator.
+            # 失败样本保留在本次运行中，并计入成功率分母。
             result = {"schema_version": 1, "document_id": source["id"], "sample_id": source["id"],
                       "status": "FAILED", "fields": [], "details": [], "pages": None,
                       "file_hash": source.get("expected_hash"), "error": f"{type(exc).__name__}: {exc}",

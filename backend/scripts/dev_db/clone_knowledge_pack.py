@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
-"""Create an empty development database and copy only the checklist knowledge pack into it.
+"""创建空开发数据库，并且只复制清单知识包。
 
-Copied (knowledge): checklist_types, rule_bundles, extraction_rules, rule_release_events,
-checklist_release_heads, rule_change_log (rule edit history).
+复制内容（知识数据）：checklist_types、rule_bundles、extraction_rules、rule_release_events、
+checklist_release_heads、rule_change_log（规则编辑历史）。
 
-Not copied (test records, they stay in the source database): documents, parse_runs,
-extracted_fields, document_artifacts, parse_logs, batches, field_review_revisions, integration and
-context tables.
+不复制的内容（测试记录，保留在源数据库）：documents、parse_runs、extracted_fields、
+document_artifacts、parse_logs、batches、field_review_revisions、integration 和 context 表。
 
-The source database is only read, through a read-only session.  The schema of the new database
-comes from migrations/init.sql, which is generated from the models and checked by
-``python -m migrations.bootstrap --check``.  Alembic is not used: the source database has no
-alembic_version table, so it was never stamped.
+源数据库只通过只读会话读取。新数据库的数据模式来自 migrations/init.sql，
+该文件由模型生成，并通过 python -m migrations.bootstrap --check 检查。
+不使用 Alembic：源数据库没有 alembic_version 表，因此从未标记迁移版本。
 
-Usage, from the backend directory:
+在 backend 目录执行：
     python3 scripts/dev_db/clone_knowledge_pack.py --target-db document_parser_dev --dry-run
     python3 scripts/dev_db/clone_knowledge_pack.py --target-db document_parser_dev
-For a different server, add --target-host, --target-port, --target-user and set TARGET_DB_PASSWORD
-in the environment (the password is never printed).  The target database must not exist yet.
+连接其他服务器时，增加 --target-host、--target-port、--target-user，并在环境中设置
+TARGET_DB_PASSWORD（不会打印密码）。目标数据库必须尚不存在。
 """
 
 from __future__ import annotations
@@ -34,7 +32,7 @@ sys.path.insert(0, str(BACKEND))
 
 KNOWLEDGE_TABLES = [
     "checklist_types",
-    "rule_bundles",  # before the two tables that reference it
+    "rule_bundles",  # 放在引用它的两个表之前。
     "extraction_rules",
     "rule_release_events",
     "checklist_release_heads",
@@ -61,7 +59,7 @@ def make_engine(url: str, *, read_only: bool = False, autocommit: bool = False):
 
 
 def fingerprint(conn, table: str):
-    """Row count and a content hash that does not depend on column order or JSON whitespace."""
+    """返回行数和不依赖列顺序或 JSON 空白字符的内容哈希。"""
     from sqlalchemy import text
 
     row = conn.execute(text(
@@ -88,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     from app.config import settings
     from migrations.metadata import load_metadata
 
-    psycopg2.extras.register_uuid()  # UUID columns come back as uuid.UUID, as the models expect
+    psycopg2.extras.register_uuid()  # UUID 列返回模型预期的 uuid.UUID。
     src = settings.database
     tgt_host = args.target_host or src.host
     tgt_port = args.target_port or src.port

@@ -1,7 +1,7 @@
-"""Initial document content preparation orchestration (P13 worker seam).
+"""初始文档内容准备编排（P13 工作进程边界）。
 
-The service builds one reusable Artifact for the frozen request and publishes it
-once through P11.  Field jobs never invoke PDF parsing or OCR independently.
+本服务为冻结的请求构建一个可复用 Artifact，并通过 P11 发布一次。
+字段任务不会独立调用 PDF 解析或 OCR。
 """
 
 from __future__ import annotations

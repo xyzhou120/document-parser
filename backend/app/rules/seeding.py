@@ -422,7 +422,7 @@ RULES = [
     },
 ]
 
-# Separate pilot package keeps existing configured rules and historical runs intact.
+# 独立的试点包保留现有配置规则和历史运行记录。
 CHECKLIST_TYPES.append(AGENT_CHECKLIST)
 RULES.extend(agent_seed_rules())
 
@@ -486,8 +486,8 @@ async def seed_rules(db: AsyncSession, force: bool = False) -> dict:
             )
         )
         existing = result.scalar_one_or_none()
-        # Startup seeding is idempotent: once a checklist has user-managed
-        # rules, deleting a seed rule must remain effective after restart.
+        # 启动种子写入是幂等的：清单拥有用户管理的规则后，删除种子规则的操作
+        # 在重启后仍必须生效。
         if existing is None and not force and existing_counts.get(item["checklist_type"], 0) > 0:
             skipped += 1
             continue

@@ -1,4 +1,4 @@
-"""P06 durable scan/pagination contracts (no database or model)."""
+"""P06 持久化扫描和分页契约（无需数据库或模型）。"""
 
 from app.services.candidate_repository import validate_scan_batch
 from app.services.candidate_retrieval import FieldSpec, retrieve, stable_candidate_key
@@ -54,7 +54,7 @@ def test_cross_page_table_header_is_kept_as_candidate_context():
     table = {"table_id": "t-1", "header": "评价单元 | 目标含量(m³/t)"}
     first = page(1, "评价单元 | 目标含量(m³/t)", table=table)
     second = page(2, "目标含量 2.20 m³/t", table=table)
-    # The table block metadata is carried to the candidate even on a continuation page.
+    # 即使在续页上，表格块元数据也要传递给候选项。
     candidate = retrieve(spec(), [first, second], max_candidates=None).candidates[0]
     assert "评价单元" in candidate.context or candidate.table
 
@@ -134,4 +134,3 @@ def test_batch_tree_allows_same_candidate_only_for_disjoint_unit_work_scopes():
     tree.apply_outcome("root/0", accepted)
     tree.apply_outcome("root/1", accepted)
     assert tree.batches["root"]["batch_state"] == "done"
-

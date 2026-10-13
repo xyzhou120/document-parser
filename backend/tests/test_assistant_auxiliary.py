@@ -54,7 +54,7 @@ async def test_compare_is_explicit_read_only_and_marks_version_mismatch():
 
 @pytest.mark.asyncio
 async def test_feedback_service_requires_fixed_source_and_pending_record():
-    # The service rejects a locator before any insert when the referenced fixed block is absent.
+    # 被引用的固定块不存在时，服务应在插入前拒绝定位器。
     from app.schemas.assistant_auxiliary import AssistantFeedbackRequest, FeedbackLocator
     from app.services.content_service import RevisionContent
     message = SimpleNamespace(message_id=uuid4(), session_id=uuid4(), revision_id=uuid4(), generation_id=None,
@@ -69,4 +69,3 @@ async def test_feedback_service_requires_fixed_source_and_pending_record():
     with pytest.raises(ValueError, match="原文块"):
         await service.submit(db, message.message_id, payload)
     db.execute.assert_not_awaited()
-

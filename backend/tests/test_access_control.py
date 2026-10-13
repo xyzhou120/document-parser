@@ -83,7 +83,7 @@ async def test_enabled_middleware_health_missing_key_wrong_scope_and_actor():
                 json={"operator": "writer", "value": "unchanged"},
             )
             assert matching.status_code == 200
-            assert matching.json()["value"] == "unchanged"  # Body survives middleware replay.
+            assert matching.json()["value"] == "unchanged"  # 中间件重放后请求体保持不变。
     keys[0]["scopes"] = ["read"]
     with patch.dict(
         "os.environ",

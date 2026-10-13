@@ -1,4 +1,4 @@
-"""Read-only planning and related fact candidates; no implicit source arbitration."""
+"""只读规划与相关事实候选项；不隐式裁定来源。"""
 
 import json
 from collections import defaultdict
@@ -19,7 +19,7 @@ def plain_rule(rule):
 def plan_rule_impact(
     previous_profile, current_profile, *, artifact_compatible=True, full_reasons=None
 ):
-    """Classification is advisory. Every changed active field is conservatively rerun."""
+    """分类仅作建议。每个发生变化的启用字段都会保守地重新运行。"""
     old = {rule["field_key"]: plain_rule(rule) for rule in previous_profile.get("rules", [])}
     new = {rule["field_key"]: plain_rule(rule) for rule in current_profile.get("rules", [])}
     added, removed = sorted(new.keys() - old.keys()), sorted(old.keys() - new.keys())
@@ -75,10 +75,10 @@ def plan_rule_impact(
 
 
 def related_fact_candidates(sources):
-    """Group explicit same identities across different documents, retaining every fact.
+    """跨文档聚合明确相同的身份，并保留每个事实。
 
-    Unknown identities are deliberately ungrouped; identical numbers alone do
-    not establish that two PDFs describe the same business object.
+        身份未知的项目有意不聚合；仅凭相同数字无法证明两份 PDF
+        描述同一业务对象。
     """
     groups = defaultdict(list)
     standalone = []

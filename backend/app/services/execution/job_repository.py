@@ -1,7 +1,6 @@
-"""Async SQLAlchemy repository for field execution jobs.
+"""字段执行任务的异步 SQLAlchemy 仓库。
 
-The repository never commits a transaction.  Callers can therefore atomically
-persist a checkpoint and an outbox event in the same transaction.
+仓库从不提交事务。因此调用方可在同一事务中原子持久化检查点和发件箱事件。
 """
 
 from __future__ import annotations
@@ -35,11 +34,10 @@ class JobRepository:
         self.db = db
 
     async def initialize_jobs(self, run_id: UUID, *, revision_id: UUID, fields: list[dict[str, Any]]) -> list[ParseFieldJob]:
-        """Create the immutable field-job denominator for a run idempotently.
+        """为一次运行幂等创建不可变的字段任务分母。
 
-        ``fields`` must already be a frozen rule snapshot.  This method never
-        reads the current rule configuration and never deletes an existing
-        field job, which makes retries safe after a DB/message boundary.
+        fields 必须已经是冻结的规则快照。本方法不读取当前规则配置，
+        也不删除现有字段任务，因此跨数据库与消息边界重试时仍然安全。
         """
         run = await self.db.get(ParseRun, run_id, with_for_update=True)
         if run is None:
@@ -77,9 +75,8 @@ class JobRepository:
         run_id = await self.db.scalar(select(ParseFieldJob.run_id).where(ParseFieldJob.job_id == job_id))
         if run_id is None:
             raise KeyError(f"field job {job_id} not found")
-        # A single run->job lock order is shared by claim, publication, control
-        # and recovery.  populate_existing prevents a long-lived session from
-        # accepting a cached generation/fence after it waited on a lock.
+        # 领取、发布、控制和恢复统一使用运行 -> 任务的加锁顺序。
+        # populate_existing 防止长生命周期会话在等待锁后接受缓存的版本或栅栏值。
         run = await self.db.scalar(select(ParseRun).where(ParseRun.parse_run_id == run_id)
                                    .with_for_update().execution_options(populate_existing=True))
         job = await self.db.scalar(select(ParseFieldJob).where(ParseFieldJob.job_id == job_id)
@@ -163,7 +160,7 @@ class JobRepository:
         return count
 
     async def publish(self, token: LeaseToken, outcome: QuantumOutcome, *, writer: Any = None) -> None:
-        """Atomically guard and persist domain results, checkpoint and dispatch."""
+        """原子保护并持久化领域结果、检查点和投递事件。"""
         job, run = await self._locked(token.job_id)
         require_lease(job, run, token)
         if writer is not None:
@@ -172,8 +169,8 @@ class JobRepository:
         if state == "yielded":
             await self.transition(token, "yield", checkpoint=outcome.checkpoint, retry_at=outcome.retry_at)
         elif state in {"waiting_service", "waiting_external_quota"}:
-            # Preserve provider call lineage (prior_call_id/retry_seq) and any
-            # bounded split checkpoint while the field waits for recovery.
+            # 字段等待恢复期间，保留提供方调用链（prior_call_id/retry_seq）
+            # 以及有界拆分检查点。
             await self.transition(token, "checkpoint", checkpoint=outcome.checkpoint, phase=state)
             await self.transition(token, "wait", state=state, retry_at=outcome.retry_at, error=outcome.error)
         elif state == "done":
@@ -207,9 +204,8 @@ class JobRepository:
             else:
                 raise ValueError(f"unknown field transition: {action}")
             if action == "yield":
-                # The wake-up event is inserted before the caller commits.  A
-                # lost broker publish is therefore repaired by the outbox
-                # scanner, while a duplicate publish is harmless.
+                # 唤醒事件在调用方提交前插入，因此消息代理发布丢失时可由发件箱扫描器补偿，
+                # 重复发布也不会产生影响。
                 await self.enqueue_outbox(
                     kind="field_job_wakeup",
                     aggregate_id=job.job_id,
@@ -258,14 +254,12 @@ class JobRepository:
                 job.execution_state = "queued"
                 job.next_attempt_at = None
             elif action == "resume" and job.execution_state in {"waiting_service", "waiting_external_quota"}:
-                # Explicit resume is also the administrator's release after a
-                # provider quota/circuit decision.  P07 creates a fresh call
-                # lineage; P05 only makes the durable field runnable.
+                # 显式恢复也是管理员在提供方配额或熔断决策后的放行操作。
+                # P07 创建新的调用链；P05 只负责让持久化字段重新可运行。
                 job.execution_state = "queued"
                 job.next_attempt_at = None
             elif action == "resume" and retry_failed and job.execution_state == "failed_terminal":
-                # A retry is an explicit new attempt on the same frozen job;
-                # the next claim raises its fence and attempt counters.
+                # 重试是在同一冻结任务上的显式新尝试；下次领取时会递增栅栏和尝试计数。
                 job.execution_state = "queued"
                 job.semantic_state = "unknown"
                 job.next_attempt_at = None
@@ -313,7 +307,7 @@ class JobRepository:
 
     async def consume_run_wakeup(self, run_id: UUID, event_id: UUID, *,
                                  dispatch_attempt: int | None = None, task_id: str | None = None) -> bool:
-        """A worker acknowledges only the exact broker wake that started it."""
+        """工作进程只能确认启动它的那条确切代理唤醒事件。"""
         run = await self.db.scalar(select(ParseRun).where(ParseRun.parse_run_id == run_id)
                                   .with_for_update().execution_options(populate_existing=True))
         if run is None or run.status not in ACTIVE_RUN_STATES:
@@ -343,4 +337,3 @@ class JobRepository:
                                     ExecutionOutbox.dedupe_key == dedupe_key))
         assert event is not None
         return event
-

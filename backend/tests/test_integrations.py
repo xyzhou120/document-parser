@@ -164,8 +164,8 @@ async def test_webhook_dispatch_requires_matching_ack_and_uses_idempotency_key()
             status_code=200, json=lambda: {"event_id": event, "acknowledged": True}
         )
 
-    # with_for_update query is represented by the fake Result in this focused unit test;
-    # replace execute with a result that returns the outbox.
+    # 此单元测试用模拟 Result 表示 with_for_update 查询；
+    # 将 execute 替换为返回发件箱的结果。
     class Result:
         def scalar_one_or_none(self):
             return outbox

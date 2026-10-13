@@ -105,8 +105,8 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _apply_column_migrations(conn)
-        # Audit facts are append-only even for direct SQL callers. New decisions
-        # must create a revision; no endpoint overwrites automatic extraction.
+        # 即使调用方直接使用 SQL，审计事实也只能追加。
+        # 新决策必须创建修订；任何接口都不能覆盖自动提取结果。
         if conn.dialect.name == "postgresql":
             await conn.execute(text("""
                 CREATE OR REPLACE FUNCTION reject_field_review_mutation() RETURNS trigger

@@ -1,4 +1,4 @@
-"""Preserve document occurrences and evidence without selecting a business truth."""
+"""保留文档出现项和证据，不代替业务选择真实值。"""
 
 import asyncio
 from unittest.mock import AsyncMock

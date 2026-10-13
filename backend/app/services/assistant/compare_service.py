@@ -1,4 +1,4 @@
-"""Explicit read-only comparison of a source answer and a selected fact view."""
+"""对来源答案与选定事实视图进行显式只读比较。"""
 
 from copy import deepcopy
 from uuid import UUID

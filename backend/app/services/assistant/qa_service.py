@@ -1,4 +1,4 @@
-"""Durable document Q&A. Answers use raw revision evidence, never extracted facts."""
+"""持久化文档问答。答案使用原始修订证据，不使用提取事实。"""
 
 from __future__ import annotations
 
@@ -30,9 +30,8 @@ def _qa_unit_supported(unit: str, quote: str, value) -> bool:
     needle = unicodedata.normalize("NFKC", str(value))
     for match in re.finditer(r"(?<![\d.])" + re.escape(needle) + r"(?![\d.])", text):
         following = text[match.end():match.end() + 40]
-        # NFKC turns m³ into m3. Digits preceded by a letter or ^ belong to
-        # the unit exponent (m3, cm3, m^3); only a standalone next value ends
-        # the local unit window.
+        # NFKC 会把 m³ 变成 m3。字母或 ^ 后的数字属于单位指数
+        # （m3、cm3、m^3）；只有独立的下一个值才结束当前单位窗口。
         next_value = re.search(r"(?<![A-Za-z^])[-+]?\d+(?:\.\d+)?", following)
         if next_value:
             following = following[:next_value.start()]
@@ -216,7 +215,7 @@ class QARepository:
 
 
 class MemoryQARepository:
-    """Fake persistent state machine; no production persistence fallback."""
+    """模拟的持久状态机；不作为生产持久化回退。"""
 
     def __init__(self):
         self.sessions, self.messages, self.by_client, self.outbox = {}, {}, {}, []
@@ -311,7 +310,7 @@ def citation_from(chunk, quote, *, generation_id, revision_id):
 
 
 def validate_answer_payload(payload, context, *, generation_id, revision_id):
-    """Publish source quotations or fully bound structured claims; ignore free answer text."""
+    """发布来源引文或完整绑定的结构化断言，忽略自由文本答案。"""
     if not isinstance(payload, dict) or not isinstance(payload.get("claims"), list):
         raise ValueError("invalid answer JSON")
     known = {item["chunk_id"]: item for item in context}
@@ -332,8 +331,7 @@ def validate_answer_payload(payload, context, *, generation_id, revision_id):
             continue
         value = claim.get("value")
         attrs_ok = True
-        # Structured assertions must bind to this source clause, not just another
-        # occurrence of the same number elsewhere in the attachment.
+        # 结构化断言必须绑定到当前来源语句，不能只匹配附件其他位置的相同数字。
         if value is not None:
             value_text = str(value)
             attrs_ok = bool(re.search(r"(?<![\d.])" + re.escape(value_text) + r"(?![\d.])", quote))
@@ -352,7 +350,7 @@ def validate_answer_payload(payload, context, *, generation_id, revision_id):
         if not attrs_ok:
             rejected.append("claim_attribute_unverified")
             continue
-        # Deterministic rendering cannot smuggle unverified prose alongside a quote.
+        # 确定性渲染不能夹带未经核验的说明文本。
         rendered = quote
         kept = {"text": rendered, "quote": quote, "citation_ids": [source["chunk_id"]],
                 "value": value, "unit": claim.get("unit"), "value_kind": claim.get("value_kind"),
@@ -367,7 +365,7 @@ def validate_answer_payload(payload, context, *, generation_id, revision_id):
 
 
 class OpenAIAnswerer:
-    """Existing configured OpenAI-compatible model; no OCR or fact-table access."""
+    """使用现有配置的 OpenAI 兼容模型，不访问 OCR 或事实表。"""
     def __init__(self, config, *, client=None):
         self.config, self.client = config, client
 
@@ -554,8 +552,8 @@ class QAService:
         attempt = int(checkpoint.get("attempt", 0)) + 1
         batch_size = int(checkpoint.get("batch_size", self.chunks_per_quantum))
         if automatic and message["mode"] == "all_locations" and batch_size > 1:
-            # A smaller independent batch is progress; committed earlier chunks
-            # and their quotes remain intact, and the failing cursor never moves.
+            # 较小的独立批次也算进度；已提交的早期块及其引文保持不变，
+            # 失败的游标不能前移。
             checkpoint["batch_size"], attempt = max(1, batch_size // 2), 1
         checkpoint["attempt"] = attempt
         retry = automatic and attempt <= self.retry_max
@@ -582,7 +580,7 @@ class QAService:
         try:
             await self._safe_generation(message["generation_id"], message["scope_snapshot"]["document_id"])
         except IndexUnavailable:
-            # Keep historical answer bytes intact, attach current source validity.
+            # 保留历史答案的原始字节，并附加当前来源有效性。
             snapshot = {**message["scope_snapshot"], "source_validity": "invalidated"}
             message = {**message, "scope_snapshot": snapshot,
                        "checkpoint": {**message["checkpoint"], "risks": [*(message["checkpoint"].get("risks") or []), "历史答案来源已失效"]}}
@@ -610,5 +608,5 @@ def default_qa_service() -> QAService:
 
 
 async def run_message(message_id, *, service=None):
-    """Worker entry registered by the application integrator, never an HTTP OCR path."""
+    """由应用集成方注册的工作进程入口，不是 HTTP OCR 路径。"""
     return await (service or default_qa_service()).run_message(message_id)

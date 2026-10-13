@@ -1,4 +1,4 @@
-"""Range, candidate, evidence and identity closure for reliable extraction v2."""
+"""可靠提取 v2 的范围、候选、证据和身份闭合。"""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ def _merge_facts(facts: Sequence[Mapping], keys: Sequence[str], cardinality: str
     for source in facts:
         fact = deepcopy(dict(source))
         identity = _identity(fact, keys)
-        # Unknown identities must remain separate diagnostic occurrences.
+        # 未知身份必须保留为独立的诊断出现项。
         key: tuple[Any, ...] = (identity, _value_key(fact))
         if any(not value or value == "unknown" for value in identity) or cardinality == "all_occurrences":
             key += (str(fact.get("occurrence_id") or fact.get("candidate_id") or len(merged)),)
@@ -110,12 +110,12 @@ def complete_field(rule: Any, ranges: Sequence[Any] | Mapping, candidates: Seque
                    facts: Sequence[Mapping], *, applicability: Mapping | None = None,
                    candidate_decisions: Sequence[Mapping] | None = None,
                    evidence: Mapping | None = None) -> dict:
-    """Close only the frozen range denominator and all candidate/object work.
+    """只闭合冻结的范围分母以及所有候选和对象工作。
 
-    ``ranges`` can be the frozen sequence, or an envelope with ``items``, ``expected_keys``,
-    ``revision_id``, ``rule_semantic_hash`` and ``scope_snapshot``. Expected keys are strategy x
-    range keys. The envelope detects a missing work item rather than accepting a shortened list.
-    Candidate rejected/duplicate dispositions must be platform-validated by the caller.
+    ranges 可以是冻结序列，也可以是包含 items、expected_keys、revision_id、
+    rule_semantic_hash 和 scope_snapshot 的封装对象。预期键是策略 x 范围键。
+    封装对象会检测缺失工作项，不会接受被缩短的列表。
+    候选 rejected/duplicate 处置必须由调用方完成平台校验。
     """
     contract = semantic_contract(rule)
     envelope = dict(ranges) if isinstance(ranges, Mapping) else {}
@@ -203,8 +203,8 @@ def complete_field(rule: Any, ranges: Sequence[Any] | Mapping, candidates: Seque
             risks.append({"code": "OCCURRENCE_LOCATION_UNVERIFIED"})
         if not range_closed:
             risks.append({"code": "OCCURRENCE_SCOPE_OPEN"})
-    # Applicability is part of frozen rule semantics. A caller supplied "N/A" string cannot
-    # suppress a missing field; only a rule applicability declaration with bound proof can.
+    # 适用性属于冻结规则语义。调用方提供的 “N/A” 字符串不能掩盖缺失字段，
+    # 只有带有绑定证据的规则适用性声明才可以。
     if applicability and applicability.get("status") == "not_applicable":
         if not contract.get("applicability") or not applicability.get("evidence_ids") or not applicability.get("verified"):
             risks.append({"code": "NOT_APPLICABLE_UNPROVEN"})

@@ -1,4 +1,4 @@
-"""Reusable preprocessing artifacts, independent of extraction rules."""
+"""可复用的预处理产物，独立于提取规则。"""
 
 import hashlib
 import json
@@ -13,13 +13,13 @@ from app.config import settings
 from app.models.database import DocumentArtifact
 from app.parsers.pdf_parser import DEFAULT_MAX_TABLE_CELLS, DEFAULT_RENDER_DPI
 
-# Bump whenever native extraction, table geometry, OCR model/service or rendering changes.
-# Operators must bump this value after changing a remotely deployed OCR model.
+# 原生提取、表格几何、OCR 模型或服务、渲染方式变化时都要递增此版本。
+# 远程部署的 OCR 模型变更后，操作员也必须递增此值。
 PREPROCESS_PROFILE_VERSION = "pdf-blocks-tables-ocr-geometry-v2"
 
 
 def preprocessing_profile(extraction_engine: str = "rules") -> dict:
-    """No credentials or field rules enter the cache identity."""
+    """缓存标识不包含凭据或字段规则。"""
     ocr = settings.models.get("ocr")
     manifest = {
         "algorithm_version": PREPROCESS_PROFILE_VERSION,
@@ -30,10 +30,9 @@ def preprocessing_profile(extraction_engine: str = "rules") -> dict:
         "render_dpi": DEFAULT_RENDER_DPI, "max_table_cells": DEFAULT_MAX_TABLE_CELLS,
     }
     if extraction_engine == "checklist_agent":
-        # Plan C1 (2026-10-10): scanned pages are read by region OCR, so the OCR service, model
-        # and endpoint are part of the checklist artifact identity.  Only checklist artifacts
-        # change version; rules-engine artifacts keep theirs.  On-demand source images keep their
-        # own render profile/object keys.
+        # 方案 C1（2026-10-10）：扫描页通过区域 OCR 读取，因此 OCR 服务、模型和端点
+        # 都属于清单产物标识。只有清单产物改变版本；规则引擎产物保持原版本。
+        # 按需生成的来源图片继续使用自己的渲染配置和对象键。
         manifest = {
             "algorithm_version": PREPROCESS_PROFILE_VERSION,
             "pymupdf_version": pymupdf.VersionBind,
@@ -50,11 +49,10 @@ def preprocessing_profile(extraction_engine: str = "rules") -> dict:
 
 class ArtifactService:
     def adapt_content(self, artifact: DocumentArtifact):
-        """Return the shared immutable content view for new consumers.
+        """为新的消费者返回共享的不可变内容视图。
 
-        This compatibility entry point leaves legacy artifact lookup/save and its
-        default preprocessing profile untouched.  The adapter is imported lazily so
-        existing callers do not pay for or depend on content revision services.
+        此兼容入口保持旧版产物查询、保存及其默认预处理配置不变。
+        适配器延迟导入，使现有调用方无需加载或依赖内容修订服务。
         """
         from app.services.content_adapter import content_adapter
 
@@ -98,7 +96,7 @@ class ArtifactService:
         )
         db.add(artifact)
         await db.flush()
-        # Persist before extraction; a retry can reuse successful preprocessing.
+        # 提取前先持久化，使重试能够复用成功的预处理结果。
         await db.commit()
         return artifact
 

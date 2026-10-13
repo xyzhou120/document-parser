@@ -1,4 +1,4 @@
-"""Persistent ingestion and full-filter fact export (no page-size truncation)."""
+"""持久化批量导入与按完整筛选条件导出事实，不受分页大小截断。"""
 
 import copy
 import hashlib
@@ -175,7 +175,7 @@ async def list_batches(
     return {"total": total, "items": summaries}
 
 
-# Static route must precede the UUID detail route.
+# 静态路由必须放在 UUID 详情路由之前。
 @router.get("/export")
 async def export_facts(
     batch_id: UUID | None = None,
@@ -203,7 +203,7 @@ async def export_facts(
             query = query.where(column == value)
     query = query.order_by(ParseRun.created_at, ParseRun.parse_run_id)
     rows = []
-    # Fetch in bounded pages, retaining every matching field/fact. No UI pagination applies.
+    # 分批读取全部匹配的字段与事实；不套用界面分页限制。
     offset = 0
     run_count = 0
     while True:
@@ -304,8 +304,8 @@ async def upload_item(
     try:
         await upload_and_parse(file=file, db=BatchUploadSession(db, item), **item.metadata_json)
     except Exception as exc:
-        # Queue failure has already atomically linked a persisted document. Keep it
-        # for parse retry; otherwise rollback storage errors and mark upload failure.
+        # 队列失败时，已持久化文档的关联写入已经原子完成，应保留以便重试解析；
+        # 其他存储错误则回滚并标记上传失败。
         await db.rollback()
         item = await locked_item(db, batch_id, item_id)
         if not item.document_id:

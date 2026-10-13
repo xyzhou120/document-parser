@@ -1,4 +1,4 @@
-"""Add the reliable extraction v2 ledger, content revisions and assistant tables."""
+"""添加可靠提取 v2 账本、内容修订和助手表。"""
 
 import sqlalchemy as sa
 from alembic import op
@@ -104,7 +104,7 @@ def upgrade():
     for n in ("session_id", "parent_message_id", "revision_id", "generation_id", "execution_state", "created_at"): _idx(f"ix_qa_messages_{n}", "qa_messages", [n])
     _table("document_cards", sa.Column("card_id", UUID, nullable=False), sa.Column("document_id", UUID, nullable=False), sa.Column("revision_id", UUID, nullable=False), sa.Column("generation_id", UUID, nullable=True), sa.Column("status", sa.String(32), nullable=False), sa.Column("summary", sa.Text(), nullable=True), sa.Column("outline", JSON, nullable=True), sa.Column("risks", JSON, nullable=True), sa.Column("citations", JSON, nullable=True), sa.Column("error", JSON, nullable=True), sa.Column("created_at", sa.DateTime(), nullable=False), sa.Column("updated_at", sa.DateTime(), nullable=False), constraints=[sa.PrimaryKeyConstraint("card_id"), sa.UniqueConstraint("revision_id", "generation_id", name="uq_document_card_revision_generation")])
     for n in ("document_id", "revision_id", "generation_id", "status", "created_at"): _idx(f"ix_document_cards_{n}", "document_cards", [n])
-    # Explicit relationships are added after all referenced tables exist.
+    # 所有被引用表创建后，再添加显式关联关系。
     for name, table, referent, cols, refcols in (
         ("fk_parse_runs_content_revision", "parse_runs", "content_revisions", ["content_revision_id"], ["revision_id"]),
         ("fk_parse_field_jobs_revision_id", "parse_field_jobs", "content_revisions", ["revision_id"], ["revision_id"]),
@@ -158,9 +158,8 @@ def upgrade():
     ):
         op.create_check_constraint(name, table, expression)
 
-    # Content versions and impact records are the immutable source-of-truth
-    # for current answers.  The same append-only trigger is emitted by the
-    # empty-schema bootstrap generator.
+    # 内容版本和影响记录是当前答案的不可变事实来源。
+    # 空数据库初始化生成器也会生成相同的只追加触发器。
     op.execute("""CREATE OR REPLACE FUNCTION reject_platform_audit_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
 RAISE EXCEPTION '% is append-only', TG_TABLE_NAME; END; $$;""")

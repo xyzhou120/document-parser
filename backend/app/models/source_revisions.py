@@ -1,4 +1,4 @@
-"""Append-only source review decisions for immutable PDF artifacts."""
+"""针对不可变 PDF 产物的只追加来源复核决策。"""
 
 import uuid
 from datetime import datetime

@@ -1,4 +1,4 @@
-"""Human-confirmed document context and explicit cross-document links."""
+"""人工确认的文档上下文与显式跨文档关联。"""
 
 import uuid
 from datetime import datetime

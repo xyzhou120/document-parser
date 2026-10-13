@@ -1,4 +1,4 @@
-"""Immutable content revisions, indexing generations and invalidation records."""
+"""不可变内容修订、索引版本与失效记录。"""
 
 import uuid
 from datetime import datetime

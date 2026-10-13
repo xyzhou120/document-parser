@@ -1,8 +1,7 @@
-"""Persistent batch ingestion models.
+"""持久化批量导入模型。
 
-The batch tables intentionally keep an immutable client key and file hash per
-item.  A retry therefore creates a new parse run while retaining the original
-document object and its audit trail.
+批量表为每个项目保留不可变的客户端键和文件哈希。因此重试会创建新的解析运行，
+同时保留原文档对象及其审计记录。
 """
 
 import uuid
@@ -52,6 +51,6 @@ class BatchItem(Base):
     updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
-# Friendly aliases for callers that use the domain wording.
+# 为使用领域术语的调用方提供易读别名。
 ImportBatch = Batch
 ImportBatchItem = BatchItem

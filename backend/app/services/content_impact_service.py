@@ -1,4 +1,4 @@
-"""Append-only impact and invalidation records for published content revisions."""
+"""已发布内容修订的只追加影响和失效记录。"""
 
 from __future__ import annotations
 
@@ -17,14 +17,14 @@ class ContentImpactService:
     async def append_invalidation(
         self, db: AsyncSession, *, document_id: UUID, kind: str, selector: dict[str, Any], reason: str,
     ) -> ContentInvalidation:
-        """Append one invalidation and advance the document watermark under head lock."""
+        """追加一条失效记录，并在锁定文档头后推进水位。"""
         head = await db.scalar(select(DocumentProcessingHead).where(
             DocumentProcessingHead.document_id == document_id).with_for_update().execution_options(populate_existing=True))
         if head is None:
             head = DocumentProcessingHead(document_id=document_id, cas_version=0, invalidation_watermark=0)
             db.add(head)
             await db.flush()
-        # request/retry idempotency is carried in selector.request_id where supplied.
+        # 提供 selector.request_id 时，由它承载请求和重试的幂等键。
         request_id = selector.get("request_id")
         if request_id is not None:
             existing = await db.scalar(select(ContentInvalidation).where(
@@ -60,4 +60,3 @@ class ContentImpactService:
 
 
 content_impact_service = ContentImpactService()
-

@@ -1,4 +1,4 @@
-"""Append-only offline error samples, separate from source/fact adjudication."""
+"""只追加的离线错误样本，与来源和事实裁定分离。"""
 
 from copy import deepcopy
 from uuid import UUID, uuid4

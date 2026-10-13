@@ -1,4 +1,4 @@
-"""Models package"""
+"""模型包。"""
 
 from app.models.contracts import (
     Box,
@@ -47,7 +47,7 @@ from app.models.schemas import (
 )
 
 __all__ = [
-    # Contracts
+    # 契约模型
     "Box",
     "CoordinateSystem",
     "EvidenceRef",
@@ -60,7 +60,7 @@ __all__ = [
     "QualityIssue",
     "RunStatus",
     "TextBlock",
-    # Database
+    # 数据库模型
     "Base",
     "Document",
     "ExtractedFieldModel",
@@ -82,11 +82,11 @@ __all__ = [
     "QAMessage",
     "DocumentCard",
     "AssistantFeedbackSample",
-    # Rules
+    # 规则模型
     "ChecklistType",
     "ExtractionRule",
     "RuleChangeLog",
-    # Schemas
+    # 数据模式
     "DocumentCreate",
     "DocumentListResponse",
     "DocumentResponse",

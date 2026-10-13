@@ -1,4 +1,4 @@
-"""Initial content preparation through repeated P09 quantums, in isolated G1."""
+"""在隔离 G1 中通过重复的 P09 量子完成初始内容准备。"""
 
 import hashlib
 from copy import deepcopy

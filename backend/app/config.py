@@ -63,8 +63,7 @@ class ModelSettings(BaseSettings):
     base_url: str
     api_key: str | None = None
     model_name: str
-    # Remote model upgrades must change this deployment revision; the OCR server
-    # does not expose a model digest that the parser can verify automatically.
+    # 远程模型升级时必须更新此部署版本；OCR 服务未提供可供解析器自动校验的模型摘要。
     model_version: str = "unknown"
     timeout: int = 60
     max_retries: int = 3
@@ -108,7 +107,7 @@ class AppSettings(BaseSettings):
     debug: bool = False
     host: str = "0.0.0.0"
     port: int = 8000
-    # Local validation opts in here; enabled uploads default to reliable v2.
+    # 本地验证在此显式启用；启用后上传默认使用可靠提取 v2。
     reliable_enabled: bool = False
     assistant_enabled: bool = False
 
@@ -132,7 +131,7 @@ class UploadSettings(BaseSettings):
 
 
 class AgentSettings(BaseSettings):
-    """Bounded checklist agent budgets; scores never certify correctness."""
+    """限制清单代理的预算；分数不能证明结果正确。"""
 
     max_rounds: int = 40
     max_rounds_per_batch: int = 6
@@ -144,22 +143,21 @@ class AgentSettings(BaseSettings):
     field_batch_size: int = 1
     max_region_views: int = 24
     max_search_results: int = 8
-    # Plan B: whole-page views at 120 DPI (about 1.4k tokens); region crops keep 180 DPI.
+    # 方案 B：整页图像使用 120 DPI（约 1400 个 token），区域裁剪使用 180 DPI。
     render_dpi: int = 120
     region_render_dpi: int = 180
-    # Plan B: retained page images per call (was a hard-coded 3).
+    # 方案 B：每次调用保留的页面图像数（原先固定为 3）。
     history_images: int = 2
-    # Plan B: reasoning output switch; default unchanged until the A/B result decides.
-    # Reliable field extraction uses structured JSON decisions; local/default
-    # runs disable reasoning text so it does not consume the output budget.
+    # 方案 B：推理输出开关；默认值在 A/B 结果明确前保持不变。
+    # 可靠字段提取使用结构化 JSON 决策，本地默认运行关闭推理文本，避免占用输出预算。
     thinking_enabled: bool = False
-    # Plan B: pre-call estimate start values (measured); corrected per call from real usage.
+    # 方案 B：调用前估算的实测初始值，随后按每次实际用量校正。
     token_per_char: float = 0.55
     image_tokens_per_kpx: float = 1.0
-    # Plan B defect fix: answer cap floor; calls without this much room are refused.
+    # 方案 B 缺陷修复：答案长度下限；剩余预算不足时拒绝调用。
     min_output_tokens: int = 2500
-    # Plan C: "retrieval" (deterministic candidates + verification) or "legacy" (tool loop).
-    # Default stays "legacy" until the A/B gate (docs section 10.4) is passed and confirmed.
+    # 方案 C：retrieval 为确定性候选检索与核验，legacy 为工具循环。
+    # A/B 验收门槛（文档 10.4 节）通过并确认前，默认仍为 legacy。
     agent_mode: str = "legacy"
     # New reliable runs share page understanding across all frozen fields.
     reliable_strategy: str = "page_batch_v1"
@@ -216,7 +214,7 @@ class Settings:
             local_config = self._load_yaml(local_config_path)
             config_data = self._deep_merge(config_data, local_config)
 
-        # Process environment wins; YAML defaults never mutate it.
+        # 进程环境变量优先；YAML 默认值不能修改进程环境。
         environment = {
             k: str(v) for k, v in (config_data.get("environment") or {}).items() if v is not None
         }

@@ -1,6 +1,6 @@
-"""Reliable extraction read policy over P10 assertions and content invalidations.
+"""基于 P10 断言和内容失效记录的可靠提取读取策略。
 
-This is a projection of persisted validation results, not a second model verifier.
+这是持久化校验结果的投影，不是第二个模型核验器。
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def _values(selector: Mapping, *keys: str) -> set[str]:
 
 
 def matching_invalidations(run: Any, fact: Any, invalidations=(), *, now: datetime | None = None) -> list[Any]:
-    """Selector keys are conjunctive; values of the same key group are alternatives."""
+    """选择器键之间为且关系；同一键组内的值为或关系。"""
     now = now or datetime.now(UTC).replace(tzinfo=None)
     matched = []
     provenance = get(fact, "provenance", {}) or {}
@@ -64,7 +64,7 @@ def matching_invalidations(run: Any, fact: Any, invalidations=(), *, now: dateti
             if effective > now:
                 continue
         selector = get(invalidation, "scope_selector", {}) or {}
-        # Unknown selectors fail closed for this document; they cannot silently release data.
+        # 未知选择器对本文档采用失败关闭，不能静默放行数据。
         unknown = set(selector) - supported - {"all", "reason", "scope", "request_id"}
         if unknown:
             matched.append(invalidation)

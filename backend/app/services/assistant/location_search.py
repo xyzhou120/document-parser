@@ -1,4 +1,4 @@
-"""Resumable all-location search over one immutable index generation."""
+"""在同一不可变索引版本上可恢复地搜索全部位置。"""
 
 from __future__ import annotations
 
@@ -47,8 +47,8 @@ class LocationSearch:
                 for chunk in chunks):
             raise IndexUnavailable("generation raw chunks differ from manifest")
         query_terms = terms(query)
-        # Cursor is over a fixed manifest, not over the top-k result list. This
-        # prevents a moving finite top-k from pretending all locations were searched.
+        # 游标基于固定清单，而非 top-k 结果列表，防止变化的有限结果集
+        # 被误认为已经搜索了全部位置。
         matches = []
         end = min(len(chunks), start + page_size)
         for chunk in chunks[start:end]:

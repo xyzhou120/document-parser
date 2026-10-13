@@ -1,4 +1,4 @@
-"""Run-coalesced broker delivery and fairness against the isolated G1 ledger."""
+"""针对隔离 G1 账本测试按运行合并的消息投递与公平性。"""
 
 from collections import Counter
 from uuid import UUID, uuid4
@@ -129,7 +129,7 @@ async def test_receipt_before_sender_ack_and_lost_receipt_are_recoverable(sessio
     async with sessions() as db, db.begin():
         event = (await DispatchOutbox(db).claim_field_runs(run_id=run_id))[0]
         event_id, attempt = event.event_id, event.attempts
-    # The worker can receive the broker message before the sender acknowledges.
+    # 工作进程可能在发送方确认前收到消息代理的消息。
     async with sessions() as db, db.begin():
         assert await JobRepository(db).consume_run_wakeup(run_id, event_id,
                                                          dispatch_attempt=attempt, task_id="received")

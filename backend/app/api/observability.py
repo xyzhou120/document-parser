@@ -1,4 +1,4 @@
-"""Read-only operational measurements; unknown cost/GPU are never fabricated."""
+"""只读运行指标；未知的成本和 GPU 数据绝不伪造。"""
 
 import math
 from collections import Counter

@@ -1,4 +1,4 @@
-"""Persist and reuse source page/crop images, independently of field/model rules."""
+"""持久化并复用来源页面和裁剪图像，独立于字段或模型规则。"""
 
 import asyncio
 import hashlib
@@ -21,8 +21,8 @@ class EvidenceImages:
         self.workspace = workspace
         self.pdf_path = pdf_path
         self.receipts: dict[str, dict] = {}
-        # Plan B: whole-page views and region crops have separate resolutions.
-        # Whole pages are the expensive case; crops keep higher resolution for small digits.
+        # 方案 B：整页视图和区域裁剪使用不同分辨率。
+        # 整页开销较高；裁剪保留较高分辨率以识别小数字。
         self.dpi = dpi if dpi is not None else settings.agent.render_dpi
         self.region_dpi = (region_dpi if region_dpi is not None
                            else getattr(settings.agent, "region_render_dpi", 180))

@@ -1,4 +1,4 @@
-"""Release lifecycle against a real local SQLite transaction; no model/network calls."""
+"""使用真实本地 SQLite 事务测试发布生命周期，无模型或网络调用。"""
 
 from copy import deepcopy
 from dataclasses import asdict
@@ -215,7 +215,7 @@ async def test_publication_uses_checklist_row_lock(db):
 async def test_corrupt_active_bundle_never_falls_back_to_editing_rules(db):
     bundle = await draft(db)
     await ReleaseService().activate(db, bundle.bundle_id, command(0))
-    # Simulate damaged persisted JSON without flushing past the ORM guard.
+    # 模拟损坏的持久化 JSON，不绕过 ORM 防护执行刷新。
     bundle.rules[0]["field_name_cn"] = "损坏"
     with pytest.raises(ValueError, match="校验失败"):
         await RuleRepository().get_rules_for_checklist(db, "alpha")

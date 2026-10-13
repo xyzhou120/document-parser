@@ -1,4 +1,4 @@
-"""API response schemas."""
+"""API 响应模式。"""
 
 from app.schemas.parse import (
     ParseResultResponse,

@@ -34,8 +34,8 @@ from app.storage import minio_client
 logger = logging.getLogger(__name__)
 
 
-# Rows without a usable value. Plan B adds "incomplete" (budget, rounds or output problems)
-# and "not_found" (searched with finished evidence, absent) next to the legacy "missing".
+# 没有可用值的记录。方案 B 在旧版 missing 之外增加 incomplete（预算、轮次或输出问题）
+# 和 not_found（证据完整地搜索过但不存在）。
 INCOMPLETE_STATUSES = {"missing", "unresolved", "incomplete", "not_found"}
 
 
@@ -88,7 +88,7 @@ class ParseService:
 
     async def _extract(self, pages: list[dict], rules: list[RuleSpec],
                        extraction_engine: str, document, temp_dir: Path, profile: dict | None = None):
-        """Run the selected extractor and return fields, details, agent runtime."""
+        """运行选定的提取器，并返回字段、详情和代理运行信息。"""
         if extraction_engine != "checklist_agent":
             fields, details = await rule_engine.extract_all(pages, rules)
             return fields, details, None
@@ -125,12 +125,11 @@ class ParseService:
     async def _ocr_scanned_pages(
         self, db, parse_run_id, pages: list[dict], temp_path, region_ocr: bool,
     ) -> tuple[dict[int, list[dict]], set[int]]:
-        """Run OCR on pages the native layer cannot read (plan C1).
+        """对原生文本层无法读取的页面执行 OCR（方案 C1）。
 
-        Rules engine: line OCR (``/ocr``) on pages flagged by inspection.
-        Checklist agent: region OCR (``/vl_ocr``) with pixel boxes and layout labels, so scanned
-        appendices are searchable and can be cropped for verification.  Every page gets an
-        ``ocr_status`` (not_needed / ok / failed) that the readability checks rely on.
+        规则引擎：对检查标记的页面执行行 OCR（/ocr）。
+        清单代理：执行带像素框和布局标签的区域 OCR（/vl_ocr），使扫描附件可搜索并可裁剪核验。
+        每个页面都会得到 ocr_status（not_needed / ok / failed），供可读性检查使用。
         """
         # 4. OCR（仅扫描页）
         ocr_blocks_by_page: dict[int, list[dict]] = {}
@@ -138,8 +137,8 @@ class ParseService:
         stage_start = perf_counter()
         for page in pages:
             page["ocr_status"] = "not_needed"
-        # Plan C1: the checklist agent reads scanned pages through region OCR (text with pixel
-        # boxes and a layout label), so scanned appendices are searchable and cropable.
+        # 方案 C1：清单代理通过区域 OCR 读取扫描页（文本带像素框和布局标签），
+        # 使扫描附件可搜索且可裁剪。
         inspections = await asyncio.to_thread(self.pdf_parser.inspect_pages, str(temp_path))
         for inspection in inspections:
             if not inspection.needs_ocr:
@@ -274,9 +273,8 @@ class ParseService:
             parse_run.extraction_profile = submitted_profile
             artifact = None
 
-            # A field-only run is deliberately a new immutable ParseRun.  It reuses
-            # the parent page index and inherited field rows. A missing image cache
-            # can still download the source and render only the requested page/crop.
+            # 仅字段运行有意创建新的不可变 ParseRun，复用父运行的页面索引和继承字段记录。
+            # 图像缓存缺失时仍可下载来源，只渲染请求的页面或裁剪区域。
             if field_keys is not None and getattr(document, "file_hash", None):
                 if force_refresh:
                     raise ValueError("增量运行不允许强制刷新前处理，请提交全量解析")
@@ -370,9 +368,8 @@ class ParseService:
                 await db.commit()
                 return
 
-            # Full reruns can also reuse a READY artifact.  This short path is kept
-            # separate from the legacy pipeline so a cache hit cannot accidentally
-            # repeat preprocessing or invoke OCR. Agent image misses render on demand.
+            # 完整重跑也可以复用 READY 产物。此短路径与旧版流程分开，
+            # 防止缓存命中时重复预处理或调用 OCR；代理缺失的图像按需渲染。
             cached = None
             if submitted_profile.get("reuse_artifact_id"):
                 cached = await db.get(DocumentArtifact, UUID(submitted_profile["reuse_artifact_id"]))
@@ -453,8 +450,8 @@ class ParseService:
                 for page_number, blocks in ocr_blocks_by_page.items():
                     quality = assess_page_quality(page_number, blocks)
                     page_quality_results.append(quality)
-            # Region OCR reports no confidence scores: for the checklist engine only failed pages
-            # are weak, instead of scoring every scanned page as an unknown 1.0.
+            # 区域 OCR 不返回置信度：对清单引擎来说只有失败页面属于弱页面，
+            # 不能把每个扫描页都按未知的 1.0 计分。
             weak_pages = sorted(
                 set(ocr_failed_pages)
                 | {q.page_number for q in page_quality_results if q.status != "QUALITY_OK"}
@@ -470,8 +467,8 @@ class ParseService:
                     {"pages": weak_pages[:20]},
                 )
 
-            # Persist the complete page JSON, including native spans, tables/cells,
-            # OCR blocks and quality.  PARTIAL artifacts are never reused as READY.
+            # 持久化完整页面 JSON，包括原生文本范围、表格或单元格、OCR 块和质量信息。
+            # PARTIAL 产物不能复用为 READY。
             if getattr(document, "file_hash", None):
                 for page in pages:
                     page["ocr_blocks"] = ocr_blocks_by_page.get(page["page_number"], [])
@@ -661,9 +658,8 @@ class ParseService:
             )
             db.add(db_field)
 
-        # Persist missing/blocked rule rows as explicit null facts.  Omitting a
-        # row makes the API look as though the rule was never requested and
-        # prevents downstream services from distinguishing missing from pending.
+        # 将缺失或阻断的规则记录持久化为明确的空事实。省略记录会让 API 看起来像是从未请求
+        # 该规则，并阻止下游服务区分缺失和待处理状态。
         extracted_keys = {field.field_key for field in extracted_fields}
         for detail in details:
             field_key = detail.get("field_key")

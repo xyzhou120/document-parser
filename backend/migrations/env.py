@@ -1,4 +1,4 @@
-"""Explicit database selection; offline SQL generation does not need credentials."""
+"""显式选择数据库；离线生成 SQL 不需要凭据。"""
 
 import asyncio
 import os

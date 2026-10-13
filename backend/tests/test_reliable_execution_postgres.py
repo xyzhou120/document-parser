@@ -1,4 +1,4 @@
-"""P13-A explicit isolated PostgreSQL recovery/control/outbox integration."""
+"""P13-A 显式隔离 PostgreSQL 的恢复、控制和发件箱集成测试。"""
 
 from collections import Counter
 

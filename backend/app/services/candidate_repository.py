@@ -1,7 +1,7 @@
-"""Persistence adapter for P06 range cursors and candidates.
+"""P06 范围游标与候选项的持久化适配器。
 
-Methods deliberately never commit.  The caller owns the transaction so candidate upsert and
-range cursor advancement can be committed atomically by the execution scheduler.
+方法有意不提交事务。事务由调用方负责，使候选项更新和范围游标推进
+可由执行调度器原子提交。
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ ALL_STATES = frozenset({"pending", "in_flight", "accepted", "rejected", "duplica
 
 
 def validate_scan_batch(work: Any, batch: Any, revision_id: Any) -> None:
-    """Reject an unbound/out-of-range checkpoint before any candidate writes."""
+    """在写入候选项前拒绝未绑定或超出范围的检查点。"""
     cursor = batch.cursor.as_dict() if hasattr(batch.cursor, "as_dict") else dict(batch.cursor)
     if str(cursor.get("revision") or "") != str(revision_id):
         raise ValueError("scan cursor revision does not belong to field job")
@@ -69,7 +69,7 @@ def _candidate_values(
 
 
 class CandidateRepository:
-    """Read/write candidate ledger without owning transaction boundaries."""
+    """读写候选账本，但不负责事务边界。"""
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -91,8 +91,8 @@ class CandidateRepository:
                 "block_ref", "region_ref", "span_ref", "window", "context", "strength", "source"
             )},
         ).returning(ParseCandidate).execution_options(populate_existing=True)
-        # First discovery owns range_work_id; rescanning another strategy never steals its
-        # provenance.  Candidate judgement and evidence likewise survive every upsert.
+        # 首次发现负责绑定 range_work_id；其他策略重新扫描时不能夺取来源信息。
+        # 候选判断和证据同样要在每次更新中保留。
         return (await self.db.execute(returned_statement)).scalar_one()
 
     async def upsert_many(
@@ -156,7 +156,7 @@ class CandidateRepository:
                       key=lambda row: order[(row.strategy_version, row.range_key)])
 
     async def persist_scan(self, work_id: uuid.UUID, batch: Any) -> list[ParseCandidate]:
-        """Upsert discoveries and advance only scan progress in the same outer transaction."""
+        """在同一个外部事务中更新发现结果，并只推进扫描进度。"""
         work = await self.db.get(ParseRangeWorkItem, work_id, with_for_update=True)
         if work is None:
             raise KeyError(f"range work item not found: {work_id}")
@@ -169,7 +169,7 @@ class CandidateRepository:
         work.scan_done = batch.done
         work.quality_blockers = sorted({*(work.quality_blockers or []),
             *(f"unreadable_page:{p}" for p in batch.unreadable_pages)})
-        # scan_done does not imply all candidates have been judged.
+        # scan_done 不表示所有候选项都已经判断。
         work.state = "scanned" if batch.done else "scanning"
         await self.db.flush()
         return rows
@@ -217,4 +217,3 @@ class CandidateRepository:
         if row is None:
             raise KeyError(f"range work item not found: {work_id}")
         return ScanCursor.from_dict(row.cursor)
-

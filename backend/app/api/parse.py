@@ -50,7 +50,7 @@ router = APIRouter(prefix="/api/v1/parse", tags=["解析"])
 
 @router.get("/capabilities", summary="查询本地解析能力")
 async def parse_capabilities():
-    """Expose the locally enabled paths so the upload UI does not guess."""
+    """返回本地已启用的处理路径，供上传界面明确选择。"""
     reliable = settings.app.reliable_enabled
     return {
         "reliable_enabled": reliable,
@@ -134,9 +134,8 @@ async def upload_and_parse(
         db.add(document)
         await db.flush()
 
-        # Local v2 verification mode enters the reliable ledger directly. The
-        # old ParseRun is deliberately not created for this branch, so the
-        # result cannot be mistaken for a legacy execution.
+        # 本地 v2 验证模式直接写入可靠执行账本，此分支不创建旧版 ParseRun，
+        # 避免将结果误认为旧版执行。
         if selected_engine == "reliable":
             from app.services.reliable_extraction_service import (
                 ContentPreparationRequired,
@@ -155,7 +154,7 @@ async def upload_and_parse(
                 try:
                     reliable_content_build_task.apply_async(args=[str(exc.build_id)], queue="reliable-execution")
                 except Exception:
-                    # The durable content.build.execute outbox is the recovery path.
+                    # 持久化的 content.build.execute 发件箱负责恢复。
                     pass
                 return ReliableUploadResponse(
                     parse_run_id=None,
@@ -175,7 +174,7 @@ async def upload_and_parse(
                     args=[str(reliable_run.parse_run_id)], queue="reliable-execution"
                 )
             except Exception:
-                # The field_job_wakeup outbox remains pending for beat recovery.
+                # field_job_wakeup 发件箱保持待处理，以便定时任务恢复。
                 pass
             return ReliableUploadResponse(
                 parse_run_id=reliable_run.parse_run_id,
@@ -392,7 +391,7 @@ async def export_run_facts(
             if isinstance(val, dict | list):
                 row[key] = json.dumps(val, ensure_ascii=False, sort_keys=True)
             elif isinstance(val, str) and val.lstrip().startswith(("=", "+", "-", "@")):
-                # Exported source text must not execute spreadsheet formulas.
+                # 导出的源文本不能触发表格公式执行。
                 row[key] = "'" + val
         writer.writerow(row)
     return Response(content=("\ufeff" + stream.getvalue()).encode("utf-8"),
@@ -406,7 +405,7 @@ async def incremental_extract(
     payload: ExtractionRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Create an immutable child run; preprocessing artifact is reused."""
+    """创建不可变的子运行，并复用预处理产物。"""
     document = await db.get(Document, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="文档不存在")
@@ -431,9 +430,8 @@ async def incremental_extract(
         raise HTTPException(status_code=422, detail="清单没有启用的提取规则")
     field_keys = list(dict.fromkeys(payload.field_keys or changed_field_keys(rules, parent.extraction_profile or {})))
     if (payload.rule_bundle_id or payload.agent_limits) and not payload.field_keys:
-        # A trial is an explicit execution request even when the draft has
-        # identical rules. It must not silently become a no-op or inherit facts
-        # that were produced with another trial's budgets.
+        # 试运行是明确的执行请求，即使草稿规则相同也必须执行；
+        # 不能静默跳过，也不能继承其他试运行预算下生成的事实。
         field_keys = [rule.field_key for rule in rules]
     unknown = set(field_keys) - {r.field_key for r in rules}
     if unknown:
@@ -453,12 +451,12 @@ async def incremental_extract(
         current_profile.get(key) != (parent.extraction_profile or {}).get(key)
         for key in ("agent_config", "agent_model")
     ):
-        # A model/budget change invalidates field results, but not the page Artifact.
+        # 模型或预算变更会使字段结果失效，但不影响页面产物。
         field_keys = [rule.field_key for rule in rules]
     artifact = await artifact_service.find_ready(
         db, document_id, document.file_hash, preprocessing_profile(extraction_engine)["version"]
     )
-    # Refresh is a full extraction run; it cannot inherit results from old geometry.
+    # 刷新会完整重新提取，不能继承旧页面几何位置对应的结果。
     mode = "FULL" if payload.force_refresh else "INCREMENTAL"
     if not payload.force_refresh and (artifact is None or artifact.artifact_id != parent.artifact_id):
         raise HTTPException(status_code=409, detail="无兼容此引擎/版本的完整前处理产物；请选择强制刷新执行全量解析")

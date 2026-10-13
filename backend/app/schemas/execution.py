@@ -1,4 +1,4 @@
-"""Versioned API shapes for reliable extraction execution."""
+"""可靠提取执行的版本化 API 数据结构。"""
 
 from __future__ import annotations
 
@@ -77,4 +77,3 @@ class ReliableExtractRequest(BaseModel):
     revision_id: UUID | None = None
     parent_run_id: UUID | None = None
     document_token_hard_limit: int | None = Field(default=None, ge=1, le=10_000_000_000)
-

@@ -1,4 +1,4 @@
-"""Optional P16 transaction tests; run only against the isolated G1 PostgreSQL database."""
+"""可选 P16 事务测试；仅在隔离的 G1 PostgreSQL 数据库上运行。"""
 
 import os
 from uuid import uuid4

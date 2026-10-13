@@ -91,17 +91,17 @@ class PaddleOCRClient:
             logger.error(f"OCR failed on page {page_number}: {e}")
             return []
 
-    # Plan C1: the checklist agent reads scanned pages through the region endpoint, which returns
-    # one item per layout region with its pixel bbox and text (verified on the DGC scanned sheets).
+    # 方案 C1：清单代理通过区域接口读取扫描页；接口为每个布局区域返回
+    # 像素 bbox 和文本（已在 DGC 扫描表单上验证）。
     REGION_ENDPOINT = "/vl_ocr"
 
     async def recognize_regions(
         self, image: bytes, page_number: int, image_width: int, image_height: int
     ) -> list[TextBlock]:
-        """Region OCR for the checklist agent: text blocks carry pixel bboxes and a layout label.
+        """供清单代理使用的区域 OCR：文本块携带像素 bbox 和布局标签。
 
-        Scores are not provided by this endpoint, so block confidence stays unknown.  Errors
-        return an empty list, which the caller records as a failed page.
+        此接口不提供分数，因此文本块置信度保持未知。错误返回空列表，
+        由调用方记录为页面失败。
         """
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:

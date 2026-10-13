@@ -1,4 +1,4 @@
-"""Human review contracts. A human assertion is never an automatic confidence score."""
+"""人工复核契约。人工断言永远不是自动置信度分数。"""
 
 import math
 from datetime import datetime

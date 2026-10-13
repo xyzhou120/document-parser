@@ -1,4 +1,4 @@
-"""Snapshot-based rule publication with serialized, optimistic release changes."""
+"""基于快照的规则发布，使用串行化的乐观发布变更。"""
 
 from copy import deepcopy
 from dataclasses import asdict
@@ -19,7 +19,7 @@ from app.schemas.rules import RulePayload
 
 
 def _hash(value):
-    # Use exactly the same digest as ParseRun.extraction_profile.
+    # 使用与 ParseRun.extraction_profile 完全相同的摘要。
     from app.services.parse_service import knowledge_hash
     return knowledge_hash(value)
 
@@ -96,7 +96,7 @@ class ReleaseService:
         return item
 
     async def head(self, db: AsyncSession, checklist_type: str):
-        # Avoid identity-map stale state after waiting on another writer's row lock.
+        # 等待其他写入方的行锁后，避免使用身份映射中的过期状态。
         return (await db.execute(select(ChecklistReleaseHead).where(
             ChecklistReleaseHead.checklist_type == checklist_type
         ).execution_options(populate_existing=True))).scalar_one_or_none()

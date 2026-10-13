@@ -1,4 +1,4 @@
-"""P19 cross-module source provenance gates; no model service or database."""
+"""P19 跨模块来源链检查；无需模型服务或数据库。"""
 
 from types import SimpleNamespace
 from uuid import uuid4

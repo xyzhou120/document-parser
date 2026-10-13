@@ -1,7 +1,7 @@
-"""HTTP embedding/reranking adapters with explicit versioned configuration.
+"""具有显式版本配置的 HTTP 向量嵌入与重排适配器。
 
-Clients may be injected for MockTransport tests. Adapters never fabricate vectors
-or scores, and errors expose a reason code rather than response bodies or keys.
+MockTransport 测试可以注入客户端。适配器不会伪造向量或分数；
+错误只暴露原因码，不暴露响应正文或密钥。
 """
 
 from __future__ import annotations

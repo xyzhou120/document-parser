@@ -1,9 +1,8 @@
-"""Gold matrix v2 schema, loader and validation helpers.
+"""Gold matrix v2 数据模式、加载器和校验辅助函数。
 
-This module deliberately does not infer truth from extraction output.  The
-legacy checklist can be migrated into a review template, but its values are
-kept as ``legacy_observations`` until a human adjudicator verifies the source
-document.  The module has no dependency on the production ORM or parser.
+本模块有意不从提取结果推断真实值。旧版清单可以迁移为复核模板，
+但其中的值会保留为 legacy_observations，直到人工裁定者核验来源文档。
+本模块不依赖生产 ORM 或解析器。
 """
 
 from __future__ import annotations
@@ -35,7 +34,7 @@ def _canonical_json(value: Any) -> str:
 
 
 def semantic_hash(rule: Mapping[str, Any]) -> str:
-    """Return a stable hash for the rule semantics used by the gold matrix."""
+    """返回 gold matrix 所用规则语义的稳定哈希。"""
 
     fields = (
         "field_key", "cardinality", "scope", "identity_dimensions",
@@ -80,13 +79,13 @@ def _rule_semantics(rule: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def normalize_rule_catalog(rules: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Convert the legacy rule checklist into the frozen gold rule shape."""
+    """将旧版规则清单转换为冻结的 gold 规则结构。"""
 
     return [_rule_semantics(rule) for rule in rules]
 
 
 def _source_metadata(document: Mapping[str, Any]) -> dict[str, Any]:
-    """Copy only observed metadata; unknown source facts remain null."""
+    """只复制已观测元数据；未知来源事实保持为空。"""
 
     pages = document.get("pages")
     size = document.get("bytes", document.get("size_bytes"))
@@ -140,7 +139,7 @@ def build_gold_matrix(
     source: str = "P01 template; pending human adjudication",
     legacy_truth: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a document-by-rule matrix without fabricating annotations."""
+    """构建文档与规则矩阵，不伪造标注。"""
 
     normalized_rules = normalize_rule_catalog(rules)
     rule_keys = [str(rule["field_key"]) for rule in normalized_rules]
@@ -367,7 +366,7 @@ def validate_gold_matrix(
     *,
     require_adjudicated: bool = False,
 ) -> list[str]:
-    """Return validation errors; an empty list means schema-valid."""
+    """返回校验错误；空列表表示数据模式有效。"""
 
     errors: list[str] = []
     if not isinstance(payload, Mapping):
@@ -503,7 +502,7 @@ def validate_gold_matrix(
 
 
 def load_gold_matrix(path: str | Path, *, require_adjudicated: bool = False) -> dict[str, Any]:
-    """Load a JSON matrix and raise ValueError with all schema errors."""
+    """加载 JSON 矩阵，并用 ValueError 报告全部数据模式错误。"""
 
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     errors = validate_gold_matrix(payload, require_adjudicated=require_adjudicated)
@@ -518,10 +517,9 @@ def migrate_legacy_truth(
     *,
     documents: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Migrate the 2026-10-10 checklist to a pending matrix.
+    """将 2026-10-10 的清单迁移为待处理矩阵。
 
-    Values from the old checklist are copied only into ``legacy_observations``.
-    They never become expected facts or an ``absent`` assertion.
+    旧版清单中的值只复制到 legacy_observations，不会成为预期事实或 absent 断言。
     """
 
     legacy_docs = legacy.get("documents", {})

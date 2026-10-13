@@ -1,4 +1,4 @@
-"""Prevent direct SQL from rewriting audit history."""
+"""防止直接使用 SQL 改写审计历史。"""
 
 from alembic import op
 

@@ -145,7 +145,7 @@ def test_invalidation_selector_blocks_matching_page_but_keeps_unrelated_generati
         await service.publish(built.generation.generation_id, expected_cas_version=0,
                               expected_revision_id=content.revision.revision_id,
                               expected_invalidation_watermark=0)
-        # The manifest has only page 1; page 9 is outside this generation scope.
+        # 清单只有第 1 页；第 9 页不在此索引版本范围内。
         from app.services.assistant.index_repository import invalidation_applies
         invalidation = SimpleNamespace(scope_selector={"pages": [9]}, invalidation_kind="ocr", effective_at=None)
         assert not invalidation_applies(invalidation, built.generation)

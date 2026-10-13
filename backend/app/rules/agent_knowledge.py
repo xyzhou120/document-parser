@@ -1,4 +1,4 @@
-"""Reviewed-purpose seed package: extract report facts, never infer compliance."""
+"""经复核用途的种子包：提取报告事实，不推断合规性。"""
 
 from app.schemas.rules import RulePayload
 
@@ -27,7 +27,7 @@ DIMENSION_DESCRIPTIONS = {
     "scope_level": "记录统计层级，如工作面合计、评价单元合计、测点、单孔；不是长度值、里程或对象名称。",
 }
 
-# key, name, datatype, expected unit, kind, manual page, instruction, hints, defaults enabled
+# 键、名称、数据类型、预期单位、类型、手册页、说明、提示、默认是否启用
 FIELDS = [
     ("designed_hole_count", "报告设计钻孔数", "integer", "个", "design", 9,
      "按工作面/巷道、评价单元或钻场等报告明示粒度提取设计孔数。不把排数、钻场数、每排孔数、孔长/工程量、取样孔数当总孔数，不相乘反算。",

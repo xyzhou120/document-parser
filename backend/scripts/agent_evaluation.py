@@ -1,6 +1,6 @@
-"""Offline real-document selection, human annotation and extraction evaluation.
+"""离线真实文档选择、人工标注和提取评估。
 
-No remote calls and no generated ground truth. Run from the repository root:
+不发起远程调用，也不生成真实值。请从仓库根目录执行：
 backend/.venv/Scripts/python.exe backend/scripts/agent_evaluation.py --help
 """
 
@@ -28,8 +28,8 @@ KNOWN_NOTES = {
     460: "人工核对不同评价单元、设计/实际孔数与钻场孔数。",
 }
 DEFAULT_FIELDS = [
-    # First-round fields intentionally span counts, dimensions and value kinds;
-    # operators can pass --fields for another knowledge-pack revision.
+    # 首轮字段有意覆盖数量、维度和取值类型；操作员可通过 --fields
+    # 选择其他知识包修订的字段。
     "designed_hole_count", "actual_hole_count", "supplementary_hole_count",
     "measurement_point_count", "desorbable_gas_content_measured",
     "desorbable_gas_content_calculated", "evaluation_unit_range",
@@ -57,7 +57,7 @@ def layout(row: dict) -> str:
 
 
 def select_samples(inventory: list[dict], count: int = 26, seed: str = "agent-v1") -> dict:
-    """Dedup by file hash; duplicate-connected mines never span dev/holdout."""
+    """按文件哈希去重；由重复项关联的矿井不能横跨开发集和留出集。"""
     if count < 2:
         raise ValueError("count must be at least 2")
     by_hash: dict[str, list[dict]] = {}
@@ -118,7 +118,7 @@ def select_samples(inventory: list[dict], count: int = 26, seed: str = "agent-v1
             take(lambda r, s=split, k=kind: r["split"] == s and r["layout"] == k, 2)
     take(lambda r: r["large_file"], 1)
     take(lambda r: r["long_document"], 1)
-    # Add new mines before adding more reports from already selected mines.
+    # 优先加入新矿井，再增加已选矿井的报告。
     for row in candidates:
         if len(chosen) >= count:
             break
@@ -176,7 +176,7 @@ def normalize_value(value: Any) -> str:
 def normalize_unit(value: Any) -> str | None:
     if value is None:
         return None
-    # Typography normalization only, never repair m²/t to m³/t or convert scale.
+    # 只规范化排版，不擅自把 m²/t 修成 m³/t，也不转换量级。
     return unicodedata.normalize("NFKC", str(value)).replace(" ", "").replace("^", "")
 
 
@@ -419,7 +419,7 @@ def evaluate(gold: dict, predictions: dict, evidence_iou: float | None = None,
             supported = sum(evidence_matches(p, g, evidence_iou) for p, g in matches)
             totals.update({"tp": tp, "fp": fp, "fn": fn, "evidence_supported_tp": supported,
                            "gold_facts": len(gs), "predicted_facts": len(ps), "outside_scope_predictions": len(outside)})
-            # Value-only pairs diagnose unit/identity/type errors; they do not count as TP.
+            # 仅值匹配的配对用于诊断单位、身份或类型错误，不计为真正例。
             diagnostic_gold = list(range(len(gs)))
             for p in ps:
                 j = next((j for j in diagnostic_gold if value_key(p) == value_key(gs[j])), None)
@@ -477,7 +477,7 @@ def evaluate(gold: dict, predictions: dict, evidence_iou: float | None = None,
 
 
 def manual_cost_report(records: list[dict]) -> dict:
-    """Only explicit active-work seconds count, never browser dwell time."""
+    """只统计明确的实际工作秒数，不统计浏览器停留时间。"""
     by_phase: dict[str, dict] = {}
     allowed = {"pilot", "annotation", "review", "adjudication", "correction"}
     for index, row in enumerate(records):
@@ -514,7 +514,7 @@ def import_results(manifest: dict, document_id: int, payload: dict) -> dict:
         raise ValueError("document id is not in manifest")
     if payload.get("file_hash") != doc["sha256"]:
         raise ValueError("API export must include matching file_hash; manifest alone cannot prove identity")
-    # Export from parse detail API. Do not convert scalar fallback into source facts.
+    # 从解析详情 API 导出；不能把标量回退值转换为来源事实。
     details = payload.get("details", payload.get("field_details", []))
     if not details:
         details = [{"field_key": f["field_key"], **(f.get("extraction_detail") or {})}
@@ -543,9 +543,9 @@ def import_results(manifest: dict, document_id: int, payload: dict) -> dict:
             if isinstance(evidence, dict):
                 evidence = [evidence]
             evidence = [dict(ev) for ev in evidence]
-            # The agent's evidence_roles is the only authority for semantic
-            # roles. One registry location may support several roles, so keep
-            # one evidence record per explicit role. Unknown stays unknown.
+            # 代理的 evidence_roles 是语义角色的唯一依据。
+            # 一个注册位置可能支持多个角色，因此每个明确角色保留一条证据记录；
+            # 未知角色保持未知。
             role_map = inst.get("evidence_roles", {})
             if not isinstance(role_map, dict):
                 role_map = {}
@@ -562,7 +562,7 @@ def import_results(manifest: dict, document_id: int, payload: dict) -> dict:
                     if not isinstance(roles, list) or not roles:
                         roles = ["unknown"]
                     for role in roles:
-                        # Do not infer role from the field or dimension name.
+                        # 不根据字段名或维度名推断角色。
                         role_name = str(role) if role not in (None, "") else "unknown"
                         evidence.append({**base, "role": role_name})
             for ev in evidence:

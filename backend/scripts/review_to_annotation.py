@@ -1,8 +1,7 @@
-"""Bridge human review exports into a conservative evaluation annotation draft.
+"""将人工复核导出结果转换为保守的评估标注草稿。
 
-The bridge never creates VERIFIED gold. One API reviewer is evidence of a review
-event, not independent adjudication. A field remains DRAFT until a separate
-adjudicator completes the existing ``agent_evaluation.py`` validation contract.
+此转换不会创建 VERIFIED gold。一个 API 复核者只能证明发生过复核，不能证明独立裁定。
+字段会保持 DRAFT，直到独立裁定者完成 agent_evaluation.py 的现有校验契约。
 
 Examples:
   backend/.venv/Scripts/python.exe backend/scripts/review_to_annotation.py \
@@ -39,7 +38,7 @@ else:
 
 
 def _review_rows(value: Any) -> Iterable[dict[str, Any]]:
-    """Accept one export response, a list, or a saved API history response."""
+    """接受一条导出响应、列表或保存的 API 历史响应。"""
     if isinstance(value, list):
         yield from (row for row in value if isinstance(row, dict))
         return
@@ -59,7 +58,7 @@ def _review_rows(value: Any) -> Iterable[dict[str, Any]]:
 
 
 def _fact(fact: dict[str, Any]) -> dict[str, Any]:
-    """Map review facts to evaluation facts without inferring missing semantics."""
+    """将复核事实映射为评估事实，不推断缺失的语义。"""
     return {
         "raw_value": str(fact.get("raw_value", fact.get("value", ""))),
         "normalized_value": normalize_value(fact.get("value", fact.get("raw_value", ""))),
@@ -83,7 +82,7 @@ def _fact(fact: dict[str, Any]) -> dict[str, Any]:
 
 
 def bridge(manifest: dict[str, Any], review_files: list[str | Path]) -> dict[str, Any]:
-    """Return a new annotation document with review-backed fields marked DRAFT."""
+    """返回新的标注文档，并将有复核依据的字段标为 DRAFT。"""
     by_id = {str(doc["id"]): doc for doc in manifest.get("documents", [])}
     by_hash = {doc.get("sha256"): doc for doc in manifest.get("documents", [])}
     draft: dict[str, Any] = {

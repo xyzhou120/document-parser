@@ -1,4 +1,4 @@
-"""Plan C2: deterministic candidate retrieval (no model, no I/O)."""
+"""方案 C2：确定性候选检索（无模型、无 I/O）。"""
 
 from app.rules.spec import RuleSpec
 from app.services.candidate_retrieval import (
@@ -38,7 +38,7 @@ def spec(**kwargs):
     return FieldSpec.from_rule(rule(**kwargs))
 
 
-# --- normalisation -----------------------------------------------------------------------
+# --- 规范化 -----------------------------------------------------------------------
 
 def test_normalize_handles_fullwidth_ocr_markup_and_spacing():
     assert normalize("残余瓦斯含量（ｍ３）：２．２３") == "残余瓦斯含量(m³):2.23"
@@ -48,21 +48,21 @@ def test_normalize_handles_fullwidth_ocr_markup_and_spacing():
 
 def test_units_respect_word_boundaries():
     assert find_units(normalize("2.46 m³/t")) == ["m³/t"]
-    # A bare "t" inside an English word is not the tonne unit.
+    # 英文单词中的单独字母 t 不是吨单位。
     assert "t" not in find_units(normalize("Table 2 report"))
     assert find_units(normalize("压力 0.20 MPa")) == ["MPa"]
 
 
 def test_value_check_is_numeric_and_literal():
     assert value_in_text("2.46", "瓦斯含量(m3/t): 2.46", numeric=True)
-    assert value_in_text("2.460", "瓦斯含量 2.46", numeric=True)  # equal as numbers
+    assert value_in_text("2.460", "瓦斯含量 2.46", numeric=True)  # 数值相等。
     assert not value_in_text("2.4", "瓦斯含量 2.46", numeric=True)
     assert not value_in_text("2.46", "瓦斯含量 12.46", numeric=True)
     assert value_in_text("采区水仓", "评价单元：采区水仓控制评价范畴", numeric=False)
     assert not value_in_text("", "anything", numeric=False)
 
 
-# --- segments and windows -----------------------------------------------------------------
+# --- 片段和窗口 -----------------------------------------------------------------
 
 def test_native_spans_on_one_line_form_one_segment_with_union_bbox():
     p = page(3, blocks=[
@@ -137,7 +137,7 @@ def test_unit_mismatch_ranks_as_partial_with_hint():
 
 
 def test_ocr_region_gives_candidate_with_region_bbox_and_ocr_hint():
-    # The DGC-style sheet line from the OCR layer: markup in the unit, value after a colon.
+    # OCR 层中的 DGC 样式表格行：单位含标记，值在冒号后。
     p = page(21, blocks=[ocr("可解吸瓦斯量 $ m^{3}/t $：1.02", 293, 1586, 604, 1620)])
     desorb = rule(field_key="desorbable_gas_content_measured", name="可解吸瓦斯含量实测值",
                   synonyms=("可解吸瓦斯量", "可解吸"))
@@ -200,7 +200,7 @@ def test_non_numeric_fields_use_label_windows():
     assert cand.strength == "label" and cand.numbers == []
 
 
-# --- pages, ranking and caps --------------------------------------------------------------
+# --- 页面、排序和上限 --------------------------------------------------------------
 
 def test_unreadable_page_is_reported_not_silently_skipped():
     failed = page(9, text="", image_count=1, ocr_status="failed")
@@ -214,7 +214,7 @@ def test_unreadable_page_is_reported_not_silently_skipped():
 
 def test_cap_keeps_strongest_first_and_reports_truncation():
     blocks = [native(f"残余瓦斯含量 {i}.10 m³/t", 50, 100 + i * 12, 300, 110 + i * 12) for i in range(6)]
-    blocks.append(native("残余瓦斯含量 9.99 MPa", 50, 300, 300, 310))  # partial, must rank last
+    blocks.append(native("残余瓦斯含量 9.99 MPa", 50, 300, 300, 310))  # partial 必须排在最后。
     p = page(12, blocks=blocks)
     result = retrieve(spec(), [p], max_candidates=4)
     assert result.truncated is True
@@ -237,7 +237,7 @@ def test_window_is_limited_to_configured_characters():
 
 
 def test_value_two_lines_below_its_label_is_followed_in_the_same_window():
-    # List-style layout: the label on one line, the value on the line after the next one.
+    # 列表式布局：标签在一行，值在隔一行之后。
     p = page(15, blocks=[
         native("1、设计钻孔：在七联巷布置顺层钻孔", 50, 100, 320, 110),
         native("（1）钻孔孔径：94mm", 50, 112, 320, 122),

@@ -276,7 +276,7 @@ def test_invalidated_source_and_missing_attribute_evidence_are_wrong():
 def test_frozen_explicit_unit_conversion_is_applied_without_implicit_conversion():
     expected = _supported_fact("2", unit="m3/t")
     observed = _supported_fact("2000", unit="L/t")
-    # Source quote and physical evidence are from the same converted fact.
+    # 来源引文和物理证据来自同一个转换后的事实。
     observed["occurrences"][0]["quote"] = expected["occurrences"][0]["quote"]
     gold = _gold(facts=[expected])
     payload = _payload(gold)

@@ -193,7 +193,7 @@ async def patch_rule(rule_id: uuid.UUID, payload: RulePatch, db: AsyncSession = 
     if rule is None:
         raise HTTPException(status_code=404, detail="规则不存在")
 
-    # A partial patch must also validate the resulting knowledge/dimension contract.
+    # 部分更新后仍须校验完整的知识与维度契约。
     try:
         RulePayload.model_validate({**rule_repository.rule_to_dict(rule), **data})
     except ValidationError as exc:

@@ -1,13 +1,12 @@
-"""Deterministic candidate retrieval for the checklist agent (plan C2, 2026-10-10).
+"""清单代理的确定性候选检索（方案 C2，2026-10-10）。
 
-No model is called here.  For each field this module finds short text windows that contain a
-configured label and, for numeric fields, at least one number.  The output is a list of
-*candidates* for verification; it never produces values.  Each candidate keeps its page, the
-text window (at most ``window_chars``), its source (native text layer or OCR), a bounding box
-when one is known, and the hints the verifier needs (threshold context, missing unit, table).
+这里不会调用模型。对于每个字段，本模块查找包含配置标签的短文本窗口；
+数值字段还要求至少包含一个数字。输出是供核验的候选项列表，不产生最终值。
+每个候选项保留页面、文本窗口（最多 window_chars 个字符）、来源（原生文本层或 OCR）、
+已知时的边界框，以及核验器所需提示（阈值上下文、缺失单位和表格信息）。
 
-Labels come from the rule (``field_name_cn``) and its configured synonyms.  Matching ignores
-whitespace and full/half-width differences, and reads OCR markup such as ``m^{3}`` as ``m³``.
+标签来自规则的 field_name_cn 和配置的同义词。匹配会忽略空白及全半角差异，
+并将 m^{3} 等 OCR 标记识别为 m³。
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 NUMBER_RE = re.compile(r"(?<![A-Za-z\d.])[-+]?\d+(?:\.\d+)?(?!\d)")
-# Thresholds, limits and criteria are not measured values (plan C2 exclusion patterns).
+# 阈值、限制和标准不属于实测值（方案 C2 排除模式）。
 THRESHOLD_RE = re.compile(
     r"(不得超过|不超过|不低于|不小于|不大于|不应|应不|临界|限值|标准值|指标值|判定值|规定值|≥|≤|＜|＞|<|>)"
 )
@@ -30,13 +29,13 @@ RANK = {"strong": 0, "partial": 1, "label": 2, "threshold": 3}
 
 
 def is_ocr_source(source: Any) -> bool:
-    """Canonicalize producer source labels without changing persisted provenance."""
+    """规范化生产者来源标签，但不改变持久化的来源信息。"""
     value = str(source or "").strip().lower()
     return value == "ocr" or value == "automatic_ocr" or value.startswith("ocr_")
 
 
 def normalize(text: Any) -> str:
-    """Whitespace-free, half-width form used for matching (labels, numbers, units)."""
+    """用于匹配标签、数字和单位的无空格半角形式。"""
     if text is None:
         return ""
     out = []
@@ -68,9 +67,9 @@ VALUE_UNIT_RE = re.compile(r"^(?:个|孔|m³|m3|MPa|kPa|%|m|t|mL|ml|℃)")
 
 
 def has_value_like_number(normalized: str) -> bool:
-    """A number that reads as a measured value: led by a colon or count word, or followed by a unit.
+    """看起来像实测值的数字：前面有冒号或数量词，或后面跟有单位。
 
-    Enumerators ("1、") and codes ("水仓5-2") are not values, so they do not stop the look-ahead.
+    枚举编号（“1、”）和编码（“水仓5-2”）不是取值，因此不会终止向后查找。
     """
     for match in NUMBER_RE.finditer(normalized):
         before = normalized[max(0, match.start() - 4):match.start()]
@@ -81,10 +80,10 @@ def has_value_like_number(normalized: str) -> bool:
 
 
 def find_units(normalized: str, extra: tuple[str, ...] = ()) -> list[str]:
-    """Units present in the text, longest first.
+    """文本中出现的单位，按长度从长到短排列。
 
-    Short units must stand alone (``t`` is not inside a word), and a unit already covered by a
-    longer match is not reported again (``m³`` and ``t`` inside ``m³/t``).
+    短单位必须独立出现（t 不能位于单词内部），已被更长匹配覆盖的单位不再重复报告
+    （例如 m³/t 中的 m³ 和 t）。
     """
     found: list[str] = []
     kept_spans: list[tuple[int, int]] = []
@@ -106,7 +105,7 @@ def find_units(normalized: str, extra: tuple[str, ...] = ()) -> list[str]:
 
 
 def value_in_text(value: Any, text: str, numeric: bool) -> bool:
-    """A verified value must literally appear in the candidate text (plan C4)."""
+    """经过核验的值必须在候选文本中按字面出现（方案 C4）。"""
     if value is None:
         return False
     raw = normalize(value)
@@ -200,11 +199,11 @@ class Candidate:
     strength: str
     hints: list[str] = field(default_factory=list)
     segment_ids: list[str] = field(default_factory=list)
-    # Nearby lines (the two lines above and the page heading): lets the verifier bind dimensions
-    # such as workface or evaluation unit that the value line itself does not repeat.
+    # 附近行（上方两行和页面标题）用于让核验器绑定工作面、评价单元等维度，
+    # 因为数值所在行可能不会重复这些维度。
     context: str = ""
-    # Stable across retries and pagination for one immutable content revision.  ``retrieve``
-    # keeps this empty for legacy callers that do not provide a revision/hash.
+    # 对同一不可变内容修订，在重试和分页之间保持稳定。未提供修订或哈希的旧调用方
+    # 由 retrieve 保持为空。
     stable_key: str = ""
     original_source: str = ""
 
@@ -235,7 +234,7 @@ class RetrievalResult:
     total_matches: int
     unreadable_pages: list[int]
     truncated: bool
-    # Strength of the matches cut by the cap.  Only strong or partial cuts make a field unfinished.
+    # 候选因上限被截断时的匹配强度；只有 strong 或 partial 截断会使字段保持未完成。
     dropped: dict[str, int] = field(default_factory=dict)
 
 
@@ -245,11 +244,10 @@ def stable_candidate_key(
     candidate: Candidate,
     strategy_version: str = "retrieval-v2",
 ) -> str:
-    """Return the durable identity used by the candidate ledger.
+    """返回候选账本使用的持久化身份。
 
-    The key deliberately uses source coordinates and normalized window text rather than the
-    candidate's rank.  Adding a page before an existing match therefore cannot change its
-    identity, and rescanning the same range is idempotent.
+    键有意使用来源坐标和规范化窗口文本，而不是候选项排名。因此在已有匹配前增加页面
+    不会改变其身份，重新扫描同一范围也是幂等的。
     """
     payload = {
         "revision": str(content_revision),
@@ -265,17 +263,16 @@ def stable_candidate_key(
     return hashlib.sha256(encoded).hexdigest()
 
 
-# Alias used by integrations that call this a candidate id rather than a key.
+# 供把它称为候选 ID 而不是键的集成代码使用的别名。
 candidate_stable_key = stable_candidate_key
 
 
 def page_readable(page: dict) -> bool:
-    """A page whose text could not be read cannot prove that a value is absent (plan C1/C2).
+    """无法读取文本的页面不能证明某个值不存在（方案 C1/C2）。
 
-    ``ocr_status`` is set by parse_service: ``not_needed`` (native text is enough), ``ok``
-    (OCR text stored), ``failed`` (OCR error or empty answer on a page that needs it).  Pages
-    from older artifacts carry no status: an image-bearing page with almost no text is treated
-    as unreadable, so a missing OCR layer can never turn into a silent "not found".
+    ocr_status 由 parse_service 设置：not_needed（原生文本足够）、ok（已保存 OCR 文本）、
+    failed（OCR 错误，或需要 OCR 的页面返回空结果）。旧产物没有此状态：几乎没有文本的
+    含图页面按不可读处理，缺失 OCR 层不能静默变成“未找到”。
     """
     status = page.get("ocr_status")
     if status == "failed":
@@ -316,9 +313,9 @@ def _native_lines(blocks: list[dict], page_number: int) -> list[Segment]:
         b for b in blocks
         if not is_ocr_source(b.get("source")) and b.get("bbox") and str(b.get("text") or "").strip()
     ]
-    # Adapted/legacy artifacts may carry valid native text blocks without geometry. Keep them
-    # as page-level segments instead of silently making the field appear absent; no synthetic
-    # bbox is created and the real adapter block identity is retained for evidence linkage.
+    # 适配后的旧产物可能带有没有几何位置的有效原生文本块。
+    # 将其保留为页面级片段，不能静默把字段显示为缺失；不创建虚拟 bbox，
+    # 并保留真实适配器块的身份用于证据关联。
     loose_blocks = [
         b for b in blocks
         if not is_ocr_source(b.get("source")) and not b.get("bbox") and str(b.get("text") or "").strip()
@@ -385,13 +382,13 @@ def _ocr_segments(blocks: list[dict], page_number: int) -> list[Segment]:
 
 
 def build_segments(page: dict) -> list[Segment]:
-    """Reading-order text segments for one page (native lines first, then OCR regions)."""
+    """一个页面按阅读顺序排列的文本片段（先原生行，再 OCR 区域）。"""
     page_number = int(page.get("page_number", page.get("page", 0)))
     blocks = page.get("text_blocks") or []
     if blocks:
         segments = _native_lines(blocks, page_number) + _ocr_segments(blocks, page_number)
     else:
-        # Pages without geometry (tests, legacy artifacts): one segment per text line.
+        # 没有几何位置的页面（测试和旧产物）：每个文本行作为一个片段。
         segments = [
             Segment(page_number=page_number, index=i, text=line.strip(), bbox=None, source="native")
             for i, line in enumerate(str(page.get("text") or "").splitlines()) if line.strip()
@@ -423,7 +420,7 @@ def _window(text: str, anchor: int, size: int) -> str:
 
 
 def _threshold_context(normalized: str, extra: tuple[str, ...]) -> bool:
-    """True only when every number in the window sits next to a threshold marker."""
+    """仅当窗口中的每个数字都紧邻阈值标记时返回 True。"""
     pattern = THRESHOLD_RE
     if extra:
         pattern = re.compile("|".join([THRESHOLD_RE.pattern] + [re.escape(t) for t in extra if t]))
@@ -438,8 +435,8 @@ def _threshold_context(normalized: str, extra: tuple[str, ...]) -> bool:
 
 
 def _context_for(segments: list[Segment], index: int, window_segments: list[Segment]) -> str:
-    """Two preceding lines of the same page and source, plus the page heading when it is not already
-    among them.  Capped so that context never dominates the candidate window."""
+    """取同页同来源的前两行；若页面标题尚未包含其中，则一并加入。
+    限制上下文长度，避免淹没候选窗口。"""
     seg = segments[index]
     before: list[Segment] = []
     j = index - 1
@@ -461,11 +458,11 @@ def _context_for(segments: list[Segment], index: int, window_segments: list[Segm
 def retrieve(field_spec: FieldSpec, pages: list[dict], *, max_candidates: int | None,
              window_chars: int = 300, content_revision: str = "",
              rule_semantic_hash: str = "", strategy_version: str = "retrieval-v2") -> RetrievalResult:
-    """Return the highest-priority candidate windows for one field.
+    """返回一个字段优先级最高的候选窗口。
 
-    Ranking: strong (label, number, expected unit) before partial (label and number, unit
-    missing or different), then label-only windows for non-numeric fields, then threshold
-    context.  Ties keep reading order, so earlier pages are preferred for the same strength.
+    排序：strong（标签、数字、预期单位）先于 partial（标签和数字，单位缺失或不同），
+    之后是非数值字段的纯标签窗口，再之后是阈值上下文。强度相同时保持阅读顺序，
+    因此优先使用较早的页面。
     """
     ordered_pages = sorted(pages, key=lambda p: int(p.get("page_number", p.get("page", 0))))
     unreadable = [int(p.get("page_number", p.get("page", 0))) for p in ordered_pages
@@ -490,7 +487,7 @@ def retrieve(field_spec: FieldSpec, pages: list[dict], *, max_candidates: int | 
                 labels_hit.append((label_index, label))
                 anchor = pos if anchor is None else min(anchor, pos)
         if not labels_hit and tail:
-            # A label may wrap across two lines or cells: it must start in this segment.
+            # 标签可能跨两行或两个单元格换行，因此必须从当前片段开始。
             combined = head + tail
             for label_index, label in enumerate(field_spec.labels):
                 pos = combined.find(label)
@@ -501,9 +498,8 @@ def retrieve(field_spec: FieldSpec, pages: list[dict], *, max_candidates: int | 
             continue
         window_segments = [seg]
         if field_spec.numeric and not has_value_like_number(head):
-            # List-style reports put the value one or two lines below its label ("（2）数量：75 个"),
-            # often after a sub-item such as a diameter.  Take up to two more lines of the same page
-            # and source; the verifier decides which number, if any, is the target.
+            # 列表式报告会把值放在标签下方一到两行（“（2）数量：75 个”），
+            # 中间常有直径等子项。取同页同来源的后续两行以内，由核验器判断目标数字。
             following = i + 1
             while len(window_segments) < 3 and following < len(segments):
                 candidate_line = segments[following]
@@ -515,7 +511,7 @@ def retrieve(field_spec: FieldSpec, pages: list[dict], *, max_candidates: int | 
         normalized = normalize(window_text)
         numbers = find_numbers(normalized)
         if field_spec.numeric and not numbers:
-            continue  # label without a value nearby: weak, not a candidate
+            continue  # 附近没有值的标签：强度低，不作为候选。
         key = (seg.page_number, normalize(window_text))
         if key in seen_windows:
             continue

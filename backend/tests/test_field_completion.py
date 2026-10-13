@@ -1,4 +1,4 @@
-"""P10 semantic/evidence closure tests."""
+"""P10 语义和证据闭合测试。"""
 
 from app.rules.spec import RuleSpec
 from app.services.evidence_verification import validate_candidate_decision
@@ -225,4 +225,3 @@ def test_material_source_role_requires_receipt_even_when_configured():
                                          {"ev-text": bare_receipt})
     assert not result["accepted"]
     assert result["assertions"]["source_role"]["status"] == "unknown"
-

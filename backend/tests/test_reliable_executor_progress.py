@@ -1,4 +1,4 @@
-"""Bounded extraction progress and SQL work, with explicitly selected G1 PostgreSQL."""
+"""使用显式选择的 G1 PostgreSQL 测试有界提取进度和 SQL 工作量。"""
 
 import json
 from types import SimpleNamespace

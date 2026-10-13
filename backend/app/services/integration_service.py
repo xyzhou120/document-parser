@@ -1,4 +1,4 @@
-"""Opt-in protocol adapter and durable outbox; no broker or SSO is assumed."""
+"""可选启用的协议适配器与持久化发件箱；不预设消息代理或 SSO。"""
 
 import hashlib
 import hmac
@@ -87,7 +87,7 @@ def _hash(payload):
 
 
 async def _event_lock(db, event_id):
-    # Cross-document event replays also serialize; unique PK remains the last guard.
+    # 跨文档事件重放同样串行化；唯一主键仍是最后一道防线。
     key = int.from_bytes(hashlib.sha256(event_id.encode()).digest()[:8], "big", signed=True)
     await db.execute(text("SELECT pg_advisory_xact_lock(:event_lock)"), {"event_lock": key})
 
@@ -191,7 +191,7 @@ class IntegrationService:
         }
 
     async def enqueue_result(self, db, run):
-        """Called after extraction commit; only records local data, never sends HTTP."""
+        """在提取提交后调用；只记录本地数据，从不发送 HTTP 请求。"""
         if not self.config.enabled:
             return None
         profile = run.extraction_profile or {}
@@ -247,7 +247,7 @@ class IntegrationService:
         return outbox
 
     async def dispatch(self, db, event_id, *, transport=None, now: datetime | None = None):
-        """Explicit operator/worker action. Delivery stays at-least-once with receiver idempotency."""
+        """操作员或工作进程的显式操作。投递保持至少一次，并依靠接收方幂等。"""
         config = self.config
         if not config.enabled or not config.webhook_enabled:
             raise HTTPException(503, "Webhook 分发未启用，未发送任何请求")
@@ -324,5 +324,5 @@ integration_service = IntegrationService()
 
 
 async def record_output_event(db, run):
-    """Compatibility hook for ParseService: caller owns commit/rollback of the outbox."""
+    """供 ParseService 使用的兼容钩子；发件箱的提交和回滚由调用方负责。"""
     return await integration_service.enqueue_result(db, run)

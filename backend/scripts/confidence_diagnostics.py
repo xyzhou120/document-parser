@@ -1,6 +1,6 @@
-"""Offline score diagnostics on independently verified facts; never calibrates scores.
+"""对独立核验事实进行离线分数诊断；不校准分数。
 
-From the repository root:
+从仓库根目录执行：
   backend/.venv/Scripts/python.exe backend/scripts/confidence_diagnostics.py \
     --gold annotations.json --predictions predictions.json --out diagnostics.json
 """
@@ -27,7 +27,7 @@ from scripts.agent_evaluation import (  # noqa: E402
 
 
 def _fact(row: dict) -> dict:
-    """Accept evaluation facts and the platform's automatic fact-view export."""
+    """接受评估事实和平台自动事实视图导出结果。"""
     return {
         **row,
         "raw_value": row.get("raw_value", row.get("raw", row.get("value", ""))),
@@ -90,10 +90,10 @@ def diagnose(
     evidence_iou: float | None = None,
     expected_confidence_version: str | None = None,
 ) -> dict:
-    """Report empirical behaviour, retaining unknowns and scope limitations.
+    """报告实测表现，同时保留未知项和范围限制。
 
-    min_samples is an explicit study design parameter, not a deployment threshold.
-    Without it, probability-specific metrics remain undefined.
+    min_samples 是明确的研究设计参数，不是部署阈值。
+    没有它，按概率划分的指标没有定义。
     """
     if isinstance(bins, bool) or not isinstance(bins, int) or not 1 <= bins <= 100:
         raise ValueError("bins must be an integer between 1 and 100")
@@ -154,7 +154,7 @@ def diagnose(
             scored_documents.add(doc_id)
             scored_scope[field["scope"]] += 1
             totals["scored_fields"] += 1
-            # Group repeated evidence for a fact, but reject contradictory score metadata.
+            # 聚合同一事实的重复证据，但拒绝相互矛盾的分数元数据。
             seen_confidence = {}
             for fact in raw_predictions:
                 confidence = _confidence(fact)
@@ -259,7 +259,7 @@ def _group_report(key: tuple, rows: list[dict], bins: int, min_samples: int | No
         reasons.append("Both correct and incorrect verified outcomes are required for this feasibility report")
     if any(row["split"] != "holdout" for row in scored):
         reasons.append("Scores are not all from an independent holdout split")
-    # No fitting, relabelling or output probabilities. These are validation metrics only.
+    # 不做拟合、重新标记或输出概率，这些只是校验指标。
     brier = sum((row["confidence"]["score"] - int(row["correct"])) ** 2 for row in scored) / len(scored) if not reasons else None
     ece = sum(abs(row["mean_score"] - row["empirical_precision"]) * row["n"] for row in bin_rows) / len(scored) if not reasons else None
     return {"kind": kind, "version": version, "field_key": field_key, "semantics": semantics,

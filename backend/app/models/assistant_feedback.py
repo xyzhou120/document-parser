@@ -1,4 +1,4 @@
-"""Append-only samples for offline assistant/extraction quality improvement."""
+"""用于离线改进助手与提取质量的只追加样本。"""
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -44,4 +44,3 @@ class AssistantFeedbackSample(Base):
 @event.listens_for(AssistantFeedbackSample, "before_delete")
 def immutable_feedback(_mapper, _connection, _target):
     raise ValueError("Feedback samples are append-only; adjudication uses a separate offline record")
-

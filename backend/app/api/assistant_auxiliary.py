@@ -1,4 +1,4 @@
-"""Independent optional assistant card, comparison and offline feedback APIs."""
+"""独立的助手卡片、对比和离线反馈可选接口。"""
 
 from uuid import UUID
 
@@ -48,7 +48,7 @@ async def compare_answer(message_id: UUID, payload: AssistantCompareRequest, db:
 
 @router.post("/assistant/messages/{message_id}/feedback", status_code=status.HTTP_201_CREATED)
 async def submit_feedback(message_id: UUID, payload: AssistantFeedbackRequest, db: AsyncSession = Depends(get_db)):
-    # Import after schema deployment; feedback is never hidden in QA message payloads.
+    # 数据模式部署后再导入；反馈不能藏在问答消息载荷中。
     from app.services.assistant.feedback_service import feedback_service
     try:
         return await feedback_service.submit(db, message_id, payload)

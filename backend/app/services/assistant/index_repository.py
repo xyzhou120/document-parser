@@ -1,7 +1,7 @@
-"""Persistence boundary for immutable index generations.
+"""不可变索引版本的持久化边界。
 
-The memory repository is intentionally deterministic for tests and local probes;
-the SQL repository uses the same methods and short transactions in workers.
+内存仓库有意保持确定性，供测试和本地探测使用；
+SQL 仓库在工作进程中使用相同方法和短事务。
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ class HeadSnapshot:
 
 
 class IndexRepository:
-    """SQLAlchemy implementation; callers own model/content validation."""
+    """SQLAlchemy 实现；模型和内容校验由调用方负责。"""
 
     def __init__(self, sessions):
         self.sessions = sessions
@@ -188,7 +188,7 @@ class IndexRepository:
     async def lock_answer_qualification(self, generation_id, *, expected_revision_id,
                                         expected_serve_version, expected_invalidation_watermark,
                                         document_id, db):
-        """Caller owns this transaction and writes the answer before releasing locks."""
+        """调用方负责此事务，并在释放锁前写入答案。"""
         head = await db.get(DocumentProcessingHead, UUID(str(document_id)), with_for_update=True,
                             populate_existing=True)
         generation = await db.get(IndexGeneration, UUID(str(generation_id)), with_for_update=True,
@@ -230,7 +230,7 @@ def _generation_snapshot(row, chunks):
 
 
 def invalidation_applies(invalidation, generation):
-    """Conservative selector adapter; scoped field/fact changes do not revoke raw text."""
+    """保守的选择器适配器；限定范围的字段或事实变更不撤销原始文本。"""
     selector = invalidation.scope_selector or {}
     scope = selector.get("scope") or selector.get("scope_type") or selector.get("kind") or invalidation.invalidation_kind
     if scope in {"field", "fact", "parse_run"}:
@@ -259,7 +259,7 @@ def invalidation_applies(invalidation, generation):
             return False
         if blocks and not (blocks & manifest_blocks):
             return False
-    # Evidence/block/region scope conservatively blocks the entire generation.
+    # 证据、块或区域范围的变更会保守地阻断整个索引版本。
     return True
 
 
@@ -276,7 +276,7 @@ def _head_snapshot(row):
 
 
 class MemoryIndexRepository:
-    """Deterministic repository for tests and development; mirrors publication guards."""
+    """用于测试和开发的确定性仓库，与发布防护逻辑一致。"""
 
     def __init__(self):
         self.generations: dict[UUID, GenerationSnapshot] = {}

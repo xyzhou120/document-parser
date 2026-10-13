@@ -1,4 +1,4 @@
-"""Immutable configuration bundles and append-only publication decisions."""
+"""不可变配置包与只追加的发布决策。"""
 
 import uuid
 from datetime import datetime
@@ -60,7 +60,7 @@ for _model in (RuleBundle, RuleReleaseEvent):
     event.listen(_model, "before_delete", _reject_mutation)
 
 
-# init_db should execute these statements on PostgreSQL as well as the ORM guards.
+# init_db 在 PostgreSQL 中也应执行这些语句，与 ORM 防护保持一致。
 APPEND_ONLY_DDL = [
     """CREATE OR REPLACE FUNCTION reject_rule_release_mutation() RETURNS trigger
     LANGUAGE plpgsql AS $$ BEGIN

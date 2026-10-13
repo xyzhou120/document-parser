@@ -31,7 +31,7 @@ celery_app.conf.update(
     task_time_limit=3600,  # 1小时超时
     worker_prefetch_multiplier=1,  # 每次只取1个任务
     task_default_queue=settings.celery.task_default_queue,
-    # New execution wakes stay isolated from the existing parse_document task.
+    # 新执行唤醒任务与现有 parse_document 任务隔离。
     task_routes={"reliable_execution_wakeup": {"queue": "reliable-execution"},
                  "reliable_content_build": {"queue": "reliable-execution"},
                  "reliable_execution_dispatch": {"queue": "reliable-control"},

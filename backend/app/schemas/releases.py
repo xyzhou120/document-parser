@@ -1,4 +1,4 @@
-"""Explicit configuration release commands; publication is not quality certification."""
+"""显式配置发布命令；发布不等于质量认证。"""
 
 from datetime import datetime
 from typing import Any
@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class DraftBundlePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     checklist_type: str = Field(min_length=1, max_length=100)
-    # Omitted rules capture the current CRUD editing source.
+    # 未提供规则时，记录当前 CRUD 编辑来源。
     rules: list[dict[str, Any]] | None = Field(default=None, max_length=1000)
     operator: str = Field(min_length=1, max_length=100)
     note: str = Field(default="", max_length=4000)

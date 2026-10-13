@@ -1,4 +1,4 @@
-"""Inbound protocol adapter and explicit, opt-in result delivery."""
+"""入站协议适配与显式启用的结果投递。"""
 
 from typing import Literal
 from uuid import UUID
@@ -31,7 +31,7 @@ class IntegrationParseRequest(BaseModel):
 
 
 async def _submit(db, record, force_refresh=False):
-    # The worker must be able to read the immutable snapshot before queue submission.
+    # 提交队列前，工作进程必须能够读取不可变快照。
     await db.commit()
     try:
         task = parse_document_task.delay(

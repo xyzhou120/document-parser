@@ -1,4 +1,4 @@
-"""Persistent batch recovery: idempotency, snapshot retry, safe cancellation/export."""
+"""持久化批量恢复：幂等、快照重试以及安全取消和导出。"""
 
 import hashlib
 import io

@@ -1,8 +1,7 @@
-"""Durable retrieval planning primitives for P06.
+"""P06 的持久化检索规划基础组件。
 
-The planner intentionally has no database or model dependency.  A scan cursor describes only
-which source range has been read; judgement progress is represented by candidate states in the
-candidate ledger and therefore survives worker restarts and changes in batch ordering.
+规划器有意不依赖数据库或模型。扫描游标只描述已读取的来源范围；判断进度由候选账本
+中的状态表示，因此可以跨工作进程重启和批次顺序变化保留。
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ BATCH_STATES = frozenset({"pending", "in_flight", "split", "partially_committed"
 
 
 class CandidateBatchTree:
-    """JSON checkpoint for recoverable P07 split trees, independent from scan cursors."""
+    """可恢复 P07 拆分树的 JSON 检查点，与扫描游标独立。"""
 
     def __init__(self, snapshot: dict[str, dict[str, Any]] | None = None):
         self.batches = deepcopy(snapshot or {})
@@ -63,10 +62,10 @@ class CandidateBatchTree:
         return row
 
     def apply_outcome(self, batch_id: str, outcome: Any) -> list[str]:
-        """Save validated decisions and children; never advance a scan cursor.
+        """保存已校验的决策和子项，不能推进扫描游标。
 
-        Missing/invalid IDs remain pending. Split child payloads retain the complete P07 input,
-        including OCR image_refs and object-level units, so restart cannot lose the proof image.
+        缺失或无效的 ID 保持待处理。拆分子项载荷保留完整 P07 输入，
+        包括 OCR image_refs 和对象级单元，因此重启不会丢失证明图像。
         """
         parent = self.batches[batch_id]
         if parent["batch_state"] == "done":
@@ -77,7 +76,7 @@ class CandidateBatchTree:
         decisions = getattr(outcome, "decisions", None) or []
         splits = getattr(outcome, "split_batches", None) or []
         if splits:
-            # A truncated batch commits no parent decisions.
+            # 被截断的批次不提交任何父项决策。
             pending = expected - set(parent["decided_ids"])
             child_ids = []
             seen: set[str] = set()
@@ -139,8 +138,8 @@ class CandidateBatchTree:
                 child_ids.append(child_id)
             if seen != pending or (unit_mode and seen_units != parent_units):
                 raise ValueError("split must retain every pending candidate")
-            # Validate the entire proposal before mutating the checkpoint; malformed children
-            # may never leave a partial split tree in memory to be persisted accidentally.
+            # 修改检查点前先校验完整提案；格式错误的子项不能留下部分拆分树，
+            # 以免被意外持久化。
             for child_id, ids, path, payload in staged:
                 self.add(child_id, ids, parent_batch=batch_id, split_path=path, payload=payload)
             if unit_mode:
@@ -178,7 +177,7 @@ class CandidateBatchTree:
 
 @dataclass(frozen=True)
 class RangeShard:
-    """One deterministic strategy x page range work item."""
+    """一个确定性的策略 x 页面范围工作项。"""
 
     strategy_version: str
     range_key: str
@@ -198,7 +197,7 @@ class RangeShard:
 
 @dataclass
 class ScanCursor:
-    """Serializable scan position.  It is deliberately independent from judgement cursors."""
+    """可序列化的扫描位置。它有意独立于判断游标。"""
 
     revision: str = ""
     page_index: int = 0
@@ -256,10 +255,10 @@ def build_range_shards(
     strategy_versions: Iterable[str] = ("lexical-v2", "formula-v2", "table-v2", "complete_scope-v2"),
     pages_per_range: int = 4,
 ) -> list[RangeShard]:
-    """Build stable strategy x range shards.
+    """构建稳定的策略 x 范围分片。
 
-    Empty page gaps are retained in the range bounds, so a later page insertion does not change
-    the meaning of an already persisted range.  Ranges are ordered by strategy then page.
+    范围边界保留空页面间隔，因此后续插入页面不会改变已持久化范围的含义。
+    范围按策略再按页面排序。
     """
     if pages_per_range < 1:
         raise ValueError("pages_per_range must be positive")
@@ -277,7 +276,7 @@ def build_range_shards(
 
 def plan_rule_ranges(pages: Sequence[dict[str, Any]], semantics: dict[str, Any],
                      pages_per_range: int = 4) -> list[RangeShard]:
-    """Freeze the declared scope; section labels are applied only for an explicit section scope."""
+    """冻结声明的范围；章节标签只用于明确指定的章节范围。"""
     scope = semantics.get("scope") or {"mode": "attachment"}
     mode = scope.get("mode", "attachment")
     if mode == "attachment":
@@ -298,7 +297,7 @@ def plan_rule_ranges(pages: Sequence[dict[str, Any]], semantics: dict[str, Any],
 def _range_candidates(field_spec: FieldSpec, page: dict, strategy: str, *,
                       window_chars: int, revision: str, rule_hash: str,
                       formula_patterns: Sequence[str], table_patterns: Sequence[str]) -> list[Candidate]:
-    """Complete-scope emits every source window; labels merely prioritize the fast path."""
+    """完整范围会发出每个来源窗口；标签只用于提高快速路径的优先级。"""
     patterns = formula_patterns if strategy.startswith("formula") else table_patterns
     compiled = [re.compile(pattern) for pattern in patterns]
     candidates = []
@@ -347,8 +346,8 @@ def _range_candidates(field_spec: FieldSpec, page: dict, strategy: str, *,
             pending.append((segment, 0, segment.text))
             continue
         flush_window()
-        # Long source spans retain the original independently recoverable windows. Every
-        # original character is retained, while OCR and table identities remain separate.
+        # 长来源片段保留原来可独立恢复的窗口。每个原文字符都会保留，
+        # 同时 OCR 与表格身份保持分开。
         for offset in range(0, len(segment.text), window_chars):
             text = segment.text[offset:offset + window_chars]
             windows.append((i, [(segment, offset, text)]))
@@ -403,11 +402,10 @@ def scan_candidates(
     formula_patterns: Sequence[str] = (),
     table_patterns: Sequence[str] = (),
 ) -> ScanBatch:
-    """Scan at most ``page_limit`` pages and return all candidates in that slice.
+    """最多扫描 page_limit 个页面，并返回该切片中的全部候选项。
 
-    ``retrieve`` is called with a generous per-page cap, while the durable pagination boundary is
-    the page cursor.  Thus ``max_candidates`` in verifier calls cannot silently remove candidates
-    from the scan universe.
+    retrieve 使用宽松的单页上限，而持久化分页边界是页面游标。因此核验调用中的
+    max_candidates 不能静默从扫描全集中删除候选项。
     """
     if page_limit < 1:
         raise ValueError("page_limit must be positive")
@@ -437,8 +435,7 @@ def scan_candidates(
         result = retrieve(
             field_spec,
             [page],
-            # A scan page is the durable pagination unit; candidate caps belong to the
-            # judgement batch and must never remove items from the scan universe.
+            # 扫描页面是持久化分页单元；候选上限属于判断批次，不能从扫描全集中删除项目。
             max_candidates=None,
             window_chars=window_chars,
             content_revision=content_revision,
@@ -468,7 +465,6 @@ def _fallback_candidate_digest(candidate: Candidate) -> str:
     return hashlib.sha256(f"{candidate.page_number}|{candidate.source}|{candidate.text}".encode()).hexdigest()
 
 
-# Names used by integration code and older P06 drafts.
+# 集成代码和旧版 P06 草稿使用的名称。
 plan_ranges = build_range_shards
 scan_range = scan_candidates
-

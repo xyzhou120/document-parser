@@ -1,4 +1,4 @@
-"""Optional review workspace reads actual SQL and leaves source rows unchanged."""
+"""可选复核工作区读取真实 SQL，且不修改来源记录。"""
 
 from datetime import datetime, timedelta
 from uuid import uuid4
@@ -81,7 +81,7 @@ async def test_latest_revision_partition_and_missing_fields_are_preserved(db):
     rejected = await query(local, state="REJECTED")
     assert rejected["total"] == 1
     assert rejected["items"][0]["latest_review"]["review_id"] == str(latest.review_id)
-    assert rejected["items"][0]["fact_count"] == 1  # Automatic candidate remains visible.
+    assert rejected["items"][0]["fact_count"] == 1  # 自动候选仍然可见。
     assert (await query(local, state="HUMAN_REVIEWED"))["total"] == 0
     review(local, run, "CORRECT", 3)
     assert (await query(local, state="REJECTED"))["total"] == 0

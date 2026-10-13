@@ -1,4 +1,4 @@
-"""Build a portable offline original-image annotation workspace, without predictions."""
+"""构建便携的离线原图标注工作区，不包含预测结果。"""
 
 import argparse
 import hashlib

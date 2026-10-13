@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""Offline evaluation of the checklist agent on the reference reports (plan C0/C9, 2026-10-10).
+"""在参考报告上离线评估清单代理（方案 C0/C9，2026-10-10）。
 
-The run follows the production path: PDF parse, region OCR for scanned pages through
-``ParseService._ocr_scanned_pages``, then ``ChecklistAgent.extract_all`` with page and region
-renders produced locally at the configured DPI.  Nothing is written to the database.
+运行遵循生产流程：解析 PDF，通过 ParseService._ocr_scanned_pages 对扫描页执行区域 OCR，
+然后使用 ChecklistAgent.extract_all，并按配置 DPI 在本地生成页面和区域渲染图。
+整个过程不会写入数据库。
 
-OCR answers are cached per page under ``<out>/ocr-cache`` (only non-empty answers are cached), so a
-rerun costs model calls only.  ``--no-llm`` replaces the model with an empty answerer: it exercises
-OCR, retrieval, prompts and budgets without spending tokens.
+OCR 答案按页缓存到 <out>/ocr-cache（只缓存非空答案），重跑时只消耗模型调用。
+--no-llm 使用空答案器替代模型，可在不消耗 token 的情况下测试 OCR、检索、提示词和预算。
 
-Usage, from the backend directory:
+在 backend 目录执行：
     python3 scripts/eval_checklist.py --docs D A C E --out ../outputs/eval/run1
     python3 scripts/eval_checklist.py --docs D --no-llm --out /tmp/eval_dry
-Scoring uses scripts/eval/truth_checklist_2026-10-10.json; the rule snapshot is
-scripts/eval/rules_checklist_2026-10-10.json.
+评分使用 scripts/eval/truth_checklist_2026-10-10.json；规则快照为
+scripts/eval/rules_checklist_2026-10-10.json。
 """
 
 from __future__ import annotations
@@ -40,7 +39,7 @@ def log(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
-# --- scoring -------------------------------------------------------------------------
+# --- 评分 -------------------------------------------------------------------------
 
 def to_number(text) -> Decimal | None:
     try:
@@ -61,10 +60,10 @@ def value_matches(expected: str, observed, mode: str = "number") -> bool:
 
 
 def score(truth: list[dict], observed_by_doc: dict) -> dict:
-    """Recall over truth values, precision over accepted values of labelled fields.
+    """召回率按真实值计算，准确率按已标注字段的接受值计算。
 
-    ``observed_by_doc[doc][field_key]`` is the list of accepted instances (dicts with ``value``).
-    Fields without a truth entry are not scored: their values are reported as unlabelled.
+    observed_by_doc[doc][field_key] 是已接受实例（含 value 的字典）列表。
+    没有真实值记录的字段不评分，其值报告为未标注。
     """
     rows = []
     expected_total = expected_hit = 0
@@ -121,10 +120,10 @@ def score(truth: list[dict], observed_by_doc: dict) -> dict:
     }
 
 
-# --- runtime pieces ---------------------------------------------------------------------
+# --- 运行时组件 ---------------------------------------------------------------------
 
 class NoLLMClient:
-    """Stands in for the vision model: answers every request with an empty result list."""
+    """替代视觉模型：对每个请求返回空结果列表。"""
 
     def __init__(self):
         self.calls = []
@@ -160,7 +159,7 @@ def block_from_json(item: dict, page_number: int):
 
 
 class RegionCache:
-    """Caches non-empty region-OCR answers per page; empty answers are retried on rerun."""
+    """按页缓存非空区域 OCR 答案；重跑时重试空答案。"""
 
     def __init__(self, directory: Path, tag: str, original):
         self.directory = directory
@@ -196,7 +195,7 @@ def image_provider_for(pdf_path: Path, render_dpi: int, region_dpi: int):
     return provider, document
 
 
-# --- one document -------------------------------------------------------------------------
+# --- 单个文档 -------------------------------------------------------------------------
 
 def summarize_detail(detail: dict) -> dict:
     instances = []
@@ -225,10 +224,10 @@ def summarize_detail(detail: dict) -> dict:
 
 
 async def run_document(tag: str, args, truth: dict, rules_profile: dict, out_dir: Path) -> dict:
-    """Run one document (or the ``--fields`` subset) and merge the result into ``<out>/<tag>.json``.
+    """运行一个文档（或 --fields 子集），并将结果合并到 <out>/<tag>.json。
 
-    Sandbox calls are short, so a long document is run field by field across several calls; each
-    call adds its fields and its own token/call totals to the document record."""
+    沙盒调用时间较短，因此长文档按字段拆分到多次调用；每次调用都会将字段及其
+    token、调用次数统计累加到文档记录。"""
     from app.config import settings
     from app.agents.checklist import ChecklistAgent
     from app.services.parse_service import ParseService, snapshot_rules

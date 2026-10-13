@@ -1,4 +1,4 @@
-"""Schemas for the document parsing API."""
+"""文档解析 API 的数据模式。"""
 
 from datetime import datetime
 from typing import Any, Literal
@@ -22,7 +22,7 @@ class ExtractionRequest(BaseModel):
                    "max_total_tokens": 2000000, "max_context_chars": 200000,
                    "field_batch_size": 100, "max_search_results": 100,
                    "history_images": 5, "render_dpi": 300, "region_render_dpi": 300,
-                   # Plan B/C budgets (2026-10-10).
+                   # 方案 B/C 的预算（2026-10-10）。
                    "min_output_tokens": 20000, "field_token_budget": 200000,
                    "max_calls_per_field": 10, "candidates_per_call": 50,
                    "max_candidates_per_field": 200, "max_candidates_multi": 300,
@@ -63,7 +63,7 @@ class StartParseResponse(BaseModel):
 
 
 class ReliableUploadResponse(BaseModel):
-    """A new reliable upload may need content preparation before a run exists."""
+    """新的可靠上传可能需要先完成内容准备，再创建运行记录。"""
 
     contract_version: Literal["reliable-extraction-v2"]
     extraction_engine: Literal["reliable"]
@@ -122,7 +122,7 @@ class FactResponse(BaseModel):
     available_for_downstream: bool | None = None
     review_status: str = "UNREVIEWED"
     field_review_status: str = "UNREVIEWED"
-    # Reliable extraction v2 fields. Optional defaults preserve the v1 response contract.
+    # 可靠提取 v2 字段。可选默认值用于保持 v1 响应契约。
     contract_version: str = "fact-contract-v1"
     assertions: dict[str, Any] = Field(default_factory=dict)
     automatic_quality_status: str | None = None

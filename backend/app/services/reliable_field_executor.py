@@ -1,7 +1,7 @@
-"""Frozen-content field quanta using P06 retrieval, P07 calls and P10 closure.
+"""基于冻结内容的字段执行量子，使用 P06 检索、P07 调用和 P10 闭合。
 
-Provider requests run after the read session closes.  A guarded writer saves
-scan progress, validated decisions and result rows in the runner transaction.
+读取会话关闭后才发起提供方请求。受保护的写入方在运行事务中保存扫描进度、
+已校验决策和结果记录。
 """
 
 from __future__ import annotations
@@ -53,14 +53,14 @@ class ReliableFieldExecutorConfig:
     ranges_per_quantum: int = 4
 
 
-# Fixed revisions are immutable. Keep their validated adapted content for the worker lifetime,
-# across executor windows, while publication guards still check current source validity.
+# 固定修订不可变。在工作进程生命周期内跨执行窗口保留已校验的适配内容，
+# 同时由发布防护继续检查当前来源有效性。
 _REVISION_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _REVISION_CACHE_LIMIT = 4
 
 
 def model_candidate_payload(proposal: dict) -> dict:
-    """Model inputs contain source observations, never the accumulated evidence ledger."""
+    """模型输入包含来源观测值，不包含累积的证据账本。"""
     keys = {"candidate_id", "text", "context", "source", "original_source", "page_number", "bbox",
             "table", "segment_ids", "content_revision", "units", "unit_work_ids", "evidence_ids",
             "rule", "source_role_hint", "stage", "block_id", "region_id", "material_provenance",
@@ -69,7 +69,7 @@ def model_candidate_payload(proposal: dict) -> dict:
 
 
 def compact_checkpoint_payload(value: Any) -> Any:
-    """Image bytes are rendered again from immutable page/bbox after a restart."""
+    """重启后根据不可变页面和 bbox 重新渲染图像字节。"""
     if isinstance(value, dict):
         return {key: compact_checkpoint_payload(item) for key, item in value.items() if key != "image_refs"}
     if isinstance(value, tuple | list):
@@ -113,14 +113,14 @@ def normalize_proposal(value: dict, revision: UUID | str) -> dict:
 
 
 def native_receipt(candidate: dict) -> dict:
-    # Source-role support comes from the platform's document provenance.  The
-    # model cannot assign a stronger role (design/measured/etc.) without proof.
+    # 来源角色依据来自平台的文档来源信息；没有证据时，模型不能指定
+    # 更强的角色（设计、实测等）。
     role, basis = source_role(candidate)
     return {"source": "ocr_text" if candidate["source"] == "ocr" else "native_text",
             "content_revision": candidate["content_revision"], "candidate_id": candidate["candidate_id"],
             "segment_ids": candidate["segment_ids"], "text": candidate["text"], "scope": "text",
-            # source_role/value_kind are intentionally absent until platform
-            # provenance or wording verification supplies a real receipt.
+            # 在平台来源信息或文本核验提供真实回执前，
+            # 有意不填写 source_role/value_kind。
             "attributes": {"source_role": {"status": "supported", "value": role, "basis": basis}}
                           if role else {}}
 
@@ -147,7 +147,7 @@ def parse_time(value: str | None) -> datetime | None:
 
 
 def fact_identity(fact: dict) -> str:
-    """Retain equal values for different samples, kinds, units and occurrences."""
+    """不同样本、类型、单位和出现项即使数值相等也应保留。"""
     return json.dumps({key: fact.get(key) for key in (
         "candidate_id", "value", "unit", "value_kind", "dimensions", "occurrence_id", "segment_ids")},
         sort_keys=True, ensure_ascii=False, default=str)
@@ -241,7 +241,7 @@ class ReliableFieldExecutor:
                                 "content_revision": str(revision),
                             }
             profile = deepcopy(run.extraction_profile or {})
-        # The above session has closed before image I/O or the model request.
+        # 在图像 I/O 或模型请求前，上述会话已关闭。
         if "range_plan" not in cp:
             shards = plan_rule_ranges(pages, rule.semantic_contract)
             if not shards:
@@ -302,7 +302,7 @@ class ReliableFieldExecutor:
                              if str(item.get("candidate_id")) in ids]
             else:
                 proposals = []
-            # Fetch all children by stable IDs, including those outside the normal page.
+            # 按稳定 ID 获取所有子项，包括正常页面之外的子项。
             if not proposals:
                 async with self.sessions() as db:
                     rows = (await db.execute(select(ParseCandidate).where(
@@ -324,8 +324,8 @@ class ReliableFieldExecutor:
             registry[eid] = native_receipt(proposal)
             refs = []
             evidence_ids = [eid]
-            # Table/OCR evidence always retains its original image.  Absence
-            # of a renderer becomes an explicit unresolved object.
+            # 表格和 OCR 证据始终保留原始图像。缺少渲染器时，
+            # 应生成明确的未解决对象。
             if proposal["source"] == "ocr" or proposal["table"]:
                 if self.image_provider is None:
                     cp["unresolved_ids"] = [proposal["candidate_id"]]
@@ -418,11 +418,10 @@ class ReliableFieldExecutor:
         return QuantumOutcome("yielded", cp)
 
     async def verify_original_image(self, token, proposal, image_ref, rule):
-        """Run a separately accounted transcription call and verify its proposals.
+        """运行单独计费的转录调用，并核验其建议。
 
-        P10 checks attributes against the observed transcription. Different OCR
-        text remains a publication blocker; this routine never edits a pinned
-        revision or accepts a model-supplied verification receipt.
+        P10 根据观测到的转录文本检查属性。不同的 OCR 文本仍会阻断发布；
+        本方法不会编辑已绑定修订，也不会接受模型提供的核验回执。
         """
         candidate = CandidateInput(proposal["candidate_id"], model_candidate_payload({
                                    **proposal, "stage": "original_image_transcription",
@@ -572,7 +571,7 @@ class ReliableFieldExecutor:
                 "coverage_complete": cp.get("source_coverage_complete") is True} for item in ranges]}
         completion = complete_field(rule, envelope, [candidate_payload(row, job.revision_id) for row in candidates], facts)
         cp.update(facts=facts, semantic_result=completion)
-        # Writer changes must become the exact checkpoint passed to Scheduler.
+        # 写入方的变更必须成为传给 Scheduler 的确切检查点。
         outcome.checkpoint = cp
         field = await db.scalar(select(ExtractedFieldModel).where(ExtractedFieldModel.parse_run_id == job.run_id,
                                                                  ExtractedFieldModel.field_key == job.field_key))
@@ -588,4 +587,3 @@ class ReliableFieldExecutor:
         field.extraction_detail = {"contract_version": "reliable-extraction-v2", "field_completion": completion,
                                   "semantic_state": completion["semantic_state"], "coverage_complete": completion["coverage_complete"],
                                   "evidence_registry": registry}
-

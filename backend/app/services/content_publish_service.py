@@ -1,7 +1,7 @@
-"""Transactional publication of Artifact content revisions.
+"""Artifact 内容修订的事务性发布。
 
-This module owns current-content publication only.  It never mutates immutable
-revision/impact/invalidation rows and does not publish an index generation.
+本模块只负责当前内容的发布。它不会修改不可变的修订、影响或失效记录，
+也不会发布索引版本。
 """
 
 from __future__ import annotations
@@ -86,10 +86,10 @@ class ContentPublishService:
             profile["source_revision_id"] = str(revision.origin_source_revision_id)
         profile["source_recompute_policy"] = "FULL"
         profile["invalidation_watermark"] = int(invalidation_watermark)
-        profile["content_invalidation_watermark"] = int(invalidation_watermark)  # legacy worker alias
+        profile["content_invalidation_watermark"] = int(invalidation_watermark)  # 旧版工作进程别名
         profile["content_cas_version"] = int(content_cas_version)
-        # Successor is idempotent by source revision + request id and always uses the
-        # old frozen profile; it never reads current rules.
+        # 后继记录按来源修订和请求 ID 保持幂等，并始终使用旧的冻结配置；
+        # 不读取当前规则。
         for candidate in (await db.execute(select(ParseRun).where(
             ParseRun.document_id == document_id,
             ParseRun.content_revision_id == revision.revision_id))).scalars().all():
@@ -103,8 +103,8 @@ class ContentPublishService:
                              status="PLANNED", cache_status="ARTIFACT_HIT")
         db.add(successor)
         await db.flush()
-        # P05 owns schema/field-row initialization.  Keep a durable event here rather
-        # than importing a worker or starting a run while holding the head lock.
+        # P05 负责数据模式和字段记录初始化。此处保留持久化事件，
+        # 不在持有头锁时导入工作进程或启动运行。
         from app.services.execution.job_repository import JobRepository
         old_jobs = list((await db.execute(select(ParseFieldJob).where(ParseFieldJob.run_id == source_run.parse_run_id))).scalars().all())
         if not old_jobs or {j.field_key for j in old_jobs} != {r["field_key"] for r in profile.get("rules") or []}:
@@ -231,12 +231,11 @@ class ContentPublishService:
         receipt: dict[str, Any], corrected_transcription: str | None = None,
         request_id: str | None = None,
     ) -> dict[str, Any]:
-        """Publish one image-verified OCR correction as a new immutable revision.
+        """将一项图像核验后的 OCR 修正发布为新的不可变修订。
 
-        The caller must provide the receipt returned by the visual verifier.  This
-        method refuses model-only proposals, guesses, or blocks from another content
-        revision, then clones the Artifact and delegates CAS/invalidation/successor
-        handling to :meth:`publish_artifact`.
+        调用方必须提供视觉核验器返回的回执。此方法拒绝只有模型支持的建议、猜测
+        以及来自其他内容修订的块，然后克隆 Artifact，并将 CAS、失效记录与后继处理
+        委托给 publish_artifact。
         """
         run = await db.get(ParseRun, UUID(str(run_id)))
         if run is None or run.contract_version != "reliable-extraction-v2" or not run.content_revision_id:
@@ -324,8 +323,8 @@ class ContentPublishService:
         target["source"] = "automatic_ocr"
         target["image_hash"] = image_hash
         target["verification_receipt"] = deepcopy(receipt)
-        # Keep the raw OCR and its image locator while making the new search text
-        # internally consistent with exact spans.  Later blocks shift by the delta.
+        # 保留原始 OCR 及图像定位器，同时让新搜索文本与精确范围保持一致。
+        # 后续块按差值移动。
         left, right = target.get("start_offset"), target.get("end_offset")
         if not isinstance(left, int) or not isinstance(right, int) or str(target_page.get("text") or "")[left + span_start:left + span_end] != raw_ocr:
             raise ContentPublicationError("OCR correction requires an exact current text span")
@@ -370,7 +369,7 @@ class ContentPublishService:
 
     async def guard_revision(self, db: AsyncSession, *, document_id: UUID, revision_id: UUID,
                              expected_invalidation_watermark: int | None = None):
-        """Acquire the head before run/job locks; keep it until result commit."""
+        """先取得头锁，再取得运行或任务锁，并持有到结果提交。"""
         head = await self._head(db, document_id)
         if head.active_content_revision_id != revision_id:
             raise ContentPublicationError("content revision is no longer active")
@@ -419,4 +418,3 @@ class ContentPublishService:
 
 
 content_publish_service = ContentPublishService()
-

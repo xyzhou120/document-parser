@@ -1,4 +1,4 @@
-"""Rule patch/import and dependency handling regressions; no network/database writes."""
+"""规则更新、导入和依赖处理的回归测试；无网络或数据库写入。"""
 
 import os
 from datetime import timedelta

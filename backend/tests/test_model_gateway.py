@@ -405,8 +405,8 @@ def test_unset_hard_limit_does_not_stop_normal_calls():
 def test_explicit_admin_hard_limit_blocks_before_model_without_silent_not_found():
     async def run():
         gw, client, ledger = gateway([response([decision("a")]), response([decision("a")])])
-        # Reserve 120 actual tokens on the first call; second reservation is 6500,
-        # so a 6000-token explicit ceiling must wait before transport.
+        # 首次调用预留 120 个实际 token，第二次预留 6500 个，
+        # 因此显式的 6000 token 上限必须在传输前等待。
         first = await gw.execute(replace(request("a"), hard_limit_tokens=7000))
         second = await gw.execute(replace(request("a"), dispatch_key="d2", hard_limit_tokens=6000))
         assert first.state == "succeeded"
@@ -486,7 +486,7 @@ async def test_postgres_hard_limit_serializes_cross_field_claims_and_late_usage(
                for index, job_id in enumerate(jobs)]
     for record in records:
         await ledger.reserve(record)
-    # The frozen profile wins over a caller trying to raise its local ceiling.
+    # 冻结配置优先于调用方试图提高的本地上限。
     claims = await asyncio.gather(*(ledger.claim(record.call_id, hard_limit_tokens=9999)
                                     for record in records), return_exceptions=True)
     assert sum(result is True for result in claims) == 1

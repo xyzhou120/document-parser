@@ -294,8 +294,7 @@ class RuleRepository:
                 continue
 
             try:
-                # Validate each record independently so one malformed row is reported
-                # while the remaining import continues.
+                # 独立校验每条记录，使一条格式错误记录被报告时其余导入仍可继续。
                 from app.schemas.rules import RulePayload
 
                 validated = RulePayload(**{**payload, "checklist_type": checklist_type})
@@ -338,17 +337,15 @@ class RuleRepository:
     ) -> list[RuleSpec]:
         """取所选清单的启用规则；明确选择时不跨清单回退。"""
         if checklist_type:
-            # Rule edits may be performed by another API process while Celery
-            # workers keep running.  Do not serve process-local specs here:
-            # every parse must observe the current database state.
+            # Celery 工作进程运行期间，其他 API 进程可能修改规则。
+            # 此处不能使用进程本地规则定义：每次解析都必须读取当前数据库状态。
             checklist = await self.get_checklist_type(db, checklist_type)
             if checklist is None or not checklist.is_active:
                 return []
 
-            # Once a bundle is explicitly published, new parse runs consume its
-            # immutable snapshot.  CRUD edits remain the draft source and are
-            # used until the first publication.  Keep this lookup local to avoid
-            # an import cycle with release_service's draft capture helper.
+            # 规则包显式发布后，新的解析运行使用其不可变快照。
+            # 首次发布前，CRUD 编辑仍是草稿来源。将此查询保留在本地，
+            # 避免与 release_service 的草稿捕获辅助函数形成循环导入。
             from app.models.releases import ChecklistReleaseHead, RuleBundle
             head = await db.get(ChecklistReleaseHead, checklist_type)
             if head is not None and getattr(head, "bundle_id", None):

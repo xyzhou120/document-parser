@@ -66,8 +66,8 @@ class ParseRun(Base):
     document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
     parent_parse_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), index=True)
     artifact_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), index=True)
-    # Reliable extraction v2 pins every new run to an immutable content snapshot.
-    # These remain nullable for legacy ParseRun rows and compatibility readers.
+    # 可靠提取 v2 将每次新运行绑定到不可变内容快照。
+    # 这些字段对旧版 ParseRun 记录和兼容读取器保持可空。
     content_revision_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("content_revisions.revision_id"), index=True)
     contract_version: Mapped[Optional[str]] = mapped_column(String(80), index=True)
     execution_generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
@@ -121,7 +121,7 @@ class ExtractedFieldModel(Base):
     field_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # 提取方法
-    extraction_method: Mapped[str] = mapped_column(String(50))  # keyword, llm, vision, etc.
+    extraction_method: Mapped[str] = mapped_column(String(50))  # keyword、llm、vision 等
     confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # 证据（JSON格式存储EvidenceRef）
@@ -155,8 +155,8 @@ class ParseLog(Base):
     parse_run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
 
     # 日志信息
-    level: Mapped[str] = mapped_column(String(20))  # DEBUG, INFO, WARNING, ERROR
-    stage: Mapped[str] = mapped_column(String(50))  # pdf_parse, ocr, extraction, etc.
+    level: Mapped[str] = mapped_column(String(20))  # DEBUG、INFO、WARNING、ERROR
+    stage: Mapped[str] = mapped_column(String(50))  # pdf_parse、ocr、extraction 等
     message: Mapped[str] = mapped_column(Text)
     details: Mapped[Optional[dict]] = mapped_column(JSON)
 

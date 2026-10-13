@@ -1,7 +1,7 @@
-"""Plan C6 (2026-10-10): downstream availability of checklist-agent facts.
+"""方案 C6（2026-10-10）：清单代理事实的下游可用性。
 
-partial_candidates, not_found and incomplete never reach downstream; partiality is judged per
-field, so a failure recorded for another field of the same run does not hide a finished field.
+partial_candidates、not_found 和 incomplete 不会进入下游；部分完成状态按字段判断，
+因此同次运行其他字段的失败不会隐藏已完成字段。
 """
 
 from types import SimpleNamespace

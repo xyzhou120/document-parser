@@ -1,4 +1,4 @@
-"""Tests of evidence/budget boundaries, without claiming model accuracy."""
+"""测试证据和预算边界，不宣称模型准确率。"""
 
 import asyncio
 import json
@@ -209,7 +209,7 @@ def test_page_budget_prevents_new_page_views():
 def test_remote_error_is_unresolved_never_fallback():
     (fields, details, runtime), _, _ = run([RuntimeError("unavailable")])
     assert not fields
-    # Plan B: an unfinished search after a remote error is "incomplete", never a fallback value.
+    # 方案 B：远程错误后的未完成搜索应标记为 incomplete，不能使用回退值。
     assert details[0]["validation_status"] == "incomplete"
     assert "model_error:RuntimeError" in details[0]["incomplete_reasons"]
     assert runtime["status"] == "UNRESOLVED"
@@ -430,7 +430,7 @@ def test_empty_finish_without_visual_evidence_requires_another_tool_turn():
     )
     assert len(client.messages) == 3
     assert seen == [(2, None)]
-    # Plan B: a finished search that found nothing is "not_found", not "unresolved".
+    # 方案 B：搜索结束且未找到值时为 not_found，不是 unresolved。
     assert details[0]["validation_status"] == "not_found"
     assert details[0]["visited_page_count"] == 1
     assert runtime["status"] == "UNRESOLVED"
@@ -443,7 +443,7 @@ def test_repeated_empty_finishes_stop_at_budget_and_never_mean_absent():
     (_, details, runtime), seen, client = run([{"fields": []}] * 2, limits={"max_rounds": 2})
     assert len(client.messages) == 2
     assert not seen
-    # Plan B: repeated empty finishes without visual evidence never mean "absent".
+    # 方案 B：没有视觉证据时，多次空结果也不能代表“不存在”。
     assert details[0]["validation_status"] == "incomplete"
     assert details[0]["incomplete_reasons"] == ["no_finish_within_rounds"]
     assert runtime["status"] == "UNRESOLVED"
@@ -535,7 +535,7 @@ def test_native_shortlist_is_navigation_without_candidate_evidence():
     assert hits[0]["page_number"] == 2
     assert "evidence_id" not in hits[0]
     assert "value" not in hits[0]
-    assert hits[0]["matched_hints"] == []  # numbers interrupt the exact phrase
+    assert hits[0]["matched_hints"] == []  # 数字打断了精确短语。
 
 
 def test_tool_action_limit_is_independent_of_field_batch_size():

@@ -1,4 +1,4 @@
-"""Batch state and export helpers shared by the API and offline verification."""
+"""供 API 和离线验证共用的批量状态与导出辅助函数。"""
 
 import csv
 import io
@@ -43,11 +43,10 @@ def batch_summary(items, runs):
 
 
 class BatchUploadSession:
-    """Attach original document/run before the uploader's transaction commits.
+    """在上传方事务提交前关联原始文档和运行记录。
 
-    The existing upload API commits internally. Observing its additions allows
-    the batch item and document to commit atomically; a concurrent retry waits
-    on the item row lock and then returns the existing identifiers.
+        现有上传 API 在内部提交。观察其新增记录可让批次项目和文档原子提交；
+        并发重试等待项目行锁，然后返回已有标识。
     """
 
     def __init__(self, db, item):
@@ -91,7 +90,7 @@ def csv_safe(value):
         if isinstance(value, dict | list)
         else str(value if value is not None else "")
     )
-    # Prevent a downstream spreadsheet from executing an untrusted PDF value.
+    # 防止下游表格执行不可信的 PDF 值。
     return "'" + text if text.lstrip().startswith(("=", "+", "-", "@")) else text
 
 

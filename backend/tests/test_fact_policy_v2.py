@@ -1,4 +1,4 @@
-"""P12 reliable views preserve v1 and require P10 complete attribute support."""
+"""P12 可靠视图保留 v1，并要求 P10 完整支持属性。"""
 
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta

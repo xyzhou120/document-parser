@@ -1,4 +1,4 @@
-"""Version-pinned document assistant indexing and retrieval services."""
+"""绑定版本的文档助手索引与检索服务。"""
 
 from app.services.assistant.index_service import IndexBuildResult, IndexConfig, IndexService
 from app.services.assistant.qa_service import (

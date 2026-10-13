@@ -22,7 +22,7 @@ RUN poetry config virtualenvs.create false \
 # 复制应用代码
 COPY backend/app ./app
 COPY backend/migrations ./migrations
-# Runtime local.yaml is mounted by Compose; never bake local credentials into images.
+# 运行时 local.yaml 由 Compose 挂载，不能把本地凭据打包进镜像。
 COPY config/default.yaml config/development.yaml /app/config/
 
 # 暴露端口

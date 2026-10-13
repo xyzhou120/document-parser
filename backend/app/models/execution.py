@@ -1,8 +1,7 @@
-"""Durable execution ledger for reliable extraction v2.
+"""可靠提取 v2 的持久化执行账本。
 
-The tables in this module are the recovery truth for the new scheduler.  They
-intentionally keep checkpoints and attempts append-friendly; workers use the
-fence and execution generation columns to reject stale commits.
+本模块的表是新调度器的恢复依据。检查点和尝试记录有意保持便于追加；
+工作进程使用栅栏和执行版本列拒绝过期提交。
 """
 
 import uuid

@@ -1,4 +1,4 @@
-"""At-least-once content worker failure authority, independent of broker/DB."""
+"""至少一次内容工作进程的失败权限，不依赖消息代理或数据库。"""
 
 from datetime import datetime, timedelta
 from types import SimpleNamespace

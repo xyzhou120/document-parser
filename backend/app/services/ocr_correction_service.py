@@ -1,4 +1,4 @@
-"""OCR image-verification candidates.  Publication is intentionally P11-owned."""
+"""OCR 图像核验候选项；发布明确由 P11 负责。"""
 
 from __future__ import annotations
 
@@ -69,8 +69,8 @@ class OCRCorrectionService:
             and verification.get("transcription") == corrected
             and value_support.get("evidence_ids") and value_support.get("basis")
         )
-        # No visual proof means no guessed correction.  An unreadable image is a
-        # durable review blocker, never a not-found or silently corrected value.
+        # 没有视觉证据就不能猜测修正。不可读图像是持久化的复核阻断项，
+        # 不能当作未找到，也不能静默修正值。
         if not verified:
             corrected = None
             status = "unreadable" if image_verification.lower() in {"unreadable", "failed"} else "proposed"
@@ -83,7 +83,7 @@ class OCRCorrectionService:
                                       deepcopy(dict(image_ref)) if image_ref else None, deepcopy(dict(context or {})), status, reason, revision_id, receipt or None)
 
     def merge_candidates(self, candidates: list[OCRCorrectionCandidate]) -> list[OCRCorrectionCandidate]:
-        """Merge same-stage candidates without inventing a winner on conflict."""
+        """合并同阶段候选项，冲突时不伪造胜出项。"""
         merged: dict[str, OCRCorrectionCandidate] = {}
         for candidate in candidates:
             key = f"{candidate.revision_id}:{(candidate.image_ref or {}).get('image_hash')}:{candidate.page_number}:{candidate.region_id}:{candidate.raw_ocr}:{candidate.bbox}"
@@ -115,4 +115,3 @@ class OCRCorrectionService:
 
 
 ocr_correction_service = OCRCorrectionService()
-

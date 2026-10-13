@@ -1,4 +1,4 @@
-"""Integration seams for checklist-agent snapshot, persistence, and extraction wiring."""
+"""清单代理快照、持久化和提取连接的集成测试。"""
 
 import asyncio
 from pathlib import Path

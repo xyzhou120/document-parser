@@ -9,7 +9,7 @@ services:
       dockerfile: backend/Dockerfile
     container_name: doc-parser-backend-prod
     environment:
-      # Environment overrides supplement config/local.yaml, mounted below.
+      # 环境变量覆盖项补充下方挂载的 config/local.yaml。
       DATABASE_HOST: ${DATABASE_HOST:-}
       DATABASE_PORT: ${DATABASE_PORT:-}
       DATABASE_NAME: ${DATABASE_NAME:-}
@@ -29,7 +29,7 @@ services:
       MINIO_SECURE: ${MINIO_SECURE:-}
 
       # Celery配置
-      # Optional overrides; leave unset to use celery settings from config/local.yaml.
+      # 可选覆盖项；未设置时使用 config/local.yaml 中的 Celery 配置。
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-}
 
@@ -54,7 +54,7 @@ services:
       timeout: 10s
       retries: 3
 
-  # Celery Worker
+  # Celery 工作进程
   celery-worker:
     build:
       context: ..

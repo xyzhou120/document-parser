@@ -80,7 +80,7 @@ def test_same_identity_conflicts_preserved_but_other_objects_are_not_conflicts()
     assert len(facts) == 3
     for fact in facts:
         assert ("SAME_IDENTITY_VALUE_CONFLICT" in codes(fact)) == (fact.dimensions["face"] == "A")
-        assert fact.available_for_downstream is True  # Downstream may assess conflicts itself.
+        assert fact.available_for_downstream is True  # 下游可以自行评估冲突。
 
 
 def test_agent_legacy_zero_is_unknown_and_high_scores_cannot_hide_risks():
