@@ -53,6 +53,12 @@ class JobRepository:
             if set(wanted) != set(existing) or any(existing[key].rule_hash != value or existing[key].revision_id != revision_id for key, value in wanted.items()):
                 raise ValueError("existing run job snapshot cannot be changed; create a child run")
             return list(existing.values())
+        profile = dict(run.extraction_profile or {})
+        if profile.get("extraction_strategy") == "page_batch_v1":
+            # One frozen field owns page traversal. Its guarded publication
+            # writes the shared page result to every field in the same run.
+            profile["coordinator_field_key"] = min(str(spec["field_key"]) for spec in fields)
+            run.extraction_profile = profile
         result = list(existing.values())
         for spec in fields:
             key = str(spec["field_key"])
@@ -89,7 +95,11 @@ class JobRepository:
             ParseFieldJob.execution_state.in_(["queued", "yielded"]),
             or_(ParseFieldJob.next_attempt_at.is_(None), ParseFieldJob.next_attempt_at <= now),
         )
-        runnable = select(ParseFieldJob.job_id).where(ParseFieldJob.run_id == ParseRun.parse_run_id, *ready).exists()
+        eligible = or_(ParseRun.extraction_profile["extraction_strategy"].as_string().is_(None),
+            ParseRun.extraction_profile["extraction_strategy"].as_string() != "page_batch_v1",
+            ParseFieldJob.field_key == ParseRun.extraction_profile["coordinator_field_key"].as_string())
+        runnable = select(ParseFieldJob.job_id).where(ParseFieldJob.run_id == ParseRun.parse_run_id,
+                                                    *ready, eligible).exists()
         runs = select(ParseRun).where(ParseRun.status.in_(ACTIVE_RUN_STATES), runnable)
         if run_id is not None:
             runs = runs.where(ParseRun.parse_run_id == run_id)
@@ -106,10 +116,15 @@ class JobRepository:
             .limit(1)
             .with_for_update(skip_locked=True)
         )
+        profile = run.extraction_profile or {}
+        if profile.get("extraction_strategy") == "page_batch_v1":
+            query = query.where(ParseFieldJob.field_key == profile["coordinator_field_key"])
         job = await self.db.scalar(query.execution_options(populate_existing=True))
         if job is None:
             return None
         run.status = "RUNNING"
+        if run.started_at is None:
+            run.started_at = now
         return Scheduler.claim(job, run, owner, now=now, lease_seconds=lease_seconds)
 
     async def requeue_due(self, *, now: datetime | None = None, limit: int = 100) -> int:
@@ -167,6 +182,9 @@ class JobRepository:
                 raise ValueError("done quantum must include semantic_state")
             await self.transition(token, "finish", semantic_state=semantic, checkpoint=outcome.checkpoint)
         elif state == "failed_terminal":
+            # Failure carries durable page progress and diagnostics too. A
+            # retry must resume that checkpoint rather than repeat paid calls.
+            await self.transition(token, "checkpoint", checkpoint=outcome.checkpoint, phase="failed")
             await self.transition(token, "fail", reason=outcome.error or "quantum failed")
         else:
             raise ValueError(f"unsupported quantum outcome: {state}")
@@ -252,6 +270,26 @@ class JobRepository:
                 job.semantic_state = "unknown"
                 job.next_attempt_at = None
                 job.last_error = None
+                if (run.extraction_profile or {}).get("extraction_strategy") == "page_batch_v1":
+                    checkpoint = dict(job.checkpoint or {})
+                    # Deliberate resume grants a new bounded processing window;
+                    # successful page results and their ledger remain intact.
+                    checkpoint["page_started_at"] = datetime.utcnow().isoformat()
+                    failed_units = set(checkpoint.get("failed_units") or [])
+                    units = list(checkpoint.get("page_units") or [])
+                    if failed_units:
+                        checkpoint["page_results"] = [result for result in checkpoint.get("page_results", [])
+                            if (result.get("unit") or {}).get("unit_id") not in failed_units]
+                        checkpoint["page_index"] = min(
+                            (index for index, unit in enumerate(units) if unit.get("unit_id") in failed_units),
+                            default=int(checkpoint.get("page_index", 0)))
+                        checkpoint["failed_units"] = []
+                        generations = dict(checkpoint.get("unit_retry_generations") or {})
+                        for unit_id in failed_units:
+                            generations[unit_id] = int(generations.get(unit_id, 0)) + 1
+                        checkpoint["unit_retry_generations"] = generations
+                        checkpoint["page_retry"] = 0
+                    job.checkpoint = checkpoint
             if action == "resume" and job.execution_state == "queued":
                 await self.enqueue_outbox(kind="field_job_wakeup", aggregate_id=job.job_id,
                                           dedupe_key=f"{job.job_id}:resume:{run.execution_generation}",
@@ -267,6 +305,10 @@ class JobRepository:
         status = aggregate_run_status(run, list(jobs))
         if status != run.status and run.status not in {"PAUSED", "CANCELLED", "SUPERSEDED"}:
             run.status = status
+        if status in {"COMPLETED", "COMPLETED_WITH_REVIEW", "FAILED"} and run.completed_at is None:
+            run.completed_at = datetime.utcnow()
+            if run.started_at is not None:
+                run.duration_seconds = (run.completed_at - run.started_at).total_seconds()
         return status
 
     async def consume_run_wakeup(self, run_id: UUID, event_id: UUID, *,

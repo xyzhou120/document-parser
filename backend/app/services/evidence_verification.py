@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.services.candidate_retrieval import (
@@ -18,7 +19,9 @@ from app.services.candidate_retrieval import (
     find_units,
     normalize,
     normalize_unit,
-    value_in_text,
+)
+from app.services.candidate_retrieval import (
+    value_in_text as _search_value_in_text,
 )
 
 TERMINAL_CANDIDATE_STATES = frozenset({"accepted", "rejected", "duplicate", "unresolved"})
@@ -32,6 +35,25 @@ KIND_TERMS = {
     "reported": ("报告值", "reported"),
     "original": ("原始", "original"),
 }
+
+
+def _evidence_text(text: Any) -> str:
+    """Keep table-cell separators while retaining existing unit/text normalization."""
+    return " ".join(normalize(part) for part in re.split(r"\s+", str(text or "")))
+
+
+def value_in_text(value: Any, text: str, numeric: bool) -> bool:
+    if not numeric:
+        return bool(_search_value_in_text(value, text, False))
+    if value is None:
+        return False
+    try:
+        wanted = Decimal(normalize(value).replace(",", ""))
+    except (InvalidOperation, ValueError):
+        return False
+    if not wanted.is_finite():
+        return False
+    return any(Decimal(match.group()) == wanted for match in NUMBER_RE.finditer(_evidence_text(text)))
 
 
 def get(value: Any, key: str, default: Any = None) -> Any:
@@ -157,7 +179,7 @@ def _assert(observed: Any, expected: Any, status: str, evidence_ids=(), basis=No
 def _kind_wording_supported(kind: str, quote: str, value: Any, numeric: bool) -> bool:
     """Use the nearest explicit type marker for the target value, not any marker in the row."""
     for clause in re.split(r"[。；;，,\n]", quote):
-        normalized = normalize(clause).lower()
+        normalized = _evidence_text(clause).lower()
         if not value_in_text(value, clause, numeric):
             continue
         spans = [match.span() for match in NUMBER_RE.finditer(normalized)
@@ -179,7 +201,7 @@ def _kind_wording_supported(kind: str, quote: str, value: Any, numeric: bool) ->
 
 
 def _unit_literal_supported(unit: str, text: str, value: Any, numeric: bool) -> bool:
-    normalized = normalize(text)
+    normalized = _evidence_text(text)
     if not numeric:
         return normalize_unit(unit) in [normalize_unit(v) for v in find_units(normalized, (unit,))]
     numbers = list(NUMBER_RE.finditer(normalized))

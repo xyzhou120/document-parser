@@ -159,3 +159,18 @@ def test_existing_local_pdf_is_hash_checked_before_render(source_setup):
     with pytest.raises(ValueError, match="hash"):
         asyncio.run(images.get(1))
     assert not storage.uploads
+
+
+def test_reused_renderer_returns_receipt_for_requested_crop(source_setup):
+    workspace, storage, document, pages = source_setup
+    images = EvidenceImages(document, pages, workspace)
+    first_clip, second_clip = [0, 0, 100, 100], [20, 20, 180, 200]
+    first, first_receipt = asyncio.run(images.get_with_receipt(1, first_clip))
+    second, second_receipt = asyncio.run(images.get_with_receipt(1, second_clip))
+    repeated, repeated_receipt = asyncio.run(images.get_with_receipt(1, first_clip))
+    assert repeated == first
+    assert repeated_receipt["object_key"] == first_receipt["object_key"]
+    assert repeated_receipt["bbox"] == first_clip
+    assert second_receipt["bbox"] == second_clip
+    assert second_receipt["image_hash"] == hashlib.sha256(second).hexdigest()
+    assert storage.downloads.count(document.file_path) == 1

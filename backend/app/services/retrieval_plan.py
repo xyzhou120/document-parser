@@ -303,30 +303,81 @@ def _range_candidates(field_spec: FieldSpec, page: dict, strategy: str, *,
     compiled = [re.compile(pattern) for pattern in patterns]
     candidates = []
     segments = build_segments(page)
+    raw_blocks = list(page.get("text_blocks") or [])
+    barriers = {i for i, block in enumerate(raw_blocks)
+                if block.get("source") not in (None, "native") or block.get("label") == "table"}
+
+    def source_positions(segment: Any) -> list[int]:
+        sid = str(segment.segment_id)
+        return [i for i, block in enumerate(raw_blocks)
+                if (block.get("block_id") or block.get("segment_id")) and
+                (sid == "block:" + str(block.get("block_id") or block.get("segment_id"))
+                 or sid.startswith("block:" + str(block.get("block_id") or block.get("segment_id")) + ":")
+                 or sid.endswith(":" + str(block.get("block_id") or block.get("segment_id"))))]
+    windows: list[tuple[int, list[tuple[Any, int, str]]]] = []
+    pending: list[tuple[Any, int, str]] = []
+    pending_index = 0
+
+    def flush_window() -> None:
+        nonlocal pending
+        if pending:
+            windows.append((pending_index, pending))
+            pending = []
+
     for i, segment in enumerate(segments):
         if strategy.startswith("formula") and not any(p.search(segment.text) for p in compiled):
             continue
         if strategy.startswith("table") and not (segment.table or any(p.search(segment.text) for p in compiled)):
             continue
-        # Every byte of a long block is scheduled. The retained context is never itself
-        # presented as a value window, so it cannot turn a neighbouring number into evidence.
+        packable = (strategy.startswith("complete_scope") and segment.source == "native"
+                    and not segment.table and segment.original_source != "table"
+                    and len(segment.text) <= window_chars)
+        if packable:
+            if pending:
+                previous = pending[-1][0]
+                previous_positions, positions = source_positions(previous), source_positions(segment)
+                crosses_barrier = bool(barriers) and (not previous_positions or not positions or any(
+                    min(previous_positions) < barrier < max(positions) for barrier in barriers))
+                length = sum(len(part) for _, _, part in pending) + len(pending) + len(segment.text)
+                if (previous.page_number != segment.page_number
+                        or previous.original_source != segment.original_source or crosses_barrier or length > window_chars):
+                    flush_window()
+            if not pending:
+                pending_index = i
+            pending.append((segment, 0, segment.text))
+            continue
+        flush_window()
+        # Long source spans retain the original independently recoverable windows. Every
+        # original character is retained, while OCR and table identities remain separate.
         for offset in range(0, len(segment.text), window_chars):
             text = segment.text[offset:offset + window_chars]
-            context = " | ".join(filter(None, [segment.context_hint,
-                *(s.text for s in segments[max(0, i - 2):i])]))
-            hints = ["complete_scope_check"] if strategy.startswith("complete_scope") else [strategy.split("-v")[0]]
-            if segment.source == "ocr":
-                hints.append("ocr")
-            if segment.table:
-                hints.append("table")
-            candidate = Candidate(field_spec.field_key, segment.page_number, text,
-                [label for label in field_spec.labels if label in normalize(text)],
-                find_numbers(normalize(text)), find_units(normalize(text), field_spec.extra_units),
-                segment.source, segment.bbox, segment.table, "weak", hints,
-                [f"{segment.segment_id}@{offset}:{offset + len(text)}"], context)
-            candidate.stable_key = stable_candidate_key(revision, rule_hash, candidate, strategy)
-            candidate.original_source = segment.original_source
-            candidates.append(candidate)
+            windows.append((i, [(segment, offset, text)]))
+    flush_window()
+    for index, parts in windows:
+        segment = parts[0][0]
+        text = "\n".join(part for _, _, part in parts)
+        context = " | ".join(filter(None, [segment.context_hint,
+            *(s.text for s in segments[max(0, index - 2):index])]))
+        hints = ["complete_scope_check"] if strategy.startswith("complete_scope") else [strategy.split("-v")[0]]
+        if len(parts) > 1:
+            hints.append("adjacent_native_segments")
+        if segment.source == "ocr":
+            hints.append("ocr")
+        if segment.table:
+            hints.append("table")
+        boxes = [part.bbox for part, _, _ in parts if part.bbox]
+        bbox = None if not boxes or len(boxes) != len(parts) else [
+            min(box[0] for box in boxes), min(box[1] for box in boxes),
+            max(box[2] for box in boxes), max(box[3] for box in boxes)]
+        candidate = Candidate(field_spec.field_key, segment.page_number, text,
+            [label for label in field_spec.labels if label in normalize(text)],
+            find_numbers("\n".join(normalize(part) for _, _, part in parts)),
+            find_units(normalize(text), field_spec.extra_units),
+            segment.source, bbox, segment.table, "weak", hints,
+            [f"{part.segment_id}@{offset}:{offset + len(fragment)}" for part, offset, fragment in parts], context)
+        candidate.stable_key = stable_candidate_key(revision, rule_hash, candidate, strategy)
+        candidate.original_source = segment.original_source
+        candidates.append(candidate)
     return candidates
 
 

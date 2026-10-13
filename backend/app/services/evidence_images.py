@@ -28,6 +28,12 @@ class EvidenceImages:
                            else getattr(settings.agent, "region_render_dpi", 180))
 
     async def get(self, page_number: int, bbox: list[float] | None = None) -> bytes:
+        data, _ = await self.get_with_receipt(page_number, bbox)
+        return data
+
+    async def get_with_receipt(self, page_number: int,
+                               bbox: list[float] | None = None) -> tuple[bytes, dict]:
+        """Return the receipt for this exact crop, even when the renderer is reused."""
         page = self.pages.get(page_number)
         if page is None:
             raise ValueError("页面不存在")
@@ -86,7 +92,7 @@ class EvidenceImages:
             "cache_integrity": "REGENERATED" if invalid_cache else "HASH_CHECKED",
             "source_review_status": "UNVERIFIED",
         }
-        return data
+        return data, self.receipts[key]
 
     def _render(self, page_number: int, clip: list[float], dpi: int) -> bytes:
         with pymupdf.open(self.pdf_path) as doc:

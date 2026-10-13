@@ -124,6 +124,7 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
         from pathlib import Path
         from tempfile import TemporaryDirectory
 
+        import httpx
         import redis.asyncio as redis
         from openai import AsyncOpenAI
 
@@ -162,18 +163,28 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
             config = settings.models["vision_llm"]
             client = AsyncOpenAI(base_url=LLMStrategy._normalize_base(model.get("base_url", config.base_url)),
                                  api_key=config.api_key or "dummy", timeout=model.get("timeout", config.timeout),
-                                 max_retries=0)
+                                 max_retries=0,
+                                 http_client=httpx.AsyncClient(trust_env=model.get("trust_env", config.trust_env)))
             circuit = ServiceCircuit(RedisCircuitStore(redis_client))
             ledger = CallLedger(sessions)
             gateway = ModelGateway(client, ledger, circuit, GatewayPolicy(**profile.get("gateway_policy", {})))
             with TemporaryDirectory(prefix="reliable-evidence-") as directory:
-                async def images(document, pages, candidate):
-                    renderer = EvidenceImages(document, pages, Path(directory))
-                    data = await renderer.get(candidate["page_number"], candidate.get("bbox"))
-                    receipt = next(iter(renderer.receipts.values()))
-                    return data, receipt
+                renderers = {}
 
-                executor = ReliableFieldExecutor(sessions, gateway,
+                async def images(document, pages, candidate):
+                    key = (str(document.document_id), document.file_hash)
+                    if key not in renderers:
+                        workspace = Path(directory) / str(document.document_id)
+                        workspace.mkdir()
+                        renderers[key] = EvidenceImages(document, pages, workspace)
+                    return await renderers[key].get_with_receipt(
+                        candidate["page_number"], candidate.get("bbox"))
+
+                executor_class = ReliableFieldExecutor
+                if profile.get("extraction_strategy") == "page_batch_v1":
+                    from app.services.reliable_page_executor import ReliablePageExecutor
+                    executor_class = ReliablePageExecutor
+                executor = executor_class(sessions, gateway,
                     ReliableFieldExecutorConfig(provider_key=service_key("model", model.get("base_url", config.base_url),
                         model.get("model_name", config.model_name), model.get("model_version", config.model_version)),
                         model=model.get("model_name", config.model_name),

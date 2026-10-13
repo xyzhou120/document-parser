@@ -42,7 +42,7 @@ class FakeProvider:
 
 
 async def make_run(sessions, count=1, *, present=True, covered=True, text_override=None, rules_override=None,
-                   source="native"):
+                   source="native", extraction_strategy="field_retrieval_v2"):
     text = text_override or ("报告正文 瓦斯压力 1.23MPa 实测" if present else "目录与说明。本附件无相关数据。")
     if present and "报告正文" not in text:
         text = "报告正文 " + text
@@ -66,7 +66,8 @@ async def make_run(sessions, count=1, *, present=True, covered=True, text_overri
         rules = rules_override or [RuleSpec(field_key=f"pressure{i}", field_name_cn="瓦斯压力", data_type="float", unit="MPa",
                           value_kind="measured") for i in range(count)]
         try:
-            run = await ReliableExtractionService().start(db, document_id, rules=rules)
+            run = await ReliableExtractionService().start(db, document_id, rules=rules,
+                                                         extraction_strategy=extraction_strategy)
         except ContentPreparationRequired as exc:
             return exc
         return run.parse_run_id
@@ -95,7 +96,8 @@ async def test_real_executor_full_range_closes_all_rules(sessions, rule_count):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("second_value", ["2.34", "1.23"])
-async def test_multiple_objects_in_one_candidate_preserve_both_facts_and_receipts(sessions, second_value):
+@pytest.mark.parametrize("parent_evidence", [False, True])
+async def test_multiple_objects_in_one_candidate_preserve_both_facts_and_receipts(sessions, second_value, parent_evidence):
     from sqlalchemy import select
 
     from app.models.database import ExtractedFieldModel
@@ -110,7 +112,12 @@ async def test_multiple_objects_in_one_candidate_preserve_both_facts_and_receipt
                           "source_role": item.get("source_role_hint"), "dimensions": {"sample": identity},
                           "evidence_ids": item["evidence_ids"]}
                          for value, identity in [("1.23", "样品A"), (second_value, "样品B")]]
-                decisions.append({"candidate_id": item["candidate_id"], "judgement": "accepted", "facts": facts})
+                decision = {"candidate_id": item["candidate_id"], "judgement": "accepted", "facts": facts}
+                if parent_evidence:
+                    for fact in facts:
+                        fact.pop("evidence_ids")
+                    decision["evidence_ids"] = item["evidence_ids"]
+                decisions.append(decision)
             return {"choices": [{"finish_reason": "stop", "message": {"content": json.dumps({"decisions": decisions})}}],
                     "usage": {"prompt_tokens": 40, "completion_tokens": 20, "total_tokens": 60}}
 
@@ -167,11 +174,18 @@ async def test_present_candidate_uses_gateway_and_validated_writer(sessions):
 
 @pytest.mark.asyncio
 async def test_length_response_splits_candidates_and_finishes_without_manual_resume(sessions):
+    from sqlalchemy import select
+
+    from app.models.execution import ParseCandidate, ParseFieldJob
+
     class LengthProvider(FakeProvider):
+        split_requests = 0
+
         async def create(self, **kwargs):
             prompt = json.loads(kwargs["messages"][-1]["content"][0]["text"])
             if len(prompt["candidates"]) > 1:
                 self.calls += 1
+                self.split_requests += 1
                 return {"choices": [{"finish_reason": "length", "message": {"content": '{"decisions":['}}],
                         "usage": {"prompt_tokens": 40, "completion_tokens": 20, "total_tokens": 60}}
             return await super().create(**kwargs)
@@ -189,6 +203,18 @@ async def test_length_response_splits_candidates_and_finishes_without_manual_res
         if result["status"] in {"COMPLETED", "FAILED"}:
             break
     assert result["status"] == "COMPLETED"
+    assert provider.split_requests > 0
+    async with sessions() as db:
+        candidates = list((await db.execute(select(ParseCandidate).join(
+            ParseFieldJob, ParseFieldJob.job_id == ParseCandidate.job_id).where(
+                ParseFieldJob.run_id == run_id))).scalars().all())
+    assert len(candidates) > 2
+    assert all(candidate.state in {"accepted", "rejected"} for candidate in candidates)
+    accepted = [candidate for candidate in candidates if candidate.state == "accepted"]
+    assert len(accepted) > 2
+    assert all(any(receipt.get("attributes", {}).get("source_role", {}).get("value") == "report_body"
+                   for receipt in candidate.evidence.get("registry", {}).values())
+               for candidate in accepted)
 
 
 @pytest.mark.asyncio
@@ -230,6 +256,7 @@ async def test_ocr_requires_separate_visual_transcription_then_p10_receipt(sessi
             is_visual = any(item.get("stage") == "original_image_transcription" for item in prompt["candidates"])
             response = await super().create(**kwargs)
             if is_visual:
+                assert prompt["field_rule"]["field_key"] == "pressure0"
                 data = json.loads(response["choices"][0]["message"]["content"])
                 for item, proposal in zip(data["decisions"], prompt["candidates"], strict=True):
                     item["transcription"] = proposal["text"]

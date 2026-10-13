@@ -68,6 +68,7 @@ class ModelSettings(BaseSettings):
     model_version: str = "unknown"
     timeout: int = 60
     max_retries: int = 3
+    trust_env: bool = True
     route: str | None = None
     dimensions: int | None = None
 
@@ -160,6 +161,11 @@ class AgentSettings(BaseSettings):
     # Plan C: "retrieval" (deterministic candidates + verification) or "legacy" (tool loop).
     # Default stays "legacy" until the A/B gate (docs section 10.4) is passed and confirmed.
     agent_mode: str = "legacy"
+    # New reliable runs share page understanding across all frozen fields.
+    reliable_strategy: str = "page_batch_v1"
+    reliable_max_seconds: int = 300
+    reliable_token_limit: int = 400000
+    page_batch_chars: int = 6000
     field_token_budget: int = 16000
     max_calls_per_field: int = 3
     candidates_per_call: int = 12

@@ -30,6 +30,7 @@ from app.services.content_service import ContentService
 from app.services.evidence_verification import validate_candidate_decision
 from app.services.execution import LeaseToken, QuantumOutcome
 from app.services.field_completion import complete_field
+from app.services.material_provenance import build_material_provenance
 from app.services.model_gateway import CallRequest, CandidateInput, ModelGateway
 from app.services.retrieval_plan import (
     CandidateBatchTree,
@@ -176,12 +177,8 @@ class ReliableFieldExecutor:
             return cached
         pinned = await self.content.read_revision(db, revision_id)
         pages = pinned.content.pages
-        material = {}
-        for page in pages:
-            heading = str(page.get("text") or "")[:512]
-            role, basis = source_role({"text": heading})
-            if role:
-                material[str(page["page_number"])] = {"role": role, "quote": heading, "basis": basis}
+        material = {str(page_number): value for page_number, value in
+                    build_material_provenance(pages, key).items()}
         cached = {"pages": pages, "page_index": {p["page_number"]: p for p in pages},
                   "coverage_complete": pinned.content.coverage_complete, "material_provenance": material}
         _REVISION_CACHE[key] = cached
@@ -231,6 +228,18 @@ class ReliableFieldExecutor:
                     proposal.update(block_id=source_block["block_id"], region_id=source_block.get("region_id"),
                                     raw_ocr=raw,
                                     span_start=span_start, span_end=span_end)
+                    if not proposal.get("material_provenance"):
+                        # Splitting one source block into bounded windows must
+                        # not discard its explicit material heading. Bind this
+                        # platform observation to the original block; the model
+                        # still has to propose a matching, verified source role.
+                        role, basis = source_role({"text": block_text})
+                        if role and basis:
+                            proposal["material_provenance"] = {
+                                "role": role, "quote": basis.split(":", 1)[-1],
+                                "block_id": source_block["block_id"],
+                                "content_revision": str(revision),
+                            }
             profile = deepcopy(run.extraction_profile or {})
         # The above session has closed before image I/O or the model request.
         if "range_plan" not in cp:
@@ -415,7 +424,10 @@ class ReliableFieldExecutor:
         text remains a publication blocker; this routine never edits a pinned
         revision or accepts a model-supplied verification receipt.
         """
-        candidate = CandidateInput(proposal["candidate_id"], model_candidate_payload({**proposal, "stage": "original_image_transcription"}),
+        candidate = CandidateInput(proposal["candidate_id"], model_candidate_payload({
+                                   **proposal, "stage": "original_image_transcription",
+                                   "rule": rule.semantic_snapshot(),
+                                   "source_role_hint": source_role(proposal)[0]}),
                                    (image_ref,), "ocr")
         response = await self.gateway.execute(CallRequest(job_id=token.job_id, fence=token.fence_token,
             provider_key=self.config.provider_key,
@@ -504,7 +516,8 @@ class ReliableFieldExecutor:
             nested = decision.get("facts") if isinstance(decision, dict) else None
             if isinstance(nested, list) and nested:
                 decisions.extend([{**item, "candidate_id": item.get("candidate_id") or decision.get("candidate_id"),
-                                   "judgement": item.get("judgement", decision.get("judgement"))}
+                                   "judgement": item.get("judgement", decision.get("judgement")),
+                                   "evidence_ids": item.get("evidence_ids") or decision.get("evidence_ids", [])}
                                   for item in nested if isinstance(item, dict)])
             else:
                 decisions.append(decision)

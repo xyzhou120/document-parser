@@ -59,6 +59,7 @@ def rule_snapshot(rules: list[RuleSpec], checklist_type: str | None,
                 "model_version": settings.models["vision_llm"].model_version,
                 "base_url": settings.models["vision_llm"].base_url,
                 "timeout": settings.models["vision_llm"].timeout,
+                "trust_env": settings.models["vision_llm"].trust_env,
             }} if extraction_engine == "checklist_agent" else {})}
 
 

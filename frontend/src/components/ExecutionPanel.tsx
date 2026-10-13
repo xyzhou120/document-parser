@@ -170,6 +170,10 @@ export default function ExecutionPanel({ runId, fields, onChange }: {
       <div className="execution-summary">
         <span>配置规则 {data.total_fields}</span><span>完成提取 {data.counts['semantic:completed'] || 0}</span>
         <span>范围内未找到 {data.counts['semantic:not_found'] || 0}</span><span>待人工核对 {data.counts['semantic:review_required'] || 0}</span>
+        {data.page_progress && <span>
+          已处理页面 {data.page_progress.processed_pages} / {data.page_progress.total_pages}
+          {' · '}内容块 {data.page_progress.processed_units} / {data.page_progress.total_units}
+        </span>}
         <span>内容执行代次 {data.execution_generation}</span>
         {!['COMPLETED', 'COMPLETED_WITH_REVIEW', 'CANCELLED', 'SUPERSEDED'].includes(data.status) && <Space wrap>
           {data.status !== 'PAUSED' && <Button size="small" icon={<PauseOutlined />} loading={busy === 'pause'} disabled={!!busy} onClick={() => void control('pause')}>暂停</Button>}
@@ -177,6 +181,13 @@ export default function ExecutionPanel({ runId, fields, onChange }: {
           <Popconfirm title="取消此运行的后续处理？" description="已保存的结果与执行记录仍会保留。" onConfirm={() => control('cancel')} okText="取消运行" cancelText="继续处理"><Button size="small" danger disabled={!!busy} loading={busy === 'cancel'}>取消运行</Button></Popconfirm>
         </Space>}
       </div>
+      {data.page_progress && <p className="execution-note" aria-live="polite">
+        {data.page_progress.failed_units > 0
+          ? `有 ${data.page_progress.failed_units} 个内容块处理失败，相关字段仍需核验。`
+          : data.automatic_complete
+            ? '页面抽取已完成。自动提取结果仍待人工核对，完成状态不代表取值已经确认正确。'
+            : '页面处理进度表示已完成抽取的范围；当前结果仍待核验。'}
+      </p>}
       {!data.automatic_complete && <p className="execution-note">内部时间片或调用额度用完后自动续排。外部额度、服务故障和人工暂停分别等待恢复；当前结果不能作为全部规则已完成。</p>}
       <Table<ExecutionJob> size="small" rowKey="job_id" pagination={false} dataSource={data.jobs} scroll={{ x: 790 }}
         locale={{ emptyText: '执行规则尚未写入账本，请刷新状态。' }} columns={[

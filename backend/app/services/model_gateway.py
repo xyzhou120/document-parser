@@ -173,6 +173,16 @@ def build_messages(request: CallRequest) -> list[dict]:
         },
         "candidates": candidates,
     }
+    if candidates and all(candidate.get("stage") == "original_image_transcription" for candidate in candidates):
+        envelope["instruction"] = (
+            "Independently transcribe the attached original image. Return exactly one JSON decisions item "
+            "per supplied candidate_id with judgement accepted and a transcription string. "
+            "Copy all visible text and preserve table row/column structure. Do not extract field facts, "
+            "infer values, or output verification receipts."
+        )
+        envelope.pop("response_examples")
+        envelope["response_schema"] = {"decisions": [{
+            "candidate_id": "COPY_SUPPLIED_ID", "judgement": "accepted", "transcription": "EXACT_IMAGE_TEXT"}]}
     rules = [candidate.get("rule") for candidate in candidates]
     if rules and rules[0] is not None and all(rule == rules[0] for rule in rules):
         envelope["field_rule"] = rules[0]
@@ -298,6 +308,12 @@ def response_parts(response):
 def validate_decisions(content, candidates, validator=None):
     """Transport validation only. P10 supplies semantic/evidence validation."""
     payload = parse_response_json(content)
+    # Accept only the known transcription wrapper, with the same ID checks.
+    if (isinstance(payload, dict) and set(payload) == {"transcription"}
+            and all(candidate.payload.get("stage") == "original_image_transcription" for candidate in candidates)
+            and isinstance(payload["transcription"], dict)
+            and set(payload["transcription"]) == {"decisions"}):
+        payload = payload["transcription"]
     if not isinstance(payload, dict) or not isinstance(payload.get("decisions"), list):
         raise ValueError("invalid decision envelope")
     expected = {c.candidate_id: c for c in candidates}

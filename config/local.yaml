@@ -7,6 +7,10 @@ environment:
   VISION_LLM_MODEL_NAME: "qwen36-27b"
   VISION_LLM_API_KEY: "sk-I4759RXObt2MTBSFstDiog"
 models:
+  text_llm:
+    trust_env: false
+  vision_llm:
+    trust_env: false
   ocr:
     model_name: paddleocr
 database:

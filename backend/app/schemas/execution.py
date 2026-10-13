@@ -29,6 +29,17 @@ class ExecutionJobResponse(BaseModel):
     last_error: str | None = None
 
 
+class PageProgress(BaseModel):
+    """Document-level progress for the page-batched extraction strategy."""
+
+    processed_units: int = 0
+    total_units: int = 0
+    processed_pages: int = 0
+    total_pages: int = 0
+    failed_units: int = 0
+    strategy: str = "page_batch_v1"
+
+
 class ExecutionResponse(BaseModel):
     contract_version: str
     run_id: UUID
@@ -39,6 +50,7 @@ class ExecutionResponse(BaseModel):
     total_fields: int
     counts: dict[str, int] = Field(default_factory=dict)
     jobs: list[ExecutionJobResponse] = Field(default_factory=list)
+    page_progress: PageProgress | None = None
     next_cursor: str | None = None
     legacy: bool = False
 

@@ -49,7 +49,8 @@ class ReliableExtractionService:
 
     async def start(self, db: AsyncSession, document_id: UUID, *, rules: list[Any],
                     revision_id: UUID | None = None, parent_run_id: UUID | None = None,
-                    document_token_hard_limit: int | None = None, request_id: str | None = None) -> ParseRun:
+                    document_token_hard_limit: int | None = None, request_id: str | None = None,
+                    extraction_strategy: str | None = None) -> ParseRun:
         """Create a new explicit v2 run with immutable rule/content/model snapshots."""
         from app.config import settings
         from app.services.content_publish_service import content_publish_service
@@ -62,8 +63,19 @@ class ReliableExtractionService:
         frozen_profile = {"contract_version": CONTRACT_VERSION, "extraction_engine": "reliable",
             "rules": [asdict(rule) for rule in rules], "model_config": {
                 "base_url": model.base_url, "model_name": model.model_name, "model_version": model.model_version,
-                "timeout": model.timeout, "thinking_enabled": settings.agent.thinking_enabled},
+                "timeout": model.timeout, "trust_env": model.trust_env,
+                "thinking_enabled": settings.agent.thinking_enabled},
             "gateway_policy": {}, "hard_limit_tokens": document_token_hard_limit}
+        strategy = extraction_strategy or settings.agent.reliable_strategy
+        if strategy not in {"page_batch_v1", "field_retrieval_v2"}:
+            raise ReliableExecutionError("unsupported reliable extraction strategy")
+        if strategy == "page_batch_v1":
+            frozen_profile.update(extraction_strategy=strategy,
+                coordinator_field_key=min((rule.field_key for rule in rules), default=""),
+                max_run_seconds=settings.agent.reliable_max_seconds,
+                page_batch_chars=settings.agent.page_batch_chars,
+                hard_limit_tokens=document_token_hard_limit if document_token_hard_limit is not None
+                                  else settings.agent.reliable_token_limit)
         frozen_profile["parent_parse_run_id"] = str(parent_run_id) if parent_run_id else None
         frozen_profile["request_id"] = request_id
         frozen_profile["document_file_hash"] = document.file_hash
@@ -73,7 +85,8 @@ class ReliableExtractionService:
                 ParseRun.extraction_profile["request_id"].as_string() == request_id).order_by(ParseRun.created_at.desc()).limit(1))
             if existing is not None:
                 previous = existing.extraction_profile or {}
-                keys = ("rules", "model_config", "hard_limit_tokens", "parent_parse_run_id", "document_file_hash")
+                keys = ("rules", "model_config", "hard_limit_tokens", "parent_parse_run_id", "document_file_hash",
+                        "extraction_strategy", "page_batch_chars", "max_run_seconds")
                 if any(previous.get(key) != frozen_profile.get(key) for key in keys):
                     raise ReliableExecutionError("request_id already binds a different frozen extraction request")
                 if revision_id is not None and existing.content_revision_id != revision_id:
@@ -172,6 +185,7 @@ class ReliableExtractionService:
                 "total_fields": 0,
                 "counts": {},
                 "jobs": [],
+                "page_progress": None,
                 "next_cursor": None,
                 "legacy": True,
             }
@@ -185,6 +199,22 @@ class ReliableExtractionService:
         status = aggregate_run_status(run, all_jobs)
         counts = Counter(job.execution_state for job in all_jobs)
         counts.update(f"semantic:{job.semantic_state}" for job in all_jobs)
+        page_progress = None
+        profile = dict(getattr(run, "extraction_profile", None) or {})
+        if profile.get("extraction_strategy") == "page_batch_v1" and all_jobs:
+            coordinator_key = str(profile.get("coordinator_field_key") or min(job.field_key for job in all_jobs))
+            coordinator = next((job for job in all_jobs if job.field_key == coordinator_key), None)
+            checkpoint = dict(coordinator.checkpoint or {}) if coordinator is not None else {}
+            raw_progress = checkpoint.get("page_progress")
+            if isinstance(raw_progress, dict):
+                page_progress = {
+                    "processed_units": max(0, int(raw_progress.get("processed_units") or 0)),
+                    "total_units": max(0, int(raw_progress.get("total_units") or 0)),
+                    "processed_pages": max(0, int(raw_progress.get("processed_pages") or 0)),
+                    "total_pages": max(0, int(raw_progress.get("total_pages") or 0)),
+                    "failed_units": max(0, int(raw_progress.get("failed_units") or 0)),
+                    "strategy": str(raw_progress.get("strategy") or "page_batch_v1"),
+                }
         return {
             "contract_version": CONTRACT_VERSION,
             "run_id": run_id,
@@ -195,6 +225,7 @@ class ReliableExtractionService:
             "total_fields": len(all_jobs),
             "counts": dict(counts),
             "jobs": rows,
+            "page_progress": page_progress,
             "next_cursor": rows[-1].field_key if len(fetched) > page_size else None,
             "legacy": False,
         }

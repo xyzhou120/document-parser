@@ -251,6 +251,14 @@ export interface ExecutionResponse {
   total_fields: number
   counts: Record<string, number>
   jobs: ExecutionJob[]
+  page_progress?: {
+    processed_units: number
+    total_units: number
+    processed_pages: number
+    total_pages: number
+    failed_units: number
+    strategy: string
+  } | null
   next_cursor?: string | null
   legacy?: boolean
 }
