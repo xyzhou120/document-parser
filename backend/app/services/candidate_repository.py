@@ -143,9 +143,10 @@ class CandidateRepository:
                        "strategy_version": shard.strategy_version, "range_key": shard.range_key,
                        "state": "pending", "scan_done": False, "quality_blockers": []}
                       for shard in missing]
-            statement = insert(ParseRangeWorkItem).values(values).on_conflict_do_nothing(
-                index_elements=["job_id", "strategy_version", "range_key"])
-            await self.db.execute(statement)
+            for offset in range(0, len(values), 1000):
+                statement = insert(ParseRangeWorkItem).values(values[offset:offset + 1000]).on_conflict_do_nothing(
+                    index_elements=["job_id", "strategy_version", "range_key"])
+                await self.db.execute(statement)
             existing = list((await self.db.execute(select(ParseRangeWorkItem).where(
                 ParseRangeWorkItem.job_id == job_id,
             ))).scalars().all())

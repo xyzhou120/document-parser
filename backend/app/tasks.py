@@ -129,8 +129,8 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
 
         from app.rules.strategies.llm import LLMStrategy
         from app.services.call_ledger import CallLedger
-        from app.services.execution import JobRepository
         from app.services.evidence_images import EvidenceImages
+        from app.services.execution import JobRepository
         from app.services.model_gateway import GatewayPolicy, ModelGateway
         from app.services.reliable_extraction_service import reliable_extraction_service
         from app.services.reliable_field_executor import (
@@ -178,11 +178,18 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
                         model.get("model_name", config.model_name), model.get("model_version", config.model_version)),
                         model=model.get("model_name", config.model_name),
                         thinking_enabled=model.get("thinking_enabled", True)), image_provider=images)
-                return await reliable_extraction_service.process_run(sessions, run_id, executor=executor,
+                result = await reliable_extraction_service.process_run(sessions, run_id, executor=executor,
                     writer=executor.write_result, before_publish=executor.before_publish,
                     # Keep a wake short so one long document cannot monopolize
                     # the solo local worker while other runs wait in Redis.
                     owner=f"celery:{self.request.id}", max_quantums=3, lease_seconds=300)
+                if result.get("remaining_runnable"):
+                    try:
+                        await asyncio.to_thread(reliable_execution_dispatch_task.delay)
+                    except Exception:
+                        # Durable wakes and beat still recover broker downtime.
+                        logger.warning("Reliable continuation waits for beat recovery")
+                return result
         finally:
             if client is not None:
                 await client.close()

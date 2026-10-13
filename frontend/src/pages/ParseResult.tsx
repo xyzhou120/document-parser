@@ -23,6 +23,8 @@ export default function ParseResult() {
   const [forceRefresh, setForceRefresh] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [agentLimits, setAgentLimits] = useState<Record<string, number>>({})
+  const successor = result?.extraction_profile?.successor_run_id
+  const successorRunId = result?.status === 'SUPERSEDED' && typeof successor === 'string' && successor.trim() && successor !== result.parse_run_id ? successor : undefined
 
   const openSupplement = async () => {
     if (!result?.checklist_type) return
@@ -89,6 +91,7 @@ export default function ParseResult() {
     return () => { disposed = true; clearTimeout(timer) }
   }, [parseRunId, refresh])
   return <div className="parser-workspace"><div className="page-title-row"><div><h1>解析结果</h1><p>字段与全部出现位置共同呈现；方法匹配分不代表取值正确概率。</p></div><div className="page-actions"><Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')}>返回队列</Button><Button disabled={!result?.checklist_type || !['COMPLETED', 'FAILED'].includes(result?.status || '')} onClick={() => void openSupplement()}>补提取</Button><Button icon={<ReloadOutlined />} loading={loading} onClick={() => setRefresh((value) => value + 1)}>刷新</Button></div></div>
+    {successorRunId && <Alert className="run-alert" type="info" showIcon message="此运行已由修复后的新运行接替" description="当前页面保留旧运行的历史记录。请打开后继运行查看最新处理进度与提取结果。" action={<Button type="primary" onClick={() => navigate(`/result/${successorRunId}`)}>查看修复后运行</Button>} />}
     {result?.contract_version !== 'reliable-extraction-v2' && result?.status === 'COMPLETED' && result.extraction_profile?.agent_runtime && <div style={{ marginBottom: 12 }}><Button loading={submitting} onClick={() => void handleResume()}>补跑未完成取证字段（旧引擎）</Button><span className="muted" style={{ marginLeft: 12 }}>保留原运行，复用前处理；取证覆盖与正确性仍分别验证。</span></div>}
     {error && <Alert className="run-alert" type="error" showIcon message={error} action={<Button onClick={() => setRefresh((value) => value + 1)}>重试</Button>} />}
     {loading && !result ? <div className="loading-state"><Spin size="large" /></div> : result && <ParseWorkspace fileName={result.document_name} fileUrl={getDocumentFile(result.document_id)} result={result} />}

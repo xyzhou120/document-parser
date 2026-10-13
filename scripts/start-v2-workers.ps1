@@ -78,7 +78,7 @@ print(json.dumps({"queue":settings.celery.task_default_queue,"reliable":settings
 Write-Host "Legacy queue=$($config.queue), reliable_enabled=$($config.reliable), assistant_enabled=$($config.assistant)"
 if (-not $config.reliable -or -not $config.assistant) { Write-Warning 'One or more v2 flags are disabled in the loaded configuration.' }
 $definitions = @(
-    @{ name='legacy'; args=@('worker','--pool=solo','--concurrency=1',"--queues=$($config.queue)",'--hostname=legacy-local@%h') },
+    @{ name='legacy'; args=@('worker','--pool=solo','--concurrency=1',"--queues=$($config.queue),reliable-control",'--hostname=legacy-local@%h') },
     @{ name='reliable'; args=@('worker','--pool=solo','--concurrency=1','--queues=reliable-execution','--hostname=reliable-local@%h') },
     @{ name='assistant'; args=@('worker','--pool=solo','--concurrency=1','--queues=assistant','--hostname=assistant-local@%h') },
     @{ name='beat'; args=@('beat',"--schedule=$(Join-Path $logDirectory 'celerybeat-schedule')", "--pidfile=$(Join-Path $logDirectory 'celerybeat.pid')") }

@@ -14,7 +14,7 @@ from app.rules.spec import RuleSpec
 from app.services.call_ledger import CallLedger
 from app.services.candidate_repository import CandidateRepository
 from app.services.content_service import ContentService
-from app.services.model_gateway import ModelGateway
+from app.services.model_gateway import GatewayPolicy, ModelGateway
 from app.services.reliable_extraction_service import ReliableExtractionService
 from app.services.reliable_field_executor import (
     _REVISION_CACHE,
@@ -112,19 +112,20 @@ async def test_existing_116_range_items_require_one_select_and_zero_writes(sessi
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["invalid", "length"])
+@pytest.mark.parametrize("mode", ["invalid", "length", "context"])
 async def test_minimum_invalid_candidate_terminates_and_is_not_replayed_by_fallback(sessions, mode):
     run_id = await make_run(sessions)
     provider = ControlledProvider(mode)
+    policy = GatewayPolicy(context_capacity=2800, min_output_tokens=2500, max_output_tokens=2500) if mode == "context" else GatewayPolicy()
     executor = ReliableFieldExecutor(sessions,
-        ModelGateway(provider, CallLedger(sessions), ServiceCircuit(MemoryCircuitStore())),
+        ModelGateway(provider, CallLedger(sessions), ServiceCircuit(MemoryCircuitStore()), policy),
         ReliableFieldExecutorConfig("test", "test", semantic_retry_max=2))
     service = ReliableExtractionService()
     result = await service.process_run(sessions, run_id, executor=executor, writer=executor.write_result,
         before_publish=executor.before_publish, owner="bounded-failure", max_quantums=20)
     assert result["status"] == "FAILED"
     assert result["quantums_executed"] < 15
-    assert provider.calls == 1
+    assert provider.calls == (0 if mode == "context" else 1)
     async with sessions() as db:
         job = await db.scalar(select(ParseFieldJob).where(ParseFieldJob.run_id == run_id))
         rows = (await db.execute(select(ParseCandidate).where(ParseCandidate.job_id == job.job_id))).scalars().all()
@@ -132,6 +133,18 @@ async def test_minimum_invalid_candidate_terminates_and_is_not_replayed_by_fallb
         assert job.execution_state == "failed_terminal" and job.semantic_state == "incomplete"
         assert job.checkpoint["failed_window_keys"]
         assert any((row.evidence or {}).get("registry") for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_failed_batch_id_is_not_recreated_or_sent_again():
+    gateway = SimpleNamespace(execute=AsyncMock())
+    executor = ReliableFieldExecutor(None, gateway, ReliableFieldExecutorConfig("test", "test"))
+    cid = str(uuid4())
+    checkpoint = {"candidate_batches": {"failed": {"batch_state": "failed", "candidate_ids": [cid]}}}
+    outcome = await executor._judge(None, checkpoint, [{"candidate_id": cid}], None, None, [], {})
+    assert outcome.state == "yielded" and outcome.checkpoint["unresolved_ids"] == [cid]
+    assert outcome.checkpoint["proof_error"] == "failed_candidate_replay_blocked"
+    gateway.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -166,11 +179,11 @@ async def test_29_pages_12_rules_finish_without_reinserting_the_range_plan(sessi
     event.listen(engine, "before_cursor_execute", record)
     try:
         result = await service.process_run(sessions, run_id, executor=executor, writer=executor.write_result,
-            before_publish=executor.before_publish, owner="bounded-29x12", max_quantums=3000, lease_seconds=300)
+            before_publish=executor.before_publish, owner="bounded-29x12", max_quantums=800, lease_seconds=300)
     finally:
         event.remove(engine, "before_cursor_execute", record)
     assert result["status"] == "COMPLETED"
-    assert result["quantums_executed"] <= 12 * 250
+    assert result["quantums_executed"] <= 12 * 50
     assert len(inserts) == 12
     assert content.reads == 1
     async with sessions() as db:

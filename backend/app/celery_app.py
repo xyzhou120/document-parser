@@ -17,7 +17,7 @@ celery_app = Celery(
 beat_schedule = {}
 if settings.app.reliable_enabled:
     beat_schedule["reliable-execution-recovery"] = {"task": "reliable_execution_dispatch", "schedule": 30.0,
-                                                  "options": {"queue": "reliable-execution"}}
+                                                  "options": {"queue": "reliable-control"}}
 if settings.app.assistant_enabled:
     beat_schedule["assistant-message-recovery"] = {"task": "assistant_outbox_dispatch", "schedule": 20.0,
                                                  "options": {"queue": "assistant"}}
@@ -34,7 +34,7 @@ celery_app.conf.update(
     # New execution wakes stay isolated from the existing parse_document task.
     task_routes={"reliable_execution_wakeup": {"queue": "reliable-execution"},
                  "reliable_content_build": {"queue": "reliable-execution"},
-                 "reliable_execution_dispatch": {"queue": "reliable-execution"},
+                 "reliable_execution_dispatch": {"queue": "reliable-control"},
                  "assistant_message_execute": {"queue": "assistant"},
                  "assistant_outbox_dispatch": {"queue": "assistant"},
                  "assistant_card_build": {"queue": "assistant"},

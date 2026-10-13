@@ -210,6 +210,7 @@ def _verify_attribute(key: str, observed: Any, expected: Any, decision: Mapping,
         receipt_source = receipt.get("source") or receipt.get("source_kind")
         image = receipt_source in {"original_image", "page_image", "region_image"}
         verified = _receipt_attribute(receipt, key)
+        platform_basis = None
         if source == "ocr" and not image:
             continue
         if image:
@@ -254,7 +255,7 @@ def _verify_attribute(key: str, observed: Any, expected: Any, decision: Mapping,
                 valid = (verified.get("status") == "supported" and verified.get("basis") == "table_header_binding"
                          and _same_value(observed, verified.get("value"), key, numeric))
         elif key == "value_kind":
-            quote = str(proposal.get("quote") or ev_text)
+            quote = str(proposal.get("quote") or decision.get("quote") or ev_text)
             basis = proposal.get("basis") or "wording"
             allowed = contract.get("value_kind_policy", {}).get("allowed_bases") or ["wording", "header", "form_semantics"]
             marker = _kind_wording_supported(str(observed), quote, decision.get("value"), numeric)
@@ -266,6 +267,15 @@ def _verify_attribute(key: str, observed: Any, expected: Any, decision: Mapping,
             if receipt.get("scope") == "header" and verified.get("basis") == "header":
                 valid = ("header" in allowed and verified.get("status") == "supported"
                          and _same_value(observed, verified.get("value"), key, numeric))
+            if (expected == observed == "reported" and
+                    value_in_text(decision.get("value"), text, numeric) and
+                    value_in_text(decision.get("value"), ev_text, numeric) and
+                    value_in_text(decision.get("value"), quote, numeric) and
+                    normalize(quote) in normalize(ev_text) and normalize(quote) in normalize(text)):
+                # "Reported" is the generic literal stated by the document. It
+                # does not assert measured/calculated/design semantics. OCR has
+                # already been excluded from this text-only branch above.
+                valid, platform_basis = True, "source.reported_literal"
         elif key.startswith("dimensions."):
             valid = value_in_text(observed, scope_text, False) and (
                 value_in_text(observed, text, False) or value_in_text(observed, context, False))
@@ -274,7 +284,7 @@ def _verify_attribute(key: str, observed: Any, expected: Any, decision: Mapping,
                          and _same_value(observed, verified.get("value"), key, numeric))
         if valid:
             supported.append(eid)
-            bases.append(str(verified.get("basis") or proposal.get("basis") or "literal"))
+            bases.append(str(platform_basis or verified.get("basis") or proposal.get("basis") or "literal"))
     status = "supported" if supported else "unknown"
     if status == "supported" and expected not in (None, "", "unknown") and not _same_value(observed, expected, key, numeric):
         status = "mismatch"

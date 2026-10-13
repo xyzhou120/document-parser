@@ -49,6 +49,7 @@ class ReliableFieldExecutorConfig:
     window_chars: int = 300
     candidates_per_call: int = 8
     semantic_retry_max: int = 3
+    ranges_per_quantum: int = 4
 
 
 # Fixed revisions are immutable. Keep their validated adapted content for the worker lifetime,
@@ -61,7 +62,8 @@ def model_candidate_payload(proposal: dict) -> dict:
     """Model inputs contain source observations, never the accumulated evidence ledger."""
     keys = {"candidate_id", "text", "context", "source", "original_source", "page_number", "bbox",
             "table", "segment_ids", "content_revision", "units", "unit_work_ids", "evidence_ids",
-            "rule", "source_role_hint", "stage", "block_id", "region_id"}
+            "rule", "source_role_hint", "stage", "block_id", "region_id", "material_provenance",
+            "raw_ocr", "span_start", "span_end"}
     return {key: value for key, value in proposal.items() if key in keys}
 
 
@@ -246,18 +248,31 @@ class ReliableFieldExecutor:
             if semantic in {"completed", "not_found", "review_required"}:
                 return QuantumOutcome("done", cp, semantic_state=semantic)
             return QuantumOutcome("failed_terminal", cp, error="scope_or_evidence_not_closed")
-        shard = shard_from_dict(plan[index])
         retrieval = rule.semantic_contract.get("retrieval") or {}
-        batch = scan_candidates(FieldSpec.from_rule(rule), pages, shard, cursor=cp.get("cursor"),
-                                page_limit=self.config.page_limit, window_chars=self.config.window_chars,
-                                content_revision=str(revision), rule_semantic_hash=rule.rule_semantic_hash,
-                                formula_patterns=retrieval.get("formula_patterns") or [],
-                                table_patterns=retrieval.get("table_patterns") or [])
-        cp["scan_batch"] = {"index": index, "candidates": [asdict(item) for item in batch.candidates],
-                            "cursor": batch.cursor.as_dict(), "scanned_pages": batch.scanned_pages,
-                            "done": batch.done, "unreadable_pages": batch.unreadable_pages}
-        cp["cursor"] = None if batch.done else batch.cursor.as_dict()
-        cp["range_index"] = index + 1 if batch.done else index
+        scan_batches = []
+        current_cursor = cp.get("cursor")
+        for offset in range(max(1, self.config.ranges_per_quantum)):
+            current_index = index + offset
+            if current_index >= len(plan):
+                break
+            shard = shard_from_dict(plan[current_index])
+            batch = scan_candidates(FieldSpec.from_rule(rule), pages, shard, cursor=current_cursor,
+                                    page_limit=self.config.page_limit, window_chars=self.config.window_chars,
+                                    content_revision=str(revision), rule_semantic_hash=rule.rule_semantic_hash,
+                                    formula_patterns=retrieval.get("formula_patterns") or [],
+                                    table_patterns=retrieval.get("table_patterns") or [])
+            scan_batches.append({"index": current_index, "candidates": [asdict(item) for item in batch.candidates],
+                                 "cursor": batch.cursor.as_dict(), "scanned_pages": batch.scanned_pages,
+                                 "done": batch.done, "unreadable_pages": batch.unreadable_pages})
+            current_cursor = None if batch.done else batch.cursor.as_dict()
+            if batch.candidates or not batch.done:
+                break
+        if not scan_batches:
+            return QuantumOutcome("yielded", cp)
+        cp["scan_batches"] = scan_batches
+        last = scan_batches[-1]
+        cp["cursor"] = last["cursor"] if not last["done"] else None
+        cp["range_index"] = last["index"] + 1 if last["done"] else last["index"]
         return QuantumOutcome("yielded", cp)
 
     async def _judge(self, token, cp, proposals, rule, document, pages, profile):
@@ -463,8 +478,11 @@ class ReliableFieldExecutor:
         repo = CandidateRepository(db)
         plan = [shard_from_dict(item) for item in cp.get("range_plan", [])]
         ranges = await repo.initialize_ranges(job.job_id, plan) if plan else []
-        scan = cp.pop("scan_batch", None)
-        if scan:
+        scans = cp.pop("scan_batches", None)
+        legacy_scan = cp.pop("scan_batch", None)
+        if scans is None:
+            scans = [legacy_scan] if legacy_scan else []
+        for scan in scans:
             shard = plan[scan["index"]]
             work = next(item for item in ranges if item.strategy_version == shard.strategy_version and item.range_key == shard.range_key)
             batch = SimpleNamespace(**{**scan, "candidates": [Candidate(**value) for value in scan["candidates"]],
