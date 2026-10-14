@@ -14,6 +14,7 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import Document, ExtractedFieldModel, ParseRun
+from app.services.execution.job_repository import write_extracted_field_counts
 from app.services.fact_policy_v2 import VERSION, is_v2
 from app.services.fact_service import build_fact_view
 from app.storage import get_db
@@ -539,9 +540,11 @@ async def recent_runs(limit: int = Query(8, ge=1, le=50), db: AsyncSession = Dep
         .order_by(ParseRun.created_at.desc())
         .limit(limit)
     )
+    rows = result.all()
+    await write_extracted_field_counts(db, [run for _, run in rows], repair_zeros=True)
 
     items = []
-    for document, run in result.all():
+    for document, run in rows:
         items.append(
             {
                 "parse_run_id": str(run.parse_run_id),

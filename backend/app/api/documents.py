@@ -18,6 +18,7 @@ from app.models.document_context import (
 from app.rules.repository import rule_repository
 from app.services.artifact_service import preprocessing_profile
 from app.services.document_service import plan_rule_impact, related_fact_candidates
+from app.services.execution.job_repository import write_extracted_field_counts
 from app.services.parse_service import rule_snapshot
 from app.storage import get_db
 
@@ -138,6 +139,7 @@ async def document_runs(document_id: UUID, db: AsyncSession = Depends(get_db)):
         .scalars()
         .all()
     )
+    await write_extracted_field_counts(db, rows, repair_zeros=True)
     keys = (
         "parse_run_id",
         "parent_parse_run_id",

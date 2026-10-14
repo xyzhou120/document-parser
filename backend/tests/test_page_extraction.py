@@ -7,7 +7,26 @@ from uuid import uuid4
 import pytest
 
 from app.services.model_gateway import CallRequest, CandidateInput, build_messages
-from app.services.page_extraction import build_page_request, build_page_units
+from app.services.page_extraction import build_page_request, build_page_units, ocr_text_needs_image, pack_page_units
+
+
+def test_short_pages_pack_together_and_tables_stay_separate():
+    pages = [{"page_number": index, "text": f"第{index}页正文 瓦斯压力 1.23MPa 实测"} for index in range(1, 6)]
+    pages.append({"page_number": 6, "tables": [{"table_id": "t", "header": ["测点", "值"], "rows": [["1", "1.23"]],
+                                                "text": "测点 值 1 1.23"}]})
+    units = pack_page_units(build_page_units(pages))
+    prose = [unit for unit in units if not unit.get("table")]
+    assert len(prose) == 2
+    assert prose[0]["page_numbers"] == [1, 2, 3, 4]
+    assert "【第 2 页】" in prose[0]["text"] and "【第 4 页】" in prose[0]["text"]
+    assert prose[1]["page_numbers"] == [5]
+    assert units[-1]["table"] is True and units[-1]["page_numbers"] == [6]
+    weak = build_page_units([{"page_number": 1, "text_blocks": [
+        {"text": "1.23", "source": "ocr", "block_id": "short"}]}])
+    assert ocr_text_needs_image(weak[0]) is True
+    readable = build_page_units([{"page_number": 1, "text": "报告正文 瓦斯压力 1.23MPa 实测，这一页的文字已经足够直接抽取，不需要再看原图。"}])
+    readable[0]["source"] = "ocr"
+    assert ocr_text_needs_image(readable[0]) is False
 
 
 def test_final_page_and_long_page_tail_are_never_dropped():

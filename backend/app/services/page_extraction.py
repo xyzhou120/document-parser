@@ -185,6 +185,104 @@ def build_page_units(pages: Sequence[dict], max_chars: int = 6000) -> list[dict]
     return units
 
 
+# 短页并组的上限。输入远小于单次上下文，避免回答顶满输出上限后再拆开重来。
+PACK_CHARS = 2500
+PACK_PAGES = 4
+
+
+def ocr_text_needs_image(unit: dict) -> bool:
+    """表格、过短或乱码的 OCR 才需要再看原图。可读正文直接抽取。"""
+    if str(unit.get("source") or "") != "ocr":
+        return False
+    if unit.get("table"):
+        return True
+    text = str(unit.get("text") or "")
+    compact = "".join(text.split())
+    if len(compact) < 40:
+        return True
+    bad = sum(text.count(mark) for mark in ("\ufffd", "□"))
+    return bad / max(len(text), 1) >= 0.05
+
+
+def _unit_pages(unit: dict) -> list[int]:
+    raw = unit.get("page_numbers")
+    if isinstance(raw, list) and raw:
+        return [int(number) for number in raw]
+    if unit.get("page_number") is None:
+        return []
+    return [int(unit["page_number"])]
+
+
+def pack_page_units(units: Sequence[dict], *, max_chars: int = PACK_CHARS, max_pages: int = PACK_PAGES,
+                    page_scope=None) -> list[dict]:
+    """合并连续短页，使字段规则不必按每一小段重复发送。
+
+    表格、需要看图的 OCR、来源不同或字段范围不同的页保持独立。
+    """
+    if max_chars < 1 or max_pages < 1:
+        raise ValueError("pack limits must be positive")
+    packed: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+
+    def scope_key(unit: dict):
+        if page_scope is None:
+            return None
+        return tuple(page_scope(page) for page in _unit_pages(unit))
+
+    def can_join(base: dict, incoming: dict) -> bool:
+        if base.get("table") or incoming.get("table"):
+            return False
+        if ocr_text_needs_image(base) or ocr_text_needs_image(incoming):
+            return False
+        if base.get("source") != incoming.get("source"):
+            return False
+        if base.get("original_source") != incoming.get("original_source"):
+            return False
+        if (base.get("field_keys") or None) != (incoming.get("field_keys") or None):
+            return False
+        if scope_key(base) != scope_key(incoming):
+            return False
+        pages = set(_unit_pages(base)) | set(_unit_pages(incoming))
+        if len(pages) > max_pages:
+            return False
+        extra = len(str(incoming.get("text") or ""))
+        if extra and len(str(base.get("text") or "")) + extra + 8 > max_chars:
+            return False
+        return True
+
+    def merge(base: dict, incoming: dict) -> dict:
+        pages = _unit_pages(base)
+        incoming_pages = _unit_pages(incoming)
+        text = str(base.get("text") or "")
+        incoming_text = str(incoming.get("text") or "")
+        if incoming_text:
+            if incoming_pages and incoming_pages[0] not in pages:
+                text += f"\n\n【第 {incoming_pages[0]} 页】\n" + incoming_text
+            else:
+                text += "\n" + incoming_text
+        merged = {**base, "text": text, "page_numbers": pages + [page for page in incoming_pages if page not in pages],
+                  "segment_ids": list(base.get("segment_ids") or []) + list(incoming.get("segment_ids") or []),
+                  "source_segments": list(base.get("source_segments") or []) + list(incoming.get("source_segments") or [])}
+        boxes = [item.get("bbox") for item in merged["source_segments"]]
+        merged["bbox"] = _union(boxes) if boxes and all(box is not None for box in boxes) and len(merged["page_numbers"]) == 1 else (
+            base.get("bbox") if len(merged["page_numbers"]) == 1 else None)
+        merged["unit_id"] = "page:" + _digest({key: merged.get(key) for key in (
+            "page_numbers", "text", "source", "original_source", "table", "segment_ids")})
+        return merged
+
+    for unit in units:
+        prepared = {**deepcopy(unit), "page_numbers": _unit_pages(unit)}
+        if current is not None and can_join(current, prepared):
+            current = merge(current, prepared)
+            continue
+        if current is not None:
+            packed.append(current)
+        current = prepared
+    if current is not None:
+        packed.append(current)
+    return packed
+
+
 def build_page_request(unit: dict, rules: Sequence[dict], candidate_id: str) -> dict:
     """Build one gateway candidate that extracts all supplied fields together.
 

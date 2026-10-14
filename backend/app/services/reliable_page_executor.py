@@ -9,7 +9,6 @@ allowing a run to share one model request between all of its fields.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 from copy import deepcopy
@@ -26,7 +25,12 @@ from app.services.evidence_verification import validate_candidate_decision, valu
 from app.services.execution import LeaseToken, QuantumOutcome
 from app.services.field_completion import complete_field
 from app.services.model_gateway import CallRequest, CandidateInput, GatewayOutcome
-from app.services.page_extraction import build_page_request, build_page_units
+from app.services.page_extraction import (
+    build_page_request,
+    build_page_units,
+    ocr_text_needs_image,
+    pack_page_units,
+)
 from app.services.page_table_evidence import table_fact_support
 from app.services.reliable_field_executor import (
     ReliableFieldExecutor,
@@ -45,6 +49,15 @@ def _page_candidate_id(job_id: UUID, unit_id: str) -> UUID:
 
 def _unit_key(unit: dict) -> str:
     return str(unit.get("unit_id") or f"page:{unit.get('page_number')}")
+
+
+def _unit_pages(unit: dict) -> list[int]:
+    raw = unit.get("page_numbers")
+    if isinstance(raw, list) and raw:
+        return [int(number) for number in raw]
+    if unit.get("page_number") is None:
+        return []
+    return [int(unit["page_number"])]
 
 
 def _scope_pages(pages: list[dict], rule) -> set[int]:
@@ -78,22 +91,6 @@ def _split_rule_unit(unit: dict, rules: list, depth: int) -> list[dict]:
     return [{**unit, "unit_id": f"{_unit_key(unit)}:r{depth}{ordinal}",
              "field_keys": [rule.field_key for rule in group]}
             for ordinal, group in enumerate(groups) if group]
-
-
-async def _deadline(awaitable, remaining: float):
-    if remaining <= 0:
-        if hasattr(awaitable, "close"):
-            awaitable.close()
-        raise TimeoutError("page_batch_deadline_exceeded")
-    async with asyncio.timeout(remaining):
-        return await awaitable
-
-
-def _remaining_seconds(cp: dict, profile: dict) -> float:
-    started = parse_time(cp["page_started_at"])
-    if started is None:
-        raise ValueError("page batch start time is required")
-    return int(profile.get("max_run_seconds") or 300) - (datetime.utcnow() - started).total_seconds()
 
 
 def _page_rule(rule) -> dict:
@@ -143,11 +140,18 @@ class ReliablePageExecutor(ReliableFieldExecutor):
                 return QuantumOutcome("failed_terminal", cp, error="non_coordinator_page_job")
             pinned = await self._revision_content(db, job.revision_id)
             pages = pinned["pages"]
-            units = list(cp.get("page_units") or build_page_units(
-                pages, max_chars=int(profile.get("page_batch_chars") or 6000)))
             rules = [snapshot_rule(dict(j.checkpoint or {}).get("rule_snapshot") or {}) for j in jobs]
             rules_by_key = {rule.field_key: rule for rule in rules}
             scopes = {rule.field_key: _scope_pages(pages, rule) for rule in rules}
+            if cp.get("page_units"):
+                units = list(cp["page_units"])
+            else:
+                fine = build_page_units(pages, max_chars=int(profile.get("page_batch_chars") or 6000))
+
+                def scope_key(page: int):
+                    return tuple(sorted(key for key, numbers in scopes.items() if page in numbers))
+
+                units = pack_page_units(fine, page_scope=scope_key)
             cp["field_scopes"] = {key: sorted(numbers) for key, numbers in scopes.items()}
             cp.setdefault("page_units", units)
             cp.setdefault("page_index", 0)
@@ -159,7 +163,7 @@ class ReliablePageExecutor(ReliableFieldExecutor):
             cp["revision_id"] = str(job.revision_id)
             cp["material_provenance"] = pinned["material_provenance"]
             cp["source_coverage_complete"] = pinned["coverage_complete"]
-            cp["hard_limit_tokens"] = profile.get("hard_limit_tokens")
+            cp["hard_limit_tokens"] = None
             index = int(cp.get("page_index", 0))
             saved_units = {_unit_key(result.get("unit") or {}) for result in cp.get("page_results", [])}
             while index < len(units) and _unit_key(units[index]) in saved_units:
@@ -167,23 +171,15 @@ class ReliablePageExecutor(ReliableFieldExecutor):
             cp["page_index"] = index
             self._set_progress(cp)
             if index >= len(units):
-                # The writer performs final completion.  Its result is read back
-                # from the checkpoint so the scheduler can close the coordinator.
-                semantic = str(cp.get("semantic_state") or "not_found")
-                if cp.get("failed_units") or any(state not in {"completed", "not_found", "review_required"}
-                        for state in (cp.get("semantic_states") or {job.field_key: semantic}).values()):
-                    return QuantumOutcome("failed_terminal", cp, error="page_batch_units_unresolved")
+                # 每一块都已尝试。失败块留在 failed_units，运行收成待核对，不整篇失败。
+                semantic = "review_required" if cp.get("failed_units") or cp.get("review_units") else str(
+                    cp.get("semantic_state") or "not_found")
                 return QuantumOutcome("done", cp, semantic_state=semantic)
-            started = parse_time(cp["page_started_at"])
-            if started is None:
-                return QuantumOutcome("failed_terminal", cp, error="page_batch_start_time_missing")
-            remaining = int(profile.get("max_run_seconds") or 300) - (datetime.utcnow() - started).total_seconds()
-            if remaining <= 0:
-                return QuantumOutcome("failed_terminal", cp, error="page_batch_deadline_exceeded")
             unit = dict(units[index])
             unit_id = _unit_key(unit)
             coordinator_cid = str(_page_candidate_id(job.job_id, unit_id))
-            applicable_rules = [rule for rule in rules if unit.get("page_number") in scopes[rule.field_key]
+            unit_pages = set(_unit_pages(unit))
+            applicable_rules = [rule for rule in rules if unit_pages & scopes[rule.field_key]
                 and (not unit.get("field_keys") or rule.field_key in unit["field_keys"])]
             if not applicable_rules or not str(unit.get("text") or "").strip():
                 cp["page_results"].append({"unit": unit, "candidate_id": coordinator_cid,
@@ -208,7 +204,9 @@ class ReliablePageExecutor(ReliableFieldExecutor):
             request_fence = prior_dispatch.fence if prior_dispatch else token.fence_token
         refs = []
         image_receipt = None
-        if unit.get("source") == "ocr":
+        units[index]["text_sufficient"] = str(unit.get("source") or "") == "ocr" and not ocr_text_needs_image(unit)
+        unit["text_sufficient"] = units[index]["text_sufficient"]
+        if ocr_text_needs_image(unit):
             if self.image_provider is None:
                 cp["page_results"].append({"unit": unit, "candidate_id": coordinator_cid,
                     "response": {"state": "invalid", "error": "original_image_provider_unavailable"}})
@@ -216,15 +214,13 @@ class ReliablePageExecutor(ReliableFieldExecutor):
                 cp["page_index"] = index + 1
                 self._set_progress(cp)
                 return QuantumOutcome("yielded", cp)
-            try:
-                image, image_receipt = await _deadline(self.image_provider(document, pages, {**unit,
-                    "candidate_id": coordinator_cid, "content_revision": cp["revision_id"]}), _remaining_seconds(cp, profile))
-            except TimeoutError:
-                return self._timeout_outcome(cp, index, unit, coordinator_cid)
+            image, image_receipt = await self.image_provider(document, pages, {**unit,
+                "candidate_id": coordinator_cid, "content_revision": cp["revision_id"]})
             image_receipt = {**image_receipt, "image_hash": image_receipt.get("image_hash")
                 or hashlib.sha256(image).hexdigest()}
             refs.append("data:image/png;base64," + base64.b64encode(image).decode())
-        candidate = CandidateInput(coordinator_cid, payload, tuple(refs), str(unit.get("source") or "native"))
+        evidence_source = "native" if unit.get("text_sufficient") else str(unit.get("source") or "native")
+        candidate = CandidateInput(coordinator_cid, payload, tuple(refs), evidence_source)
         retry = int(cp.get("page_retry", 0))
         prior = cp.get("prior_call_id")
         request = CallRequest(
@@ -233,7 +229,7 @@ class ReliablePageExecutor(ReliableFieldExecutor):
                 checkpoint_key=f"page:{unit_id}", candidates=(candidate,), model=self.config.model,
                 estimated_input_tokens=0, retry_seq=int(cp.get("page_retry", 0)),
                 retry_of_call_id=UUID(prior) if prior else None,
-                hard_limit_tokens=profile.get("hard_limit_tokens"),
+                hard_limit_tokens=None,
                 thinking_enabled=self.config.thinking_enabled,
                 messages=({"role": "system", "content":
                     "Extract every matching fact for every supplied field_rule on this page. "
@@ -246,16 +242,10 @@ class ReliablePageExecutor(ReliableFieldExecutor):
         if saved_extraction.get("unit_id") == unit_id:
             response = GatewayOutcome(**saved_extraction["response"])
         elif cp.get("external_quota") and prior:
-            try:
-                response = await _deadline(self.gateway.requeue_external_quota(request, prior_call_id=prior,
-                    dispatch_key=request.dispatch_key + ":quota-resume"), _remaining_seconds(cp, profile))
-            except TimeoutError:
-                return self._timeout_outcome(cp, index, unit, coordinator_cid)
+            response = await self.gateway.requeue_external_quota(request, prior_call_id=prior,
+                dispatch_key=request.dispatch_key + ":quota-resume")
         else:
-            try:
-                response = await _deadline(self.gateway.execute(request), _remaining_seconds(cp, profile))
-            except TimeoutError:
-                return self._timeout_outcome(cp, index, unit, coordinator_cid)
+            response = await self.gateway.execute(request)
         if response.wait_state:
             cp["page_retry"] = response.retry_seq or retry
             cp["prior_call_id"] = response.call_id
@@ -264,9 +254,10 @@ class ReliablePageExecutor(ReliableFieldExecutor):
             return QuantumOutcome(response.wait_state, cp, retry_at=parse_time(response.retry_at),
                                   error=response.error)
         if response.state in {"service_exhausted", "retry_exhausted"}:
-            cp["failed_units"] = sorted({*cp.get("failed_units", []), unit_id})
             cp["page_retry"] = 0
-            return QuantumOutcome("failed_terminal", cp, error=response.error or response.state)
+            cp.pop("prior_call_id", None)
+            cp.pop("external_quota", None)
+            return self._failed_unit(cp, index, unit, coordinator_cid, response)
         if response.state == "invalid" and response.call_id and not cp.get("invalid_retried", {}).get(unit_id):
             cp.setdefault("invalid_retried", {})[unit_id] = True
             cp.update(page_retry=retry + 1, prior_call_id=response.call_id, external_quota=False)
@@ -299,7 +290,7 @@ class ReliablePageExecutor(ReliableFieldExecutor):
                 provider_key=self.config.provider_key, dispatch_key=verification_key,
                 checkpoint_key=f"page-image:{unit_id}", model=self.config.model,
                 estimated_input_tokens=0, thinking_enabled=self.config.thinking_enabled,
-                hard_limit_tokens=profile.get("hard_limit_tokens"),
+                hard_limit_tokens=None,
                 retry_seq=int(cp.get("image_retry", 0)),
                 retry_of_call_id=UUID(cp["image_prior_call_id"]) if cp.get("image_prior_call_id") else None,
                 candidates=(CandidateInput(coordinator_cid, {**unit, "stage": "original_image_transcription"},
@@ -308,14 +299,11 @@ class ReliablePageExecutor(ReliableFieldExecutor):
                     "Return one JSON decision with the exact candidate_id, judgement accepted and transcription "
                     "copied from the image. Preserve table headers, rows, units and object identities. "
                     "Do not infer, correct to match previous extraction, or output verified receipts."},))
-            try:
-                if cp.get("image_external_quota") and cp.get("image_prior_call_id"):
-                    image_response = await _deadline(self.gateway.requeue_external_quota(image_request,
-                        prior_call_id=cp["image_prior_call_id"], dispatch_key=verification_key + ":quota-resume"), _remaining_seconds(cp, profile))
-                else:
-                    image_response = await _deadline(self.gateway.execute(image_request), _remaining_seconds(cp, profile))
-            except TimeoutError:
-                return self._timeout_outcome(cp, index, unit, coordinator_cid)
+            if cp.get("image_external_quota") and cp.get("image_prior_call_id"):
+                image_response = await self.gateway.requeue_external_quota(image_request,
+                    prior_call_id=cp["image_prior_call_id"], dispatch_key=verification_key + ":quota-resume")
+            else:
+                image_response = await self.gateway.execute(image_request)
             if image_response.wait_state:
                 cp.update(image_retry=image_response.retry_seq or int(cp.get("image_retry", 0)),
                     image_prior_call_id=image_response.call_id,
@@ -365,25 +353,24 @@ class ReliablePageExecutor(ReliableFieldExecutor):
         cp["page_results"].append({"unit": unit, "candidate_id": candidate_id,
             "response": compact_checkpoint_payload(asdict(response))})
         cp["page_index"] = index + 1
+        cp["page_retry"] = 0
+        for key in ("prior_call_id", "external_quota", "pending_extraction"):
+            cp.pop(key, None)
         ReliablePageExecutor._set_progress(cp)
         return QuantumOutcome("yielded", cp)
-
-    @staticmethod
-    def _timeout_outcome(cp, index, unit, candidate_id) -> QuantumOutcome:
-        cp["deadline_error"] = "page_batch_deadline_exceeded"
-        outcome = ReliablePageExecutor._failed_unit(cp, index, unit, candidate_id,
-            GatewayOutcome("timeout", error="page_batch_deadline_exceeded"))
-        outcome.state, outcome.error = "failed_terminal", "page_batch_deadline_exceeded"
-        return outcome
 
     @staticmethod
     def _set_progress(cp):
         units = list(cp.get("page_units") or [])
         processed = units[:int(cp.get("page_index", 0))]
+        remaining = units[len(processed):]
+
+        def pages_of(group):
+            return {page for unit in group for page in _unit_pages(unit)}
+
+        done_pages = pages_of(processed) - pages_of(remaining)
         cp["page_progress"] = {"processed_units": len(processed), "total_units": len(units),
-            "processed_pages": len({u["page_number"] for u in processed
-                if not any(v["page_number"] == u["page_number"] for v in units[len(processed):])}),
-            "total_pages": len({u["page_number"] for u in units}),
+            "processed_pages": len(done_pages), "total_pages": len(pages_of(units)),
             "failed_units": len(cp.get("failed_units") or []), "strategy": "page_batch_v1"}
 
     async def write_result(self, db, job, outcome):
@@ -406,7 +393,8 @@ class ReliablePageExecutor(ReliableFieldExecutor):
             existing = {row.stable_key: row for row in rows}
             out = []
             for unit in units:
-                if unit.get("page_number") not in set(cp.get("field_scopes", {}).get(sibling.field_key, [])):
+                unit_pages = set(_unit_pages(unit))
+                if unit_pages.isdisjoint(set(cp.get("field_scopes", {}).get(sibling.field_key, []))):
                     continue
                 if unit.get("field_keys") and sibling.field_key not in unit["field_keys"]:
                     continue
@@ -414,13 +402,15 @@ class ReliablePageExecutor(ReliableFieldExecutor):
                 key = f"page_batch:{uid}"
                 row = existing.get(key)
                 if row is None:
+                    evidence_source = "native" if unit.get("text_sufficient") else str(unit.get("source") or "native")
                     row = ParseCandidate(candidate_id=_page_candidate_id(sibling.job_id, uid), job_id=sibling.job_id,
-                        stable_key=key, block_ref={"page": unit.get("page_number"), "table": bool(unit.get("table")),
+                        stable_key=key, block_ref={"page": unit.get("page_number"), "pages": _unit_pages(unit),
+                            "table": bool(unit.get("table")),
                             "material_provenance": cp.get("material_provenance", {}).get(str(unit.get("page_number")))},
                         region_ref={"page": unit.get("page_number"), "bbox": unit.get("bbox")},
                         span_ref={"segments": list(unit.get("segment_ids") or [])},
                         window=str(unit.get("text") or ""), context=str(unit.get("context") or ""),
-                        source=str(unit.get("source") or "native"), state="pending")
+                        source=evidence_source, state="pending")
                     db.add(row)
                 out.append(row)
             by_field[sibling.field_key] = out
@@ -546,7 +536,7 @@ class ReliablePageExecutor(ReliableFieldExecutor):
                 field_registry.update((row.evidence or {}).get("registry") or {})
             sibling = next(s for s in siblings if s.field_key == field_key)
             field_units = [unit for unit in units
-                if unit.get("page_number") in set(cp.get("field_scopes", {}).get(field_key, []))
+                if set(_unit_pages(unit)) & set(cp.get("field_scopes", {}).get(field_key, []))
                 and (not unit.get("field_keys") or field_key in unit["field_keys"])]
             envelope = {"revision_id": str(job.revision_id), "rule_semantic_hash": sibling.rule_hash,
                 "scope_snapshot": rule.semantic_contract["scope"],
@@ -558,14 +548,23 @@ class ReliablePageExecutor(ReliableFieldExecutor):
             completion = complete_field(rule, envelope,
                 [{"candidate_id": str(row.candidate_id), "state": row.state, "content_revision": str(job.revision_id),
                   "page_number": (row.block_ref or {}).get("page")} for row in candidates], facts)
+            failed_ids = set(cp.get("failed_units") or [])
+            field_failed = [_unit_key(unit) for unit in field_units if _unit_key(unit) in failed_ids]
+            walk_finished = int(cp.get("page_index") or 0) >= len(units)
             if (completion["semantic_state"] == "partial_candidates" and completion["range_closed"]
                     and not any(row.state == "pending" for row in candidates)
-                    and not any(_unit_key(unit) in set(cp.get("failed_units") or []) for unit in field_units)):
+                    and not field_failed):
                 # Extraction has ended, but uncertain attributes require a human
                 # decision. Keep all support failures and unusable facts visible;
                 # never label this automatic_complete or claim proven absence.
                 completion["semantic_state"] = "review_required"
                 completion["risks"].append({"code": "AUTOMATIC_EVIDENCE_UNVERIFIED"})
+            if walk_finished and field_failed:
+                # 失败块已经记下来，并且后面的块继续走完。不把整次运行收成失败，
+                # 也不把没抽出的字段说成已经证明不存在。
+                completion["semantic_state"] = "review_required"
+                completion["coverage_complete"] = False
+                completion["risks"].append({"code": "PAGE_UNIT_FAILED", "units": field_failed})
             all_results[field_key] = completion
             field = await db.scalar(select(ExtractedFieldModel).where(
                 ExtractedFieldModel.parse_run_id == job.run_id,
@@ -584,13 +583,13 @@ class ReliablePageExecutor(ReliableFieldExecutor):
         cp["semantic_states"] = {key: value["semantic_state"] for key, value in all_results.items()}
         cp["semantic_state"] = all_results.get(job.field_key, {}).get("semantic_state", "not_found")
         if outcome.state == "done":
-            if any(state not in {"completed", "not_found", "review_required"} for state in cp["semantic_states"].values()):
-                outcome.state, outcome.error = "failed_terminal", "page_batch_units_unresolved"
-            else:
-                outcome.semantic_state = cp["semantic_state"]
+            if cp.get("failed_units") or cp.get("review_units"):
+                if cp["semantic_state"] not in {"completed", "review_required"}:
+                    cp["semantic_state"] = "review_required"
+            outcome.semantic_state = cp["semantic_state"]
         outcome.checkpoint = cp
-        # The coordinator's transition is applied by JobRepository. Siblings are
-        # closed here under the same run lock; incomplete work is terminally failed.
+        # 协调字段的状态转换仍由调度器完成。兄弟字段在同一次提交里关闭。
+        # 页已经走完时，失败块是待核对，不是整篇失败。
         for sibling in siblings:
             state = all_results[sibling.field_key]["semantic_state"]
             if not finalize:

@@ -159,10 +159,10 @@ class AgentSettings(BaseSettings):
     # 方案 C：retrieval 为确定性候选检索与核验，legacy 为工具循环。
     # A/B 验收门槛（文档 10.4 节）通过并确认前，默认仍为 legacy。
     agent_mode: str = "legacy"
-    # New reliable runs share page understanding across all frozen fields.
+    # 新的可靠运行按页共享全部字段。整篇不再用墙钟或 token 预算中止。
     reliable_strategy: str = "page_batch_v1"
-    reliable_max_seconds: int = 300
-    reliable_token_limit: int = 400000
+    reliable_max_seconds: int | None = None
+    reliable_token_limit: int | None = None
     page_batch_chars: int = 6000
     field_token_budget: int = 16000
     max_calls_per_field: int = 3

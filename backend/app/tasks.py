@@ -189,11 +189,11 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
                         model.get("model_name", config.model_name), model.get("model_version", config.model_version)),
                         model=model.get("model_name", config.model_name),
                         thinking_enabled=model.get("thinking_enabled", True)), image_provider=images)
+                # 按页抽取一次唤醒连续做完多组短页。字段扫描仍保持较短的唤醒，避免独占 worker。
+                quantums = 8 if profile.get("extraction_strategy") == "page_batch_v1" else 3
                 result = await reliable_extraction_service.process_run(sessions, run_id, executor=executor,
                     writer=executor.write_result, before_publish=executor.before_publish,
-                    # 缩短每次唤醒处理时间，避免长文档独占本地单进程工作进程，
-                    # 使其他运行一直在 Redis 中等待。
-                    owner=f"celery:{self.request.id}", max_quantums=3, lease_seconds=300)
+                    owner=f"celery:{self.request.id}", max_quantums=quantums, lease_seconds=300)
                 if result.get("remaining_runnable"):
                     try:
                         await asyncio.to_thread(reliable_execution_dispatch_task.delay)

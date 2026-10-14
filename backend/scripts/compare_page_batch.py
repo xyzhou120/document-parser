@@ -55,7 +55,6 @@ from app.services.service_circuit import (  # noqa: E402
 from app.storage.minio_client import minio_client  # noqa: E402
 
 TARGET_DATABASE = "document_parser_v2_g1_20261012_a8d41c6f"
-MAX_RUN_SECONDS = 300
 
 
 def _rule(snapshot: dict) -> RuleSpec:
@@ -182,7 +181,8 @@ async def _run_one(source_db, target_db, source_run_id: UUID, out_dir: Path, mod
             request_id=f"G1-page-batch:{source_run_id}")
         run.extraction_profile = {**run.extraction_profile, "extraction_strategy": "page_batch_v1",
             "coordinator_field_key": min(rule.field_key for rule in source["rules"]),
-            "max_run_seconds": MAX_RUN_SECONDS, "page_batch_chars": settings.agent.page_batch_chars}
+            "max_run_seconds": None, "hard_limit_tokens": None,
+            "page_batch_chars": settings.agent.page_batch_chars}
         run_id = run.parse_run_id
     model = settings.models["vision_llm"]
     circuit = ServiceCircuit(MemoryCircuitStore())
@@ -195,31 +195,30 @@ async def _run_one(source_db, target_db, source_run_id: UUID, out_dir: Path, mod
     error = None
     last_progress = 0.0
     try:
-        async with asyncio.timeout(max(1, MAX_RUN_SECONDS - (time.monotonic() - started))):
-            while True:
-                await _requeue_due(target_db, run_id)
-                result = await service.process_run(target_db, run_id, executor=executor,
-                    writer=executor.write_result, before_publish=executor.before_publish,
-                    owner=f"G1-compare:{source_run_id}", max_quantums=3, lease_seconds=300)
-                progress = await _run_progress(target_db, run_id)
-                if time.monotonic() - last_progress >= 15:
-                    last_progress = time.monotonic()
-                    print(f"[G1] {source_run_id} status={progress['status']} "
-                          f"coordinator={progress['coordinator_state']} progress={progress['page_progress']} "
-                          f"error={progress['last_error']}", flush=True)
-                if progress["status"] in {"COMPLETED", "COMPLETED_WITH_REVIEW", "FAILED", "CANCELLED", "SUPERSEDED", "PAUSED"}:
-                    if progress["status"] == "FAILED":
-                        error = progress["last_error"] or "isolated_run_failed"
-                    break
-                if progress["coordinator_state"] in {"waiting_service", "waiting_external_quota"}:
-                    if progress["retry_seconds"] is None:
-                        raise RuntimeError(f"{progress['coordinator_state']} requires external action: {progress['last_error']}")
-                    await asyncio.sleep(min(30.0, max(0.5, progress["retry_seconds"])))
-                elif not result.get("quantums_executed"):
-                    # Avoid a busy loop while a lease or delayed yield is pending.
-                    await asyncio.sleep(min(30.0, max(0.5, progress["retry_seconds"] or 1)))
+        while True:
+            await _requeue_due(target_db, run_id)
+            result = await service.process_run(target_db, run_id, executor=executor,
+                writer=executor.write_result, before_publish=executor.before_publish,
+                owner=f"G1-compare:{source_run_id}", max_quantums=3, lease_seconds=300)
+            progress = await _run_progress(target_db, run_id)
+            if time.monotonic() - last_progress >= 15:
+                last_progress = time.monotonic()
+                print(f"[G1] {source_run_id} status={progress['status']} "
+                      f"coordinator={progress['coordinator_state']} progress={progress['page_progress']} "
+                      f"error={progress['last_error']}", flush=True)
+            if progress["status"] in {"COMPLETED", "COMPLETED_WITH_REVIEW", "FAILED", "CANCELLED", "SUPERSEDED", "PAUSED"}:
+                if progress["status"] == "FAILED":
+                    error = progress["last_error"] or "isolated_run_failed"
+                break
+            if progress["coordinator_state"] in {"waiting_service", "waiting_external_quota"}:
+                if progress["retry_seconds"] is None:
+                    raise RuntimeError(f"{progress['coordinator_state']} requires external action: {progress['last_error']}")
+                await asyncio.sleep(min(30.0, max(0.5, progress["retry_seconds"])))
+            elif not result.get("quantums_executed"):
+                # Avoid a busy loop while a lease or delayed yield is pending.
+                await asyncio.sleep(min(30.0, max(0.5, progress["retry_seconds"] or 1)))
     except Exception as exc:
-        error = "runner_deadline_exceeded" if isinstance(exc, TimeoutError) else f"{type(exc).__name__}: {exc}"
+        error = f"{type(exc).__name__}: {exc}"
         print(f"[G1] {source_run_id} failed: {error}", flush=True)
         # Only isolated records are closed; cancelled provider calls may retain
         # uncertain charges, which are exposed in the report rather than hidden.

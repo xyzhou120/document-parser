@@ -133,7 +133,7 @@ async def test_all_fields_share_each_page_call_and_validated_results():
     executor, rows, jobs, provider, token = setup_executor()
     outcome = await process(executor, rows, jobs, token)
     assert outcome.state == "done"
-    assert provider.calls == 2
+    assert provider.calls == 1
     fields = [r for r in rows.rows if isinstance(r, ExtractedFieldModel)]
     assert len(fields) == 12
     assert all(f.instances and all(fact["usable"] for fact in f.instances) for f in fields)
@@ -149,16 +149,17 @@ async def test_restart_at_durable_page_cursor_does_not_repeat_completed_pages():
     assert provider.calls == 1
     assert all(j.execution_state == "queued" for j in jobs[1:])
     outcome = await process(executor, rows, jobs, replace(token, fence_token=2), first.checkpoint)
-    assert outcome.state == "done" and provider.calls == 2
+    assert outcome.state == "done" and provider.calls == 1
 
 
 @pytest.mark.asyncio
 async def test_invalid_page_cannot_become_not_found_or_leave_queued_siblings():
     executor, rows, jobs, provider, token = setup_executor(mode="invalid")
     outcome = await process(executor, rows, jobs, token)
-    assert outcome.state == "failed_terminal"
-    assert all(j.execution_state == "failed_terminal" for j in jobs[1:])
-    assert all(j.semantic_state != "not_found" for j in jobs)
+    assert outcome.state == "done"
+    assert outcome.semantic_state == "review_required"
+    assert all(j.execution_state == "done" for j in jobs[1:])
+    assert all(j.semantic_state == "review_required" for j in jobs[1:])
     assert outcome.checkpoint["failed_units"]
 
 
@@ -173,24 +174,33 @@ async def test_field_explicit_scope_excludes_other_pages():
 
 
 @pytest.mark.asyncio
-async def test_deadline_preserves_processed_facts_and_terminates_all_siblings():
+async def test_elapsed_clock_still_walks_remaining_pages():
     executor, rows, jobs, provider, token = setup_executor()
     first = await executor(token, jobs[0].checkpoint)
     await executor.write_result(rows, jobs[0], first)
-    first.checkpoint["page_started_at"] = (datetime.utcnow() - timedelta(seconds=301)).isoformat()
+    first.checkpoint["page_started_at"] = (datetime.utcnow() - timedelta(seconds=3600)).isoformat()
     outcome = await process(executor, rows, jobs, token, first.checkpoint)
-    assert outcome.state == "failed_terminal"
+    assert outcome.state == "done"
     assert provider.calls == 1
+    assert outcome.checkpoint["page_progress"]["processed_pages"] == 2
     assert all(r.instances for r in rows.rows if isinstance(r, ExtractedFieldModel))
-    assert all(j.execution_state == "failed_terminal" for j in jobs[1:])
+    assert all(j.execution_state == "done" for j in jobs[1:])
 
 
 @pytest.mark.asyncio
-async def test_ocr_without_image_provider_is_explicit_failure():
+async def test_readable_ocr_extracts_without_a_second_image():
     executor, rows, jobs, provider, token = setup_executor(source="ocr")
+    long_text = "报告正文 瓦斯压力 1.23MPa 实测，本页文字已经足以直接抽取。" * 2
+    for page in executor._revision_content.return_value["pages"]:
+        page["text"] = long_text
+        page["text_blocks"][0]["text"] = long_text
     outcome = await process(executor, rows, jobs, token)
-    assert outcome.state == "failed_terminal" and provider.calls == 0
-    assert outcome.checkpoint["page_progress"]["failed_units"] == 2
+    assert outcome.state == "done"
+    assert provider.calls == 1
+    assert outcome.checkpoint["page_progress"]["failed_units"] == 0
+    assert executor.image_provider is None
+    fields = [r for r in rows.rows if isinstance(r, ExtractedFieldModel)]
+    assert fields and all(field.instances for field in fields)
 
 
 @pytest.mark.asyncio
@@ -200,6 +210,7 @@ async def test_ocr_transcription_is_shared_across_fields_and_fact_receipts_are_b
     from PIL import Image
 
     executor, rows, jobs, provider, token = setup_executor(source="ocr", page_count=1)
+    executor._revision_content.return_value["pages"][0]["text_blocks"][0]["text"] = "□" * 12 + "报告正文 瓦斯压力 1.23MPa 实测"
     data = io.BytesIO()
     Image.new("RGB", (8, 8), "white").save(data, format="PNG")
     executor.image_provider = AsyncMock(return_value=(data.getvalue(), {"bbox": [0, 0, 8, 8]}))
@@ -233,22 +244,20 @@ async def test_context_overflow_splits_rule_groups_without_repeating_unit():
 
 
 @pytest.mark.asyncio
-async def test_gateway_timeout_fails_current_unit_and_keeps_prior_results(monkeypatch):
+async def test_retry_exhausted_records_the_page_and_continues():
     executor, rows, jobs, provider, token = setup_executor(count=2, page_count=2)
+    executor._revision_content.return_value["pages"][1]["text_blocks"][0]["source"] = "human_correction"
     first = await executor(token, jobs[0].checkpoint)
     await executor.write_result(rows, jobs[0], first)
-    async def blocked(_request):
-        import asyncio
-        await asyncio.sleep(0.05)
-    executor.gateway.execute = blocked
-    first.checkpoint["page_started_at"] = datetime.utcnow().isoformat()
-    first.checkpoint["page_index"] = 1
-    jobs[0].checkpoint = first.checkpoint
-    monkeypatch.setattr("app.services.reliable_page_executor._remaining_seconds", lambda *_: 0.01)
-    outcome = await executor(token, first.checkpoint)
-    assert outcome.state == "failed_terminal"
+    from app.services.model_gateway import GatewayOutcome
+    executor.gateway.execute = AsyncMock(return_value=GatewayOutcome(
+        "retry_exhausted", error="retry_exhausted:timeout"))
+    outcome = await process(executor, rows, jobs, token, first.checkpoint)
+    assert outcome.state == "done"
+    assert outcome.semantic_state == "review_required"
     assert outcome.checkpoint["failed_units"]
-    assert outcome.checkpoint["deadline_error"] == "page_batch_deadline_exceeded"
+    assert outcome.checkpoint["page_progress"]["processed_pages"] == 2
+    assert all(r.instances for r in rows.rows if isinstance(r, ExtractedFieldModel))
 
 
 @pytest.mark.asyncio
@@ -279,7 +288,9 @@ async def test_length_splits_single_field_text_without_repeating_successful_chil
 async def test_invalid_response_has_only_one_retry():
     executor, rows, jobs, provider, token = setup_executor(count=1, page_count=1, mode="invalid")
     outcome = await process(executor, rows, jobs, token)
-    assert outcome.state == "failed_terminal" and provider.calls == 2
+    assert outcome.state == "done" and outcome.semantic_state == "review_required"
+    assert provider.calls == 2
+    assert outcome.checkpoint["failed_units"]
 
 
 @pytest.mark.asyncio
@@ -292,5 +303,7 @@ async def test_split_depth_limit_fails_boundedly_instead_of_expanding_forever():
     cp["page_units"] = build_page_units(executor._revision_content.return_value["pages"])
     cp["split_depths"] = {cp["page_units"][0]["unit_id"]: 6}
     outcome = await process(executor, rows, jobs, token, cp)
-    assert outcome.state == "failed_terminal"
+    assert outcome.state == "done"
+    assert outcome.semantic_state == "review_required"
     assert executor.gateway.execute.await_count == 1
+    assert outcome.checkpoint["failed_units"]

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -13,7 +14,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.database import ParseRun
+from app.models.database import ExtractedFieldModel, ParseRun
 from app.models.execution import ExecutionOutbox, ParseFieldJob
 
 from .field_scheduler import (
@@ -27,6 +28,59 @@ from .field_scheduler import (
     require_lease,
     wakeup_dedupe_key,
 )
+
+# 执行已经收口的状态。取消和被新版本替代的运行不在这里改计数。
+_COUNTED_RUN_STATUSES = {"COMPLETED", "COMPLETED_WITH_REVIEW", "FAILED"}
+# 这些状态没有可展示的抽出值。review_required 不在其中，仍需核对的值照常计数。
+_WITHOUT_EXTRACTED_VALUE = {"missing", "blocked", "incomplete", "not_found"}
+RELIABLE_CONTRACT = "reliable-extraction-v2"
+
+
+def field_has_extracted_value(field: Any) -> bool:
+    """字段已经抽出值。仍需人工核对的结果计入，范围内未找到和未完成不计入。"""
+    if getattr(field, "validation_status", None) in _WITHOUT_EXTRACTED_VALUE:
+        return False
+    if getattr(field, "field_value", None) is not None:
+        return True
+    return bool(getattr(field, "instances", None))
+
+
+def count_extracted_fields(fields: Iterable[Any]) -> int:
+    """按字段键计数，同一字段的多条事实只算一个字段。"""
+    return len({field.field_key for field in fields if field_has_extracted_value(field)})
+
+
+async def write_extracted_field_counts(
+    db: AsyncSession, runs: Iterable[ParseRun], *, repair_zeros: bool = False,
+) -> None:
+    """把已抽出值的字段数写回运行记录。
+
+    repair_zeros 只修补可靠执行里仍为 0 的已结束运行，避免改写旧引擎已经写好的计数。
+    """
+    chosen: list[ParseRun] = []
+    for run in runs:
+        if run.status not in _COUNTED_RUN_STATUSES:
+            continue
+        stale_reliable_zero = (
+            getattr(run, "contract_version", None) == RELIABLE_CONTRACT and (run.fields_extracted or 0) == 0
+        )
+        if repair_zeros and not stale_reliable_zero:
+            continue
+        chosen.append(run)
+    if not chosen:
+        return
+    rows = (await db.execute(
+        select(ExtractedFieldModel).where(
+            ExtractedFieldModel.parse_run_id.in_([run.parse_run_id for run in chosen])
+        )
+    )).scalars().all()
+    grouped: dict[Any, list[Any]] = {}
+    for row in rows:
+        grouped.setdefault(row.parse_run_id, []).append(row)
+    for run in chosen:
+        count = count_extracted_fields(grouped.get(run.parse_run_id, []))
+        if run.fields_extracted != count:
+            run.fields_extracted = count
 
 
 class JobRepository:
@@ -299,6 +353,8 @@ class JobRepository:
         status = aggregate_run_status(run, list(jobs))
         if status != run.status and run.status not in {"PAUSED", "CANCELLED", "SUPERSEDED"}:
             run.status = status
+        if run.status in _COUNTED_RUN_STATUSES:
+            await write_extracted_field_counts(self.db, [run])
         if status in {"COMPLETED", "COMPLETED_WITH_REVIEW", "FAILED"} and run.completed_at is None:
             run.completed_at = datetime.utcnow()
             if run.started_at is not None:

@@ -33,6 +33,7 @@ from app.schemas.parse import (
     StartParseResponse,
 )
 from app.services.artifact_service import artifact_service, preprocessing_profile
+from app.services.execution.job_repository import write_extracted_field_counts
 from app.services.fact_service import (
     build_fact_view,
     build_fact_view_with_invalidations,
@@ -259,6 +260,7 @@ async def get_parse_run(
         select(ExtractedFieldModel).where(ExtractedFieldModel.parse_run_id == parse_run_id)
     )
     fields = result.scalars().all()
+    await write_extracted_field_counts(db, [parse_run], repair_zeros=True)
 
     return ParseRunDetailResponse(
         parse_run_id=parse_run.parse_run_id,
@@ -565,6 +567,9 @@ async def get_parse_results(
 
     result = await db.execute(query)
     documents = result.all()
+    await write_extracted_field_counts(
+        db, [parse_run for _, parse_run in documents], repair_zeros=True,
+    )
 
     # 查询每个附件的解析结果
     items = []

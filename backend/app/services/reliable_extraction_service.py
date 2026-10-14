@@ -69,12 +69,13 @@ class ReliableExtractionService:
         if strategy not in {"page_batch_v1", "field_retrieval_v2"}:
             raise ReliableExecutionError("unsupported reliable extraction strategy")
         if strategy == "page_batch_v1":
+            # 私有部署按页走完。不设整篇墙钟，也不设整篇 token 预算。
+            # 单次请求仍受模型超时和上下文长度限制，过长的页会拆块后继续。
             frozen_profile.update(extraction_strategy=strategy,
                 coordinator_field_key=min((rule.field_key for rule in rules), default=""),
-                max_run_seconds=settings.agent.reliable_max_seconds,
                 page_batch_chars=settings.agent.page_batch_chars,
-                hard_limit_tokens=document_token_hard_limit if document_token_hard_limit is not None
-                                  else settings.agent.reliable_token_limit)
+                max_run_seconds=None,
+                hard_limit_tokens=None)
         frozen_profile["parent_parse_run_id"] = str(parent_run_id) if parent_run_id else None
         frozen_profile["request_id"] = request_id
         frozen_profile["document_file_hash"] = document.file_hash
