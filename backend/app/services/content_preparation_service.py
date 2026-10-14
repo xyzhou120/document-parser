@@ -33,7 +33,9 @@ from app.services.assistant.index_repository import digest
 from app.services.content_build_service import ContentBuildService, ServiceUnavailable
 from app.services.content_publish_service import ContentPublishService
 from app.services.execution.job_repository import JobRepository
+from app.services.ocr_capacity import RedisOCRCapacity
 from app.services.service_circuit import RedisCircuitStore, ServiceCircuit, service_key
+from app.services.vision_transcription import VisionPageTranscriber
 from app.storage.minio_client import minio_client
 
 CONTENT_BUILD_OUTBOX = "content.build.execute"
@@ -196,6 +198,7 @@ class ContentPreparationService:
                 page_inputs = baseline
             render = renderer
             ocr_call = ocr
+            vision = None
             if render is None:
                 async def render(page, region):
                     image = await asyncio.to_thread(self.parser.get_page_image, pdf_path, int(page["page_number"]))
@@ -208,9 +211,30 @@ class ContentPreparationService:
                 if self.ocr is None and preprocessing_profile("checklist_agent")["version"] != frozen_profile["preprocess_profile"]["version"]:
                     raise ContentPreparationError("冻结OCR部署配置已变化，不能混用识别版本")
                 client = self.ocr or PaddleOCRClient()
+                ocr_limit = int(settings.models["ocr"].max_concurrency)
+                transcriber = VisionPageTranscriber()
+
                 async def ocr_call(image, page_number, region):
-                    return await client.recognize_regions(image, page_number,
-                                                          int(region.get("image_width") or 1), int(region.get("image_height") or 1))
+                    gate = RedisOCRCapacity(redis) if redis is not None else None
+                    token = None
+                    if gate is not None:
+                        token = await gate.try_acquire(ocr_limit, int(client.timeout) + 30)
+                        if token is None:
+                            return {"ocr_outcome": "capacity"}
+                    try:
+                        outcome = await client.recognize_regions_outcome(
+                            image, page_number, int(region.get("image_width") or 1), int(region.get("image_height") or 1))
+                    finally:
+                        if gate is not None:
+                            await gate.release(token)
+                    if outcome.status == "unavailable":
+                        raise RuntimeError(outcome.error or "ocr_unavailable")
+                    if outcome.status == "empty":
+                        return {"ocr_outcome": "empty"}
+                    return outcome.blocks
+
+                async def vision(image, page_number, region):
+                    return await transcriber.transcribe(image, page_number, region)
             redis = None
             if self.builder.circuit is None:
                 from redis.asyncio import Redis
@@ -220,6 +244,7 @@ class ContentPreparationService:
                 job = await db.get(ContentBuildJob, build_id, with_for_update=True)
                 try:
                     checkpoint = await self.builder.process(db, job, page_inputs, renderer=render, ocr=ocr_call,
+                        vision=vision,
                         service_key_value=service_key("ocr", str(frozen_profile["preprocess_profile"]["manifest"].get("ocr_service") or "injected"),
                                                       str(frozen_profile["preprocess_profile"]["manifest"].get("ocr_model") or "ocr"),
                                                       frozen_profile["preprocess_profile"]["version"]),

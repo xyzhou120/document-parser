@@ -51,6 +51,8 @@ class ReliableFieldExecutorConfig:
     candidates_per_call: int = 8
     semantic_retry_max: int = 3
     ranges_per_quantum: int = 4
+    # 同一份文档同时发出的页请求数。每次请求仍然只带一页。
+    page_parallelism: int = 2
 
 
 # 固定修订不可变。在工作进程生命周期内跨执行窗口保留已校验的适配内容，

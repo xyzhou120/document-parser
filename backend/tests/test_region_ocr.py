@@ -85,6 +85,61 @@ def test_region_endpoint_is_the_vl_ocr_route(monkeypatch):
     assert blocks and blocks[0].text == "残余瓦斯含量 2.23"
 
 
+def test_successful_response_without_text_is_empty_not_unavailable(monkeypatch):
+    class EmptyResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return []
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, files, headers):
+            return EmptyResponse()
+
+    monkeypatch.setattr("app.parsers.ocr_client.httpx.AsyncClient", FakeAsyncClient)
+    outcome = asyncio.run(client_without_init().recognize_regions_outcome(png(10, 10), 1, 10, 10))
+    assert outcome.status == "empty" and outcome.blocks == []
+
+
+def test_http_error_is_unavailable_and_legacy_call_still_returns_no_blocks(monkeypatch):
+    import httpx
+
+    class DeniedResponse:
+        def raise_for_status(self):
+            request = httpx.Request("POST", "http://ocr.test/vl_ocr")
+            response = httpx.Response(429, request=request)
+            raise httpx.HTTPStatusError("busy", request=request, response=response)
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, files, headers):
+            return DeniedResponse()
+
+    monkeypatch.setattr("app.parsers.ocr_client.httpx.AsyncClient", FakeAsyncClient)
+    client = client_without_init()
+    outcome = asyncio.run(client.recognize_regions_outcome(png(10, 10), 2, 10, 10))
+    assert outcome.status == "unavailable" and outcome.error == "http_429"
+    assert asyncio.run(client.recognize_regions(png(10, 10), 2, 10, 10)) == []
+
+
 def test_region_failure_is_an_empty_answer_not_a_fabricated_block(monkeypatch):
     class BrokenAsyncClient:
         def __init__(self, timeout):

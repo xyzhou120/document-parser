@@ -54,7 +54,8 @@ class CallRequest:
 
 @dataclass(frozen=True)
 class GatewayPolicy:
-    context_capacity: int = 32768
+    # 模型窗口约 26 万。平台预算取 13 万，给回答和其他系统留余量。
+    context_capacity: int = 131072
     framing_margin: int = 256
     max_output_tokens: int = 6000
     min_output_tokens: int = 2500
@@ -63,7 +64,8 @@ class GatewayPolicy:
     max_backoff_seconds: int = 120
     max_split_depth: int = 16
     max_images_per_call: int = 12
-    max_image_tokens_per_call: int = 4000
+    # 单页原图可以进同一次提取。4000 会把普通整页图判成溢出。
+    max_image_tokens_per_call: int = 16000
     token_per_char: float = 0.55
     image_tokens_per_kpx: float = 1.0
 

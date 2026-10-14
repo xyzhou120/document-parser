@@ -93,9 +93,11 @@ export default function ExecutionPanel({ runId, fields, onChange }: {
       try {
         const value = await getContentBuildStatus(data.document_id, buildId)
         if (disposed || request !== requestSequence.current) return
-        failures = 0; setBuildDispatchState(value.dispatch_state); setBuildStatus(value.status === 'CONTENT_READY' ? '内容已准备，正在打开可靠运行' : value.dispatch_state === 'waiting_service' ? '等待内容服务恢复，系统将自动继续' : ['partial', 'failed', 'failed_terminal', 'cancelled', 'superseded'].includes(value.dispatch_state) ? '内容构建未完成，保留已处理检查点' : '正在准备全文内容')
+        const waiting = value.last_wait_reason === 'ocr_capacity' ? 'OCR 并发已满，排队后自动继续' : value.last_wait_reason === 'vision_fallback_unavailable' ? '视觉兜底暂不可用，系统将自动继续' : '等待内容服务恢复，系统将自动继续'
+        failures = 0; setBuildDispatchState(value.dispatch_state); setBuildStatus(value.status === 'CONTENT_READY' ? '内容已准备，正在打开可靠运行' : value.dispatch_state === 'waiting_service' ? waiting : ['partial', 'failed', 'failed_terminal', 'cancelled', 'superseded'].includes(value.dispatch_state) ? '内容构建未完成，保留已处理检查点' : '正在准备全文内容')
         if (value.parse_run_id) { navigate(`/result/${value.parse_run_id}`); return }
-        if (value.last_error) setError(value.last_error)
+        if (value.last_error && value.dispatch_state !== 'waiting_service') setError(value.last_error)
+        else if (value.dispatch_state === 'waiting_service') setError('')
         if (!['partial', 'failed', 'failed_terminal', 'cancelled', 'superseded'].includes(value.dispatch_state)) timer = setTimeout(poll, value.dispatch_state === 'waiting_service' ? 15000 : 5000)
       } catch (failure) {
         if (disposed || request !== requestSequence.current) return

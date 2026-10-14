@@ -9,6 +9,7 @@ OCR服务客户端（PaddleOCR）
 """
 
 import logging
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -16,6 +17,19 @@ from app.config import settings
 from app.models.contracts import Box, Locator, TextBlock
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RegionOCROutcome:
+    """区域 OCR 的三类结果。empty 是成功但没有文字，unavailable 才是服务失败。"""
+
+    status: str
+    blocks: list[TextBlock] = field(default_factory=list)
+    error: str | None = None
+
+    def __post_init__(self):
+        if self.status not in {"text", "empty", "unavailable"}:
+            raise ValueError("invalid OCR outcome")
 
 
 class PaddleOCRClient:
@@ -98,11 +112,13 @@ class PaddleOCRClient:
     async def recognize_regions(
         self, image: bytes, page_number: int, image_width: int, image_height: int
     ) -> list[TextBlock]:
-        """供清单代理使用的区域 OCR：文本块携带像素 bbox 和布局标签。
+        """供清单代理使用的区域 OCR。服务错误和没有文字都返回空列表。"""
+        return (await self.recognize_regions_outcome(image, page_number, image_width, image_height)).blocks
 
-        此接口不提供分数，因此文本块置信度保持未知。错误返回空列表，
-        由调用方记录为页面失败。
-        """
+    async def recognize_regions_outcome(
+        self, image: bytes, page_number: int, image_width: int, image_height: int
+    ) -> RegionOCROutcome:
+        """区分成功无文字和服务失败。内容准备只把 unavailable 记入 OCR 熔断。"""
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 headers = {}
@@ -115,13 +131,14 @@ class PaddleOCRClient:
                 )
                 response.raise_for_status()
                 payload = response.json()
-            return self._parse_regions(payload, page_number)
+            blocks = self._parse_regions(payload, page_number)
+            return RegionOCROutcome("text" if blocks else "empty", blocks)
         except httpx.HTTPStatusError as e:
             logger.error(f"OCR region HTTP error on page {page_number}: {e.response.status_code}")
-            return []
+            return RegionOCROutcome("unavailable", error=f"http_{e.response.status_code}")
         except Exception as e:
             logger.error(f"OCR region failed on page {page_number}: {e}")
-            return []
+            return RegionOCROutcome("unavailable", error=type(e).__name__)
 
     def _parse_regions(self, payload, page_number: int) -> list[TextBlock]:
         if isinstance(payload, dict):

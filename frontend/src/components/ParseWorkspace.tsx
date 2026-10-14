@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Empty, Segmented, Steps, Tag, message } from 'antd'
 import {
   DownloadOutlined,
@@ -164,6 +164,7 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
   const [assistantStarted, setAssistantStarted] = useState(false)
   const [assistantEvidence, setAssistantEvidence] = useState<FactEvidence[]>([])
   const [assistantSelectedEvidence, setAssistantSelectedEvidence] = useState<FactEvidence>()
+  const assistantRef = useRef<HTMLDivElement>(null)
   const [execution, setExecution] = useState<ExecutionResponse>()
   const extracted = result?.fields || []
   const fields: ExtractedField[] = useMemo(() => {
@@ -181,6 +182,10 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
   const reliable = result?.contract_version === 'reliable-extraction-v2'
   const completed = execution && !execution.legacy ? execution.automatic_complete : !reliable && displayStatus === 'COMPLETED'
   const footerStatusClass = execution?.automatic_complete === true ? '' : displayStatus === 'FAILED' ? 'offline' : ['CANCELLED', 'SUPERSEDED'].includes(displayStatus) || !result ? 'neutral' : 'checking'
+  useEffect(() => {
+    if (!assistantOpen) return
+    assistantRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' })
+  }, [assistantOpen])
   useEffect(() => {
     setSelected(undefined)
     setSelectedOccurrence(undefined)
@@ -314,6 +319,18 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
         {result && <Button size="small" type={assistantOpen ? 'default' : 'primary'} onClick={() => { setAssistantStarted(true); setAssistantOpen((value) => !value) }} aria-pressed={assistantOpen}>{assistantOpen ? '返回提取核对' : '文档 AI 助手'}</Button>}
       </section>
 
+      {assistantStarted && result && <div className="assistant-workspace" ref={assistantRef} style={!assistantOpen ? { display: 'none' } : undefined}>
+        <section className="preview-panel"><div className="panel-bar"><strong>附件原文</strong>{fileUrl && <a href={fileUrl} target="_blank" rel="noreferrer">打开原文</a>}</div><div className="assistant-paper-stage">{fileUrl ? <PdfPreview url={fileUrl} evidence={assistantEvidence} evidencePage={assistantSelectedEvidence?.page_number || undefined} selectedEvidenceId={assistantSelectedEvidence?.evidence_id} /> : <Empty description="当前附件没有可预览的 PDF" />}</div></section>
+        <AssistantPanel documentId={result.document_id} parseRunId={result.parse_run_id} onCitations={(citations, selected) => {
+          setAssistantEvidence(citations)
+          setAssistantSelectedEvidence(selected)
+          setReviewEvidence(selected)
+          setSelectedEvidenceId(selected?.evidence_id)
+          setReviewPage(selected?.page_number || undefined)
+        }} />
+      </div>}
+
+      {!assistantOpen && <>
       {result?.status === 'FAILED' && (
         <Alert
           className="run-alert"
@@ -673,16 +690,7 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
         <span>文档前处理 → 清单知识与按需取证 → 同值归并与多来源证据 → 核对后使用</span>
         <span>提取信息，不作达标判断</span>
       </div>
-      {assistantStarted && result && <div className="assistant-workspace" style={!assistantOpen ? { display: 'none' } : undefined}>
-        <section className="preview-panel"><div className="panel-bar"><strong>附件原文</strong>{fileUrl && <a href={fileUrl} target="_blank" rel="noreferrer">打开原文</a>}</div><div className="assistant-paper-stage">{fileUrl ? <PdfPreview url={fileUrl} evidence={assistantEvidence} evidencePage={assistantSelectedEvidence?.page_number || undefined} selectedEvidenceId={assistantSelectedEvidence?.evidence_id} /> : <Empty description="当前附件没有可预览的 PDF" />}</div></section>
-        <AssistantPanel documentId={result.document_id} parseRunId={result.parse_run_id} onCitations={(citations, selected) => {
-          setAssistantEvidence(citations)
-          setAssistantSelectedEvidence(selected)
-          setReviewEvidence(selected)
-          setSelectedEvidenceId(selected?.evidence_id)
-          setReviewPage(selected?.page_number || undefined)
-        }} />
-      </div>}
+      </>}
     </>
   )
 }

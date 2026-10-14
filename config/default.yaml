@@ -67,6 +67,8 @@ models:
     api_key: null
     timeout: 60
     max_retries: 3
+    # 全平台同时进行的 OCR 请求数。超过后同一份内容准备排队自动继续。
+    max_concurrency: 4
 
 # 日志配置
 agent:
@@ -102,6 +104,12 @@ agent:
   max_candidates_multi: 36
   max_images_per_call: 12
   max_image_tokens_per_call: 4000
+  # 可靠按页提取。模型窗口约 26 万，平台使用其中 13 万；单页原图允许进入同一次调用。
+  reliable_context_tokens: 131072
+  reliable_max_image_tokens: 16000
+  reliable_page_parallelism: 2
+  # 一页正文的预切上限。普通报告页保持整页一次调用。
+  page_batch_chars: 100000
   candidate_window_chars: 300
   retrieval_image_policy: auto
 

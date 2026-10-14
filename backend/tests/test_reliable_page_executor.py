@@ -129,6 +129,62 @@ async def process(executor, rows, jobs, token, checkpoint=None):
 
 
 @pytest.mark.asyncio
+async def test_two_distinct_pages_are_sent_together():
+    import asyncio
+    executor, rows, jobs, provider, token = setup_executor(count=1, page_count=2)
+    executor._revision_content.return_value["pages"][1]["text_blocks"][0]["source"] = "human_correction"
+    current = 0
+    peak = 0
+    original = executor.gateway.execute
+
+    async def tracked(request):
+        nonlocal current, peak
+        current += 1
+        peak = max(peak, current)
+        try:
+            await asyncio.sleep(0.02)
+            return await original(request)
+        finally:
+            current -= 1
+
+    executor.gateway.execute = tracked
+    await executor(token, jobs[0].checkpoint)
+    assert peak == 2
+    assert provider.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_ocr_table_pages_are_sent_together_with_their_images():
+    import asyncio
+    executor, rows, jobs, provider, token = setup_executor(count=1, page_count=2, source="ocr")
+    pages = executor._revision_content.return_value["pages"]
+    for page in pages:
+        page["text_blocks"][0]["label"] = "table"
+    executor.image_provider = AsyncMock(return_value=(b"page-image", {"image_hash": "abc"}))
+    current = 0
+    peak = 0
+    original = executor.gateway.execute
+
+    async def tracked(request):
+        nonlocal current, peak
+        current += 1
+        peak = max(peak, current)
+        try:
+            await asyncio.sleep(0.02)
+            return await original(request)
+        finally:
+            current -= 1
+
+    executor.gateway.execute = tracked
+    await executor(token, jobs[0].checkpoint)
+    assert peak == 2
+    extractions = [item for item in provider.prompts
+                   if item["candidates"][0].get("stage") != "original_image_transcription"]
+    assert len(extractions) == 2
+    assert executor.image_provider.await_count >= 2
+
+
+@pytest.mark.asyncio
 async def test_all_fields_share_each_page_call_and_validated_results():
     executor, rows, jobs, provider, token = setup_executor()
     outcome = await process(executor, rows, jobs, token)
@@ -247,6 +303,7 @@ async def test_context_overflow_splits_rule_groups_without_repeating_unit():
 async def test_retry_exhausted_records_the_page_and_continues():
     executor, rows, jobs, provider, token = setup_executor(count=2, page_count=2)
     executor._revision_content.return_value["pages"][1]["text_blocks"][0]["source"] = "human_correction"
+    executor.config = replace(executor.config, page_parallelism=1)
     first = await executor(token, jobs[0].checkpoint)
     await executor.write_result(rows, jobs[0], first)
     from app.services.model_gateway import GatewayOutcome
@@ -291,6 +348,23 @@ async def test_invalid_response_has_only_one_retry():
     assert outcome.state == "done" and outcome.semantic_state == "review_required"
     assert provider.calls == 2
     assert outcome.checkpoint["failed_units"]
+
+
+@pytest.mark.asyncio
+async def test_second_split_ends_the_page_instead_of_expanding():
+    executor, rows, jobs, provider, token = setup_executor(count=1, page_count=1)
+    from app.services.model_gateway import GatewayOutcome
+    from app.services.page_extraction import build_page_units
+    executor.gateway.execute = AsyncMock(return_value=GatewayOutcome("context_overflow"))
+    cp = deepcopy(jobs[0].checkpoint)
+    cp["page_units"] = build_page_units(executor._revision_content.return_value["pages"])
+    cp["split_depths"] = {cp["page_units"][0]["unit_id"]: 2}
+    outcome = await process(executor, rows, jobs, token, cp)
+    assert outcome.state == "done"
+    assert outcome.semantic_state == "review_required"
+    assert len(outcome.checkpoint["page_units"]) == 1
+    assert outcome.checkpoint["failed_units"]
+    assert executor.gateway.execute.await_count == 1
 
 
 @pytest.mark.asyncio

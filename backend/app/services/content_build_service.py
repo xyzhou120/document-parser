@@ -6,6 +6,7 @@ P09 在不可变构建检查点停止。发布 Artifact、内容修订、影响�
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import json
@@ -77,7 +78,9 @@ class ServiceUnavailable(ContentBuildError):
 class ContentBuildService:
     """构建页面与区域检查点，但不提交发布状态。"""
 
-    def __init__(self, *, circuit: ServiceCircuit | None = None, max_region_attempts: int = 3, lease_seconds: int = 300):
+    def __init__(self, *, circuit: ServiceCircuit | None = None, max_region_attempts: int = 3,
+                 lease_seconds: int = 300, ocr_parallelism: int = 2):
+        self.ocr_parallelism = ocr_parallelism
         self.circuit = circuit
         self.max_region_attempts = max(1, max_region_attempts)
         self.lease_seconds = lease_seconds
@@ -118,6 +121,50 @@ class ContentBuildService:
         data = region.get("image_bytes") or page.get("image_bytes") or page.get("rendered_image")
         return bytes(data) if data is not None else None
 
+    async def _prepare_partner_ocr(self, pages, page_index, region_index, checkpoint, renderer):
+        """准备下一张需要 OCR 的页。文字层页面不占 OCR 名额。"""
+        if self.ocr_parallelism < 2:
+            return None
+        seen = False
+        for pi, page in enumerate(pages):
+            number = int(page.get("page_number", page.get("page", 0)))
+            if number <= 0:
+                continue
+            regions = self._regions(page, number)
+            for ri, region in enumerate(regions):
+                if not seen:
+                    if pi == page_index and ri == region_index:
+                        seen = True
+                    continue
+                rid = str(region["region_id"])
+                key = f"p{number}:{rid}"
+                if key in (checkpoint.get("prefetched_ocr") or {}):
+                    continue
+                if region.get("kind") == "native" or region.get("source") == "native":
+                    continue
+                cached = (checkpoint.get("regions") or {}).get(key) or {}
+                if cached.get("state") in {"processed", "blank", "unreadable", "failed"}:
+                    continue
+                image = self._page_image(page, region)
+                if image is None and renderer is not None:
+                    try:
+                        rendered = await self._call(renderer, page, region)
+                    except Exception:
+                        return None
+                    if isinstance(rendered, Mapping):
+                        image = rendered.get("image_bytes")
+                        region = {**region, **{k: v for k, v in rendered.items() if k != "image_bytes"}}
+                    else:
+                        image = rendered
+                if image is None:
+                    continue
+                self._ocr_images[key] = {
+                    "image_bytes": image,
+                    "updates": {k: v for k, v in region.items() if k != "image_bytes"},
+                }
+                return key, image, number, region
+        return None
+
     async def _call(self, fn: Callable[..., Any], *args: Any) -> Any:
         value = fn(*args)
         return await value if inspect.isawaitable(value) else value
@@ -143,6 +190,12 @@ class ContentBuildService:
             block["location_precision"] = "REGION" if box else "PAGE"
         values["location_precision"] = "REGION" if values.get("bbox") else "PAGE"
         values["image_ref"] = deepcopy(region.get("image_ref"))
+
+    @staticmethod
+    def _defer(checkpoint, reason: str, expected_count: int):
+        checkpoint["retry_at"] = (datetime.utcnow() + timedelta(seconds=5)).isoformat()
+        checkpoint["last_wait_reason"] = reason
+        checkpoint["coverage_manifest"] = ContentBuildService._manifest(checkpoint, expected_count)
 
     async def _save(self, db, job, checkpoint, fence, worker_id, *, state="running", phase="regions", error=None):
         current = await db.get(ContentBuildJob, job.build_id, with_for_update=True, populate_existing=True)
@@ -175,6 +228,7 @@ class ContentBuildService:
         *,
         renderer: Callable[[Mapping[str, Any], Mapping[str, Any]], bytes | Awaitable[bytes]] | None = None,
         ocr: Callable[[bytes, int, Mapping[str, Any]], Any] | None = None,
+        vision: Callable[[bytes, int, Mapping[str, Any]], Any] | None = None,
         service_key_value: str = "ocr:content-build",
         worker_id: str = "content-builder",
         expected_page_count: int | None = None,
@@ -202,7 +256,9 @@ class ContentBuildService:
             raise ValueError("positive page count and region quantum required")
         checkpoint["expected_page_count"] = expected_count
         work = 0
-        for page in pages:
+        checkpoint.setdefault("prefetched_ocr", {})
+        self._ocr_images = {}
+        for page_index, page in enumerate(pages):
             number = int(page.get("page_number", page.get("page", 0)))
             if number <= 0:
                 continue
@@ -217,7 +273,7 @@ class ContentBuildService:
             )
             page_cp["native_page"] = {k: deepcopy(v) for k, v in page.items() if k not in {"image_bytes", "rendered_image", "regions", "ocr_regions"}}
             page_cp["regions"] = [str(r["region_id"]) for r in regions]
-            for region in regions:
+            for region_index, region in enumerate(regions):
                 rid = str(region["region_id"])
                 checkpoint_key = f"p{number}:{rid}"
                 native_key = region_key(job.file_hash, number, rid, _digest(str(page.get("text") or "")), job.profile or {})
@@ -234,7 +290,13 @@ class ContentBuildService:
                     work += 1
                     await self._save(db, job, checkpoint, fence, worker_id)
                     continue
+                prepared = self._ocr_images.pop(checkpoint_key, None)
                 image = self._page_image(page, region)
+                if prepared:
+                    image = prepared["image_bytes"]
+                    region = {**region, **prepared["updates"]}
+                    if region.get("whole_page") and region.get("scope_complete") is True:
+                        page_cp["scope_attested"] = True
                 if image is None and renderer is not None:
                     try:
                         rendered = await self._call(renderer, page, region)
@@ -276,8 +338,55 @@ class ContentBuildService:
                     previous = {}
                 attempts = int(previous.get("attempts", 0)) + 1
                 try:
-                    payload = await self._call(ocr, image, number, region)
+                    payload = checkpoint["prefetched_ocr"].pop(checkpoint_key, None)
+                    if payload is None:
+                        partner = await self._prepare_partner_ocr(
+                            pages, page_index, region_index, checkpoint, renderer)
+                        if partner is None:
+                            payload = await self._call(ocr, image, number, region)
+                        else:
+                            partner_key, partner_image, partner_number, partner_region = partner
+                            payload, partner_payload = await asyncio.gather(
+                                self._call(ocr, image, number, region),
+                                self._call(ocr, partner_image, partner_number, partner_region),
+                                return_exceptions=True)
+                            if isinstance(payload, Exception):
+                                raise payload
+                            if not isinstance(partner_payload, Exception) and not (
+                                isinstance(partner_payload, Mapping)
+                                and partner_payload.get("ocr_outcome") == "capacity"
+                            ):
+                                checkpoint["prefetched_ocr"][partner_key] = partner_payload
+                    if isinstance(payload, Mapping) and payload.get("ocr_outcome") == "capacity":
+                        if self.circuit and permit:
+                            await self.circuit.release(service_key_value, permit)
+                        self._defer(checkpoint, "ocr_capacity", expected_count)
+                        await self._save(db, job, checkpoint, fence, worker_id, state="waiting_service",
+                                         error="OCR 并发已满，排队后会自动继续，无需重新上传")
+                        raise ServiceUnavailable("OCR capacity is full")
+                    from_vision = False
+                    if isinstance(payload, Mapping) and payload.get("ocr_outcome") == "empty":
+                        # OCR 已经成功返回，只是没有文字。不记成服务失败。
+                        if self.circuit and permit:
+                            await self.circuit.success(service_key_value, permit)
+                            permit = None
+                        if vision is None:
+                            checkpoint["regions"][checkpoint_key] = OCRRegionResult(
+                                rid, number, "unreadable", image_hash=digest, error="ocr_empty_no_vision",
+                            ).as_dict() | {"cache_key": cache_key, "attempts": attempts}
+                            await self._save(db, job, checkpoint, fence, worker_id)
+                            continue
+                        try:
+                            payload = await self._call(vision, image, number, region)
+                            from_vision = True
+                        except Exception as exc:
+                            self._defer(checkpoint, "vision_fallback_unavailable", expected_count)
+                            await self._save(db, job, checkpoint, fence, worker_id, state="waiting_service",
+                                             error=f"视觉兜底暂不可用，将自动重试：{type(exc).__name__}")
+                            raise ServiceUnavailable("vision fallback unavailable") from exc
                     values = self._parse_ocr(payload, rid, number, digest, region)
+                    if from_vision:
+                        values["source"] = "vision_fallback"
                     self._locate_blocks(values, region, page)
                     values["cache_key"] = cache_key
                     values["attempts"] = attempts
@@ -285,6 +394,8 @@ class ContentBuildService:
                     if self.circuit and permit:
                         await self.circuit.success(service_key_value, permit)
                     work += 1
+                except ServiceUnavailable:
+                    raise
                 except Exception as exc:
                     if self.circuit and permit:
                         await self.circuit.failure(service_key_value, permit)

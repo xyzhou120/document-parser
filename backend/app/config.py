@@ -67,6 +67,8 @@ class ModelSettings(BaseSettings):
     model_version: str = "unknown"
     timeout: int = 60
     max_retries: int = 3
+    # 全平台同时打到 OCR 的请求上限。超额的内容准备会排队，不会终止。
+    max_concurrency: int = 4
     trust_env: bool = True
     route: str | None = None
     dimensions: int | None = None
@@ -76,6 +78,13 @@ class ModelSettings(BaseSettings):
     def positive_dimensions(cls, value):
         if value is not None and value <= 0:
             raise ValueError("dimensions must be positive")
+        return value
+
+    @field_validator("max_concurrency")
+    @classmethod
+    def positive_concurrency(cls, value):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError("max_concurrency must be a positive integer")
         return value
 
     @field_validator("route")
@@ -163,7 +172,14 @@ class AgentSettings(BaseSettings):
     reliable_strategy: str = "page_batch_v1"
     reliable_max_seconds: int | None = None
     reliable_token_limit: int | None = None
-    page_batch_chars: int = 6000
+    # 提取按整页发送。只有单页正文超过这个长度才预切；模型回答过长时再拆这一页。
+    page_batch_chars: int = 100000
+    # 可靠按页提取的上下文预算，对应模型约 26 万窗口中的 13 万。
+    reliable_context_tokens: int = 131072
+    # 单页原图估算上限。整页图进入同一次提取，不再被旧的 4000 上限拆开。
+    reliable_max_image_tokens: int = 16000
+    # 一份文档同时发出的页请求数。每次请求仍然只包含一页。
+    reliable_page_parallelism: int = 2
     field_token_budget: int = 16000
     max_calls_per_field: int = 3
     candidates_per_call: int = 12

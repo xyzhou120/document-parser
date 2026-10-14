@@ -11,7 +11,7 @@
 .execution-error{display:block;color:#ae2929;margin-top:4px;max-width:260px;overflow-wrap:anywhere}
 .execution-checkpoint{white-space:pre-wrap;max-height:160px;overflow:auto;max-width:240px;font-size:10px;color:#526986}
 .execution-more{text-align:center;padding:0 0 12px}
-.assistant-workspace{display:grid;grid-template-columns:minmax(280px,1fr) minmax(360px,1.1fr);gap:10px;min-width:0}
+.assistant-workspace{display:grid;grid-template-columns:minmax(280px,1fr) minmax(360px,1.1fr);gap:10px;min-width:0;scroll-margin-top:110px}
 .assistant-paper-stage{height:690px;background:#edf2f7;padding:8px}
 .assistant-panel{background:#fff;border:1px solid #dce5ef;border-radius:5px;display:flex;flex-direction:column;min-height:690px;min-width:0;overflow:hidden}
 .assistant-panel>.panel-bar{flex-shrink:0}

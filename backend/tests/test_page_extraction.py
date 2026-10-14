@@ -45,6 +45,14 @@ def test_final_page_and_long_page_tail_are_never_dropped():
     assert len({unit["unit_id"] for unit in units}) == len(units)
 
 
+def test_a_report_page_longer_than_the_old_limit_stays_one_unit():
+    text = "瓦斯含量1.23m³/t\n" * 800
+    assert len(text) > 6000
+    units = build_page_units([{"page_number": 1, "text": text}], max_chars=100000)
+    assert len(units) == 1
+    assert units[0]["text"] == text
+
+
 def test_short_blocks_share_one_unit_and_preserve_source_coordinates():
     units = build_page_units([{"page_number": 1, "text_blocks": [
         {"block_id": "heading", "text": "测点A", "source": "native", "bbox": [0, 0, 10, 10]},

@@ -20,6 +20,7 @@ from app.services.model_gateway import (
     GatewayPolicy,
     ModelGateway,
     build_messages,
+    estimate_input,
     parse_response_json,
     split_candidates,
 )
@@ -261,6 +262,34 @@ def test_context_or_image_capacity_returns_split_without_paid_call():
         result = await gw.execute(req)
         assert result.state == "context_overflow" and len(result.split_batches) == 2
         assert client.calls == [] and (await ledger.usage_totals(req.job_id))["calls"] == 0
+    asyncio.run(run())
+
+
+def test_default_budget_sends_a_long_page_and_a_full_page_image():
+    import base64
+    import struct
+
+    async def run():
+        gw, client, _ = gateway([response([decision("page")])])
+        result = await gw.execute(replace(request("page"), estimated_input_tokens=40000))
+        assert result.state == "succeeded" and client.calls
+        raw = b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + struct.pack(">II", 5000, 1000)
+        image = "data:image/png;base64," + base64.b64encode(raw).decode()
+        image_request = replace(
+            request("page"),
+            dispatch_key="dispatch-image",
+            estimated_input_tokens=1000,
+            candidates=(CandidateInput("page", {"text": "页"}, (image,)),),
+        )
+        measured, count, image_tokens = estimate_input(build_messages(image_request), GatewayPolicy())
+        assert count == 1 and image_tokens > 4000 and measured < 131072
+        gw, client, _ = gateway([response([decision("page")])])
+        result = await gw.execute(image_request)
+        assert result.state == "succeeded" and result.error != "image_capacity" and client.calls
+        gw, client, _ = gateway([response([decision("page")])])
+        overflow = await gw.execute(replace(request("page"), estimated_input_tokens=200000))
+        assert overflow.state == "context_overflow" and "context_capacity" in (overflow.error or "")
+        assert client.calls == []
     asyncio.run(run())
 
 

@@ -149,6 +149,7 @@ async def content_status(document_id: UUID, build_id: UUID | None = None, db: As
     state = content_preparation_service.serialize(build)
     return {**state, "parse_run_id": (build.checkpoint or {}).get("parse_run_id"),
             "content_revision_id": (build.checkpoint or {}).get("published_revision_id"),
+            "last_wait_reason": (build.checkpoint or {}).get("last_wait_reason"),
             "status": "PREPARING_CONTENT" if build.phase != "published" else "CONTENT_READY"}
 
 

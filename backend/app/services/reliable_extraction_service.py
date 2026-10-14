@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import time
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
@@ -70,10 +71,12 @@ class ReliableExtractionService:
             raise ReliableExecutionError("unsupported reliable extraction strategy")
         if strategy == "page_batch_v1":
             # 私有部署按页走完。不设整篇墙钟，也不设整篇 token 预算。
-            # 单次请求仍受模型超时和上下文长度限制，过长的页会拆块后继续。
+            # 单次请求仍受模型超时限制。平台上下文预算放在模型窗口以内，
+            # 一页仍然放不下时最多再拆两层。
             frozen_profile.update(extraction_strategy=strategy,
                 coordinator_field_key=min((rule.field_key for rule in rules), default=""),
                 page_batch_chars=settings.agent.page_batch_chars,
+                page_parallelism=settings.agent.reliable_page_parallelism,
                 max_run_seconds=None,
                 hard_limit_tokens=None)
         frozen_profile["parent_parse_run_id"] = str(parent_run_id) if parent_run_id else None
@@ -262,11 +265,12 @@ class ReliableExtractionService:
     async def process_run(self, sessions: Any, run_id: UUID, *, executor: QuantumExecutor,
                           owner: str, max_quantums: int = 20, writer: Any = None,
                           before_publish: Any = None,
-                          lease_seconds: int = 90) -> dict[str, Any]:
+                          lease_seconds: int = 90, max_seconds: float | None = None) -> dict[str, Any]:
         """执行一个任务量子窗口，并自动将剩余持久化工作入队。
 
         调用方提供真实的语义执行器。这也是故障注入边界：测试使用受控结果，
         生产环境的 P13-B 提供检索、模型和核验，而不改变恢复逻辑。
+        max_seconds 到点后停止并保留剩余工作，运行不因此失败。
         """
         if max_quantums < 1:
             raise ValueError("max_quantums must be positive")
@@ -275,7 +279,10 @@ class ReliableExtractionService:
             self.ensure_contract(run)
         runner = FieldSchedulerRunner(sessions)
         executed = 0
+        started = time.monotonic()
         while executed < max_quantums:
+            if max_seconds is not None and executed and time.monotonic() - started >= max_seconds:
+                break
             token = await runner.run_next(run_id=run_id, owner=owner, execute=executor,
                                           write_result=writer, before_publish=before_publish,
                                           lease_seconds=lease_seconds)

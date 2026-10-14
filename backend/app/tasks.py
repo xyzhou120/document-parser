@@ -167,7 +167,12 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
                                  http_client=httpx.AsyncClient(trust_env=model.get("trust_env", config.trust_env)))
             circuit = ServiceCircuit(RedisCircuitStore(redis_client))
             ledger = CallLedger(sessions)
-            gateway = ModelGateway(client, ledger, circuit, GatewayPolicy(**profile.get("gateway_policy", {})))
+            policy_kwargs = {
+                "context_capacity": settings.agent.reliable_context_tokens,
+                "max_image_tokens_per_call": settings.agent.reliable_max_image_tokens,
+            }
+            policy_kwargs.update(profile.get("gateway_policy") or {})
+            gateway = ModelGateway(client, ledger, circuit, GatewayPolicy(**policy_kwargs))
             with TemporaryDirectory(prefix="reliable-evidence-") as directory:
                 renderers = {}
 
@@ -188,12 +193,18 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
                     ReliableFieldExecutorConfig(provider_key=service_key("model", model.get("base_url", config.base_url),
                         model.get("model_name", config.model_name), model.get("model_version", config.model_version)),
                         model=model.get("model_name", config.model_name),
-                        thinking_enabled=model.get("thinking_enabled", True)), image_provider=images)
-                # 按页抽取一次唤醒连续做完多组短页。字段扫描仍保持较短的唤醒，避免独占 worker。
-                quantums = 8 if profile.get("extraction_strategy") == "page_batch_v1" else 3
+                        thinking_enabled=model.get("thinking_enabled", True),
+                        page_parallelism=int(profile.get("page_parallelism")
+                            or settings.agent.reliable_page_parallelism)), image_provider=images)
+                # 按页提取由这次唤醒把剩余页做完。其他文档留在队列里等待，不因此终止。
+                # 接近 Celery 的 1 小时上限时交回剩余页，下一次唤醒继续同一份运行。
+                page_batch = profile.get("extraction_strategy") == "page_batch_v1"
+                quantums = 5000 if page_batch else 3
                 result = await reliable_extraction_service.process_run(sessions, run_id, executor=executor,
                     writer=executor.write_result, before_publish=executor.before_publish,
-                    owner=f"celery:{self.request.id}", max_quantums=quantums, lease_seconds=300)
+                    owner=f"celery:{self.request.id}", max_quantums=quantums,
+                    lease_seconds=600 if page_batch else 300,
+                    max_seconds=3000 if page_batch else None)
                 if result.get("remaining_runnable"):
                     try:
                         await asyncio.to_thread(reliable_execution_dispatch_task.delay)
@@ -260,7 +271,7 @@ def reliable_content_build_task(self, build_id: str):
                 initial_fence = current.fence_token if current else None
                 initial_file_hash = current.file_hash if current else None
             result = await content_preparation_service.run_build(sessions, UUID(build_id),
-                worker_id=worker_id, max_regions=20)
+                worker_id=worker_id, max_regions=400)
             if result.get("run_id"):
                 await asyncio.to_thread(reliable_execution_wakeup_task.delay, result["run_id"])
             return result

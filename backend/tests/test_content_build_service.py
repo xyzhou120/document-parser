@@ -34,7 +34,7 @@ async def test_build_resumes_after_midway_failure_and_reuses_success_cache():
             raise RuntimeError("temporary OCR outage")
         return {"text": f"页{page}值"}
 
-    service = ContentBuildService(max_region_attempts=3)
+    service = ContentBuildService(max_region_attempts=3, ocr_parallelism=1)
     pages = [{"page_number": 1, "regions_scope_complete": True, "regions": [{"region_id": "r1", "image_bytes": b"a"}]},
              {"page_number": 2, "regions_scope_complete": True, "regions": [{"region_id": "r2", "image_bytes": b"b"}]}]
     with pytest.raises(ServiceUnavailable):
@@ -48,6 +48,33 @@ async def test_build_resumes_after_midway_failure_and_reuses_success_cache():
     assert result["coverage_manifest"]["pages"][0]["scope_complete"] is True
     assert result["coverage_manifest"]["pages"][1]["scope_complete"] is True
     assert current.phase == "ready"
+
+
+@pytest.mark.asyncio
+async def test_two_scanned_pages_call_ocr_together():
+    import asyncio
+    current = job()
+    current_calls = 0
+    peak = 0
+
+    async def ocr(image, page, region):
+        nonlocal current_calls, peak
+        current_calls += 1
+        peak = max(peak, current_calls)
+        try:
+            await asyncio.sleep(0.02)
+            return {"text": f"页{page}"}
+        finally:
+            current_calls -= 1
+
+    pages = [
+        {"page_number": 1, "regions_scope_complete": True, "regions": [{"region_id": "r1", "image_bytes": b"a"}]},
+        {"page_number": 2, "regions_scope_complete": True, "regions": [{"region_id": "r2", "image_bytes": b"b"}]},
+    ]
+    result = await ContentBuildService().process(db(current), current, pages, ocr=ocr)
+    assert peak == 2
+    assert result["regions"]["p1:r1"]["raw_ocr"] == "页1"
+    assert result["regions"]["p2:r2"]["raw_ocr"] == "页2"
 
 
 @pytest.mark.asyncio
@@ -85,6 +112,83 @@ async def test_native_and_unreadable_pages_are_recorded_without_ocr_or_not_found
     assert result["regions"]["p2:u"]["state"] == "unreadable"
     assert result["coverage_manifest"]["pages"][0]["scope_complete"] is True
     assert result["coverage_manifest"]["pages"][1]["scope_complete"] is False
+
+
+def scanned_page():
+    return [{"page_number": 1, "regions": [{"region_id": "r", "image_bytes": b"image"}], "regions_scope_complete": True}]
+
+
+@pytest.mark.asyncio
+async def test_empty_ocr_uses_vision_text_and_does_not_count_as_ocr_failure():
+    store = MemoryCircuitStore()
+    circuit = ServiceCircuit(store, CircuitPolicy(threshold=1))
+    current = job()
+
+    async def ocr(*args):
+        return {"ocr_outcome": "empty"}
+
+    async def vision(*args):
+        return "瓦斯含量 1.02"
+
+    result = await ContentBuildService(circuit=circuit).process(db(current), current, scanned_page(), ocr=ocr, vision=vision)
+    assert result["regions"]["p1:r"]["state"] == "processed"
+    assert result["regions"]["p1:r"]["raw_ocr"] == "瓦斯含量 1.02"
+    assert result["regions"]["p1:r"]["source"] == "vision_fallback"
+    assert result["coverage_manifest"]["pages"][0]["scope_complete"] is True
+    assert all(item["failures"] == 0 for item in store.states.values())
+
+
+@pytest.mark.asyncio
+async def test_vision_confirms_blank_page_without_opening_the_ocr_circuit():
+    current = job()
+
+    async def ocr(*args):
+        return {"ocr_outcome": "empty"}
+
+    async def vision(*args):
+        return {"state": "blank", "blank_verified": True}
+
+    result = await ContentBuildService().process(db(current), current, scanned_page(), ocr=ocr, vision=vision)
+    assert result["regions"]["p1:r"]["state"] == "blank"
+    assert result["coverage_manifest"]["pages"][0]["scope_complete"] is True
+    assert current.dispatch_state == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_vision_outage_waits_and_leaves_the_ocr_circuit_closed():
+    store = MemoryCircuitStore()
+    circuit = ServiceCircuit(store, CircuitPolicy(threshold=1))
+    current = job()
+
+    async def ocr(*args):
+        return {"ocr_outcome": "empty"}
+
+    async def vision(*args):
+        raise RuntimeError("vision down")
+
+    with pytest.raises(ServiceUnavailable):
+        await ContentBuildService(circuit=circuit).process(db(current), current, scanned_page(), ocr=ocr, vision=vision)
+    assert current.dispatch_state == "waiting_service"
+    assert current.checkpoint["last_wait_reason"] == "vision_fallback_unavailable"
+    assert "p1:r" not in current.checkpoint["regions"]
+    assert all(item["failures"] == 0 for item in store.states.values())
+
+
+@pytest.mark.asyncio
+async def test_ocr_capacity_waits_without_consuming_the_region():
+    store = MemoryCircuitStore()
+    circuit = ServiceCircuit(store, CircuitPolicy(threshold=1))
+    current = job()
+
+    async def ocr(*args):
+        return {"ocr_outcome": "capacity"}
+
+    with pytest.raises(ServiceUnavailable):
+        await ContentBuildService(circuit=circuit).process(db(current), current, scanned_page(), ocr=ocr)
+    assert current.dispatch_state == "waiting_service"
+    assert current.checkpoint["last_wait_reason"] == "ocr_capacity"
+    assert current.checkpoint["regions"] == {}
+    assert all(item["failures"] == 0 for item in store.states.values())
 
 
 @pytest.mark.asyncio

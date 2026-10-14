@@ -22,6 +22,7 @@ export interface ContentBuildStatus {
   content_revision_id?: string | null
   status: 'PREPARING_CONTENT' | 'CONTENT_READY' | string
   last_error?: string | null
+  last_wait_reason?: string | null
 }
 
 export const getContentBuildStatus = (documentId: string, buildId: string): Promise<ContentBuildStatus> =>

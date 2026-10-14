@@ -9,6 +9,7 @@ allowing a run to share one model request between all of its fields.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 from copy import deepcopy
@@ -63,6 +64,10 @@ def _unit_pages(unit: dict) -> list[int]:
 def _scope_pages(pages: list[dict], rule) -> set[int]:
     return {number for shard in plan_rule_ranges(pages, rule.semantic_contract)
             for number in shard.page_numbers}
+
+
+# 仍放不下时最多再拆两层，然后结束这一页。更深的对半拆会把一页变成几十次调用。
+MAX_PAGE_SPLIT_DEPTH = 2
 
 
 def _split_text_unit(unit: dict, depth: int) -> list[dict]:
@@ -146,7 +151,7 @@ class ReliablePageExecutor(ReliableFieldExecutor):
             if cp.get("page_units"):
                 units = list(cp["page_units"])
             else:
-                fine = build_page_units(pages, max_chars=int(profile.get("page_batch_chars") or 6000))
+                fine = build_page_units(pages, max_chars=int(profile.get("page_batch_chars") or 100000))
 
                 def scope_key(page: int):
                     return tuple(sorted(key for key, numbers in scopes.items() if page in numbers))
@@ -239,13 +244,26 @@ class ReliablePageExecutor(ReliableFieldExecutor):
                     "measurements; do not invent facts or IDs."},),
             )
         saved_extraction = cp.get("pending_extraction") or {}
-        if saved_extraction.get("unit_id") == unit_id:
+        prefetched = (cp.get("prefetched_responses") or {}).pop(unit_id, None)
+        if prefetched is not None:
+            response = GatewayOutcome(**prefetched)
+        elif saved_extraction.get("unit_id") == unit_id:
             response = GatewayOutcome(**saved_extraction["response"])
-        elif cp.get("external_quota") and prior:
-            response = await self.gateway.requeue_external_quota(request, prior_call_id=prior,
-                dispatch_key=request.dispatch_key + ":quota-resume")
         else:
-            response = await self.gateway.execute(request)
+            partner = await self._partner_request(
+                token, cp, units, index, saved_units, job, rules, scopes, pages, document)
+            if partner is None or (cp.get("external_quota") and prior):
+                if cp.get("external_quota") and prior:
+                    response = await self.gateway.requeue_external_quota(request, prior_call_id=prior,
+                        dispatch_key=request.dispatch_key + ":quota-resume")
+                else:
+                    response = await self.gateway.execute(request)
+            else:
+                partner_request, partner_id = partner
+                response, partner_response = await asyncio.gather(
+                    self.gateway.execute(request), self.gateway.execute(partner_request))
+                cp.setdefault("prefetched_responses", {})[partner_id] = compact_checkpoint_payload(
+                    asdict(partner_response))
         if response.wait_state:
             cp["page_retry"] = response.retry_seq or retry
             cp["prior_call_id"] = response.call_id
@@ -264,8 +282,8 @@ class ReliablePageExecutor(ReliableFieldExecutor):
             return QuantumOutcome("yielded", cp)
         if response.state in {"context_overflow", "length"}:
             depth = int(cp.get("split_depths", {}).get(unit_id, 0))
-            children = _split_rule_unit(unit, applicable_rules, depth) if depth < 6 else []
-            if not children and depth < 6:
+            children = _split_rule_unit(unit, applicable_rules, depth) if depth < MAX_PAGE_SPLIT_DEPTH else []
+            if not children and depth < MAX_PAGE_SPLIT_DEPTH:
                 children = _split_text_unit(unit, depth)
             if children:
                 cp["page_units"] = units[:index] + children + units[index + 1:]
@@ -346,6 +364,67 @@ class ReliablePageExecutor(ReliableFieldExecutor):
         # The writer calculates each field's semantic state.  Keep the run open
         # for that transaction, then close it on the next coordinator quantum.
         return QuantumOutcome("yielded", cp)
+
+    async def _partner_request(self, token, cp, units, index, saved_units, job, rules, scopes, pages, document):
+        """准备下一页的独立请求。正在重试的页不参与这次并行。表格页会带上自己的原图。"""
+        if int(getattr(self.config, "page_parallelism", 1) or 1) < 2:
+            return None
+        if (cp.get("prior_call_id") or cp.get("pending_extraction") or int(cp.get("page_retry") or 0)
+                or cp.get("external_quota") or cp.get("image_prior_call_id")):
+            return None
+        nxt = index + 1
+        while nxt < len(units) and _unit_key(units[nxt]) in saved_units:
+            nxt += 1
+        if nxt >= len(units):
+            return None
+        partner = dict(units[nxt])
+        partner_id = _unit_key(partner)
+        if partner_id in (cp.get("prefetched_responses") or {}):
+            return None
+        partner_pages = set(_unit_pages(partner))
+        applicable = [rule for rule in rules if partner_pages & scopes[rule.field_key]
+            and (not partner.get("field_keys") or rule.field_key in partner["field_keys"])]
+        if not applicable or not str(partner.get("text") or "").strip():
+            return None
+        coordinator_cid = str(_page_candidate_id(job.job_id, partner_id))
+        payload = build_page_request(partner, [_page_rule(rule) for rule in applicable], coordinator_cid)
+        payload["candidate_id"] = coordinator_cid
+        payload["content_revision"] = str(job.revision_id)
+        payload["evidence_ids"] = ["page:" + coordinator_cid]
+        payload["material_provenance"] = cp["material_provenance"].get(str(partner["page_number"]))
+        payload["source_role_hint"] = (payload["material_provenance"] or {}).get("role")
+        partner["text_sufficient"] = str(partner.get("source") or "") == "ocr" and not ocr_text_needs_image(partner)
+        evidence_source = "native" if partner["text_sufficient"] else str(partner.get("source") or "native")
+        refs: tuple = ()
+        if ocr_text_needs_image(partner):
+            if self.image_provider is None:
+                return None
+            try:
+                image, _receipt = await self.image_provider(document, pages, {**partner,
+                    "candidate_id": coordinator_cid, "content_revision": cp["revision_id"]})
+            except Exception:
+                return None
+            refs = ("data:image/png;base64," + base64.b64encode(image).decode(),)
+        candidate = CandidateInput(coordinator_cid, payload, refs, evidence_source)
+        generation = int(cp.get("unit_retry_generations", {}).get(partner_id, 0))
+        dispatch_key = f"{job.job_id}:page:{partner_id}:g{generation}:0"
+        async with self.sessions() as db:
+            prior_dispatch = await db.scalar(select(ParseModelCall).where(
+                ParseModelCall.dispatch_key == dispatch_key))
+        request = CallRequest(
+            job_id=job.job_id, fence=prior_dispatch.fence if prior_dispatch else token.fence_token,
+            provider_key=self.config.provider_key, dispatch_key=dispatch_key,
+            checkpoint_key=f"page:{partner_id}", candidates=(candidate,), model=self.config.model,
+            estimated_input_tokens=0, thinking_enabled=self.config.thinking_enabled,
+            hard_limit_tokens=None,
+            messages=({"role": "system", "content":
+                "Extract every matching fact for every supplied field_rule on this page. "
+                "Return JSON decisions with candidate_id, judgement, and facts. Every fact "
+                "must include field_key, value, unit, value_kind, dimensions, source_role, "
+                "and evidence_ids copied from the supplied candidate. Preserve all repeated "
+                "measurements; do not invent facts or IDs."},),
+        )
+        return request, partner_id
 
     @staticmethod
     def _failed_unit(cp, index, unit, candidate_id, response) -> QuantumOutcome:
