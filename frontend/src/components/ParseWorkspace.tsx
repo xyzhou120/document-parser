@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Empty, Segmented, Steps, Tag, message } from 'antd'
+import { Alert, Button, Empty, Input, Segmented, Steps, Tabs, Tag, message } from 'antd'
 import {
   DownloadOutlined,
   FilePdfOutlined,
   FileSearchOutlined,
   LinkOutlined,
+  SearchOutlined,
 } from '@ant-design/icons'
 import type { DownstreamFact, ExtractedField, FactEvidence, ParseResultResponse } from '@/types/api'
 import PdfPreview from './PdfPreview'
@@ -13,8 +14,10 @@ import { exportRunFacts, getRunFacts } from '@/services/parse'
 import { apiError } from '@/services/api'
 import ExecutionPanel from './ExecutionPanel'
 import AssistantPanel from './AssistantPanel'
+import AssistantErrorBoundary from './AssistantErrorBoundary'
 import type { ExecutionResponse } from '@/types/api'
 import { executionStatusNames } from '@/services/execution'
+import '@/styles/result-workspace.css'
 
 export const statusNames: Record<string, string> = {
   ...executionStatusNames,
@@ -42,29 +45,6 @@ const methodNames: Record<string, string> = {
   agent_extract: '清单智能体',
 }
 
-/** 校验状态 -> 展示样式 */
-const validationNames: Record<string, { label: string; color: string }> = {
-  passed: { label: '校验通过', color: 'green' },
-  fallback_used: { label: '使用兜底值', color: 'gold' },
-  missing: { label: '未提取到', color: 'red' },
-  out_of_range: { label: '超出范围', color: 'orange' },
-  outlier: { label: '偏离典型区间', color: 'gold' },
-  invalid_format: { label: '格式不符', color: 'orange' },
-  blacklisted: { label: '命中黑名单', color: 'volcano' },
-  not_a_number: { label: '非数值', color: 'orange' },
-  conflict: { label: '候选值冲突', color: 'red' },
-  multiple_values: { label: '多条候选事实', color: 'orange' },
-  multiple_occurrences: { label: '多处证据', color: 'blue' },
-  low_confidence: { label: '待核对', color: 'gold' },
-  review_required: { label: '待人工核对', color: 'gold' },
-  blocked: { label: '已阻断，待处理', color: 'red' },
-  unresolved: { label: '未确认，需补充取证', color: 'gold' },
-  // Plan B statuses (2026-10-10): candidate unconfirmed, searched and absent, unfinished search.
-  partial_candidates: { label: '已有候选，未完成核对', color: 'gold' },
-  not_found: { label: '范围内未找到', color: 'orange' },
-  incomplete: { label: '未完成（额度/轮次/输出异常）', color: 'red' },
-}
-
 /** Plan C7 (2026-10-10): stable reason codes from the checklist agent, in reviewer wording. */
 const incompleteReasonNames: Record<string, string> = {
   token_budget_exhausted: '本字段 Token 额度用尽，剩余候选未核对',
@@ -84,26 +64,19 @@ const incompleteReasonNames: Record<string, string> = {
   no_action: '模型未给出动作（旧引擎）',
 }
 
-function fieldStatus(item: ExtractedField) {
-  const status = item.validation_status || item.extraction_detail?.validation_status
-  const groups = item.extraction_detail?.value_groups
-  if (groups?.length) return { label: `${groups.length} 组事实已发现`, review: false }
-  if ((item.instances?.length || 0) > 1 && (!status || status === 'passed' || status === 'multiple_occurrences')) {
-    return { label: '多条事实已发现', review: false }
-  }
-  if (status && status !== 'passed') return { label: validationNames[status]?.label || status, review: true }
-  if (item.field_value == null || !item.field_value.trim()) return { label: '未提取到', review: true }
-  // confidence is a method-match score, not a correctness probability. Every value remains reviewable.
-  return { label: '已发现', review: false }
+const targetStatusNames: Record<string, string> = {
+  NOT_RUN: '未运行',
+  RUNNING: '提取中',
+  FAILED: '执行失败',
+  NOT_FOUND_AFTER_COMPLETE_SEARCH: '完成检索未找到',
+  PARTIAL: '部分完成',
+  REVIEW_REQUIRED: '需要复核',
+  DELIVERABLE: '可交付',
 }
 
-const typeNames: Record<string, string> = {
-  string: '字符串',
-  integer: '整数',
-  float: '浮点数',
-  date: '日期',
-  array: '明细',
-  json: 'JSON',
+function fieldStatus(item: ExtractedField) {
+  const status = item.target_status || 'NOT_RUN'
+  return { label: targetStatusNames[status] || status, review: status !== 'DELIVERABLE' }
 }
 
 const valueKindNames: Record<string, string> = {
@@ -111,24 +84,405 @@ const valueKindNames: Record<string, string> = {
   threshold: '阈值', reported: '报告记录', unknown: '未知',
 }
 
-const bindingNames: Record<string, string> = { bound: '已绑定', unknown: '待核对', unverified: '未核验', partial: '部分绑定', not_required: '无需绑定' }
-const qualityIssueNames: Record<string, string> = {
-  UNIT_UNVERIFIED: '单位未核验', UNIT_MISMATCH: '单位不匹配', UNBOUND_DIMENSION: '维度未绑定',
-  VALUE_KIND_UNVERIFIED: '值类型未核验', ROLE_UNVERIFIED: '角色未核验',
+const dimensionNames: Record<string, string> = {
+  workface: '工作面', evaluation_unit: '评价单元', measurement_point: '测点',
+  roadway: '巷道', measurement_date: '测定日期', scope_level: '范围',
 }
 
-function fieldDisplayValue(item: ExtractedField) {
-  const groups = item.extraction_detail?.value_groups
-  if (groups?.length) return groups.length === 1 ? `${groups[0].value ?? '不可确认'}${groups[0].unit ? ` ${groups[0].unit}` : ''}` : `${groups.length} 组值（保留不同身份与不同值）`
+function dimensionValue(dimension: unknown): string | null {
+  if (dimension == null || dimension === '' || dimension === 'unknown') return null
+  if (typeof dimension === 'string') return dimension
+  if (typeof dimension === 'object') {
+    const value = (dimension as { value?: unknown }).value
+    if (value == null || value === '' || value === 'unknown') return null
+    return String(value)
+  }
+  return String(dimension)
+}
+
+function dimensionEntries(dimensions?: Record<string, unknown> | null) {
+  return Object.entries(dimensions || {}).flatMap(([key, dimension]) => {
+    const value = dimensionValue(dimension)
+    return value ? [[dimensionNames[key] || key, value] as const] : []
+  })
+}
+
+function identitySummary(items: Array<Record<string, unknown> | null | undefined>) {
+  const faces = new Set<string>()
+  const units = new Set<string>()
+  items.forEach((item) => {
+    const face = dimensionValue(item?.workface)
+    const unit = dimensionValue(item?.evaluation_unit)
+    if (face) faces.add(face)
+    if (unit) units.add(unit)
+  })
+  const text = (label: string, values: Set<string>) => {
+    const list = [...values]
+    if (!list.length) return ''
+    return `${label} ${list.slice(0, 3).join('、')}${list.length > 3 ? '…' : ''}`
+  }
+  return [text('工作面', faces), text('单元', units)].filter(Boolean).join(' · ')
+}
+
+function boxNumbers(bbox: unknown): number[] | null {
+  const raw = Array.isArray(bbox)
+    ? bbox
+    : bbox && typeof bbox === 'object'
+      ? [(bbox as { x0?: unknown }).x0, (bbox as { y0?: unknown }).y0, (bbox as { x1?: unknown }).x1, (bbox as { y1?: unknown }).y1]
+      : null
+  if (!raw || raw.length !== 4 || raw.some((value) => typeof value !== 'number' || !Number.isFinite(value))) return null
+  return raw
+}
+
+function located(item: FactEvidence): FactEvidence {
+  const box = boxNumbers(item.bbox)
+  if (!box) return item
+  return {
+    ...item,
+    bbox: box,
+    coordinate_system: item.coordinate_system || 'PDF_POINT',
+    coordinate_origin: item.coordinate_origin || 'MUPDF_UNROTATED_TOP_LEFT',
+  }
+}
+
+function sourceCards(items: FactEvidence[]) {
+  const seen = new Set<string>()
+  const cards: FactEvidence[] = []
+  items.forEach((item) => {
+    if (!item.page_number) return
+    const quote = (item.quote || '').replace(/\s+/g, '')
+    const key = `${item.page_number}|${quote}`
+    if (seen.has(key)) return
+    seen.add(key)
+    cards.push(item)
+  })
+  return cards
+}
+
+type TargetKind = 'fact' | 'statement' | 'table'
+type ProfileRule = {
+  field_key: string
+  target_type?: TargetKind
+  multi_instance?: boolean
+  output_schema?: { columns?: Array<{ key?: string; header?: string; unit?: string }>; row_identity?: string[] }
+  strategy?: { semantic_contract?: { cardinality?: string } }
+}
+type ResultRow = {
+  id: string
+  text: string
+  unit?: string | null
+  quote?: string | null
+  polarity?: string | null
+  page?: number | null
+  pages?: number[]
+  evidenceId?: string
+  dimensions: Record<string, unknown>
+  status: 'ready' | 'review' | 'conflict'
+  statusLabel: string
+  cells: Record<string, string>
+  kind?: string
+}
+
+const polarityNames: Record<string, string> = { affirmed: '肯定', negated: '否定', uncertain: '不确定', unknown: '未知' }
+const targetKindNames: Record<TargetKind, string> = { fact: '普通事实', statement: '原文内容', table: '表格明细' }
+const dimensionOrder = ['evaluation_unit', 'roadway', 'measurement_point', 'measurement_date', 'scope_level']
+
+function profileRules(result?: ParseResultResponse): ProfileRule[] {
+  return (result?.extraction_profile?.rules || []) as ProfileRule[]
+}
+
+function profileRule(item: ExtractedField, rules: ProfileRule[]) {
+  return rules.find((rule) => rule.field_key === item.field_key)
+}
+
+function targetKind(item: ExtractedField, rule?: ProfileRule): TargetKind {
+  return item.target_type || rule?.target_type || 'fact'
+}
+
+function multiConfigured(rule?: ProfileRule) {
+  const cardinality = rule?.strategy?.semantic_contract?.cardinality
+  return Boolean(rule?.multi_instance || cardinality === 'multi_identity' || cardinality === 'all_occurrences')
+}
+
+function clipText(value: string, limit = 28) {
+  const sentence = value.split(/[。！？\n]/)[0]?.trim() || value.trim()
+  return sentence.length > limit ? `${sentence.slice(0, limit)}…` : sentence
+}
+
+function cellText(cell: unknown) {
+  if (cell == null || cell === '') return ''
+  if (typeof cell === 'object' && 'value' in (cell as object)) {
+    const value = (cell as { value?: unknown }).value
+    return value == null || value === '' ? '' : String(value)
+  }
+  return String(cell)
+}
+
+function identityKey(dimensions: Record<string, unknown>) {
+  return dimensionEntries(dimensions).map(([key, value]) => `${key}=${value}`).join('|')
+}
+
+function canonicalWorkface(value: string) {
+  const core = value.replace(/\s+/g, '').replace(/(综采|综放|掘进)?工作面$/g, '')
+  return core ? `${core}工作面` : value.replace(/\s+/g, '')
+}
+
+function canonicalUnit(value: string) {
+  const compact = value.replace(/\s+/g, '')
+  const match = compact.match(/第([一二三四五六七八九十\d]+)(?:评判)?单元/)
+  return match ? `第${match[1]}单元` : compact
+}
+
+function normalizeDimensions(dimensions: Record<string, unknown>) {
+  const next: Record<string, unknown> = { ...dimensions }
+  const face = dimensionValue(next.workface)
+  const unit = dimensionValue(next.evaluation_unit)
+  if (face) next.workface = canonicalWorkface(face)
+  if (unit) next.evaluation_unit = canonicalUnit(unit)
+  Object.keys(next).forEach((key) => {
+    if (key === 'workface' || key === 'evaluation_unit') return
+    const value = dimensionValue(next[key])
+    if (value) next[key] = value.replace(/\s+/g, '')
+  })
+  return next
+}
+
+function spanSignature(text: string, workface: string) {
+  const face = workface.replace(/工作面$/g, '')
+  let compact = text.replace(/\s+/g, '')
+  if (face) compact = compact.split(face).join('')
+  compact = compact.replace(/第[一二三四五六七八九十\d]+(?:评判)?单元/g, '')
+  const numbers = [...compact.matchAll(/\d+(?:\.\d+)?/g)].map((item) => Number(item[0])).filter((value) => value >= 30 && value < 10000)
+  for (let index = 0; index < numbers.length - 1; index += 1) {
+    if (numbers[index + 1] > numbers[index]) return `${numbers[index]}-${numbers[index + 1]}`
+  }
+  return ''
+}
+
+function mergeCluster(rows: ResultRow[], conflict: boolean): ResultRow {
+  const best = [...rows].sort((left, right) => right.text.length - left.text.length)[0]
+  const pages = [...new Set(rows.flatMap((row) => row.pages?.length ? row.pages : row.page ? [row.page] : []))].sort((left, right) => left - right)
+  const cleared = best.status === 'conflict' ? 'review' as const : best.status
+  return {
+    ...best,
+    pages,
+    page: best.page && pages.includes(best.page) ? best.page : pages[0],
+    status: conflict ? 'conflict' : cleared,
+    statusLabel: conflict ? '同身份冲突' : cleared === 'ready' ? '可交付' : '待核对',
+  }
+}
+
+function collapseInstances(rows: ResultRow[]) {
+  const grouped = new Map<string, ResultRow[]>()
+  rows.forEach((row) => {
+    const dimensions = normalizeDimensions(row.dimensions)
+    const key = identityKey(dimensions) || row.id
+    const list = grouped.get(key) || []
+    list.push({ ...row, dimensions })
+    grouped.set(key, list)
+  })
+  const collapsed: ResultRow[] = []
+  grouped.forEach((group) => {
+    const face = dimensionValue(group[0].dimensions.workface) || ''
+    const ranged = new Map<string, ResultRow[]>()
+    const labels: ResultRow[] = []
+    group.forEach((row) => {
+      const signature = spanSignature(row.text, face)
+      if (!signature) labels.push(row)
+      else ranged.set(signature, [...(ranged.get(signature) || []), row])
+    })
+    if (!ranged.size) {
+      collapsed.push(mergeCluster(group, false))
+      return
+    }
+    const conflict = ranged.size > 1
+    ranged.forEach((list) => collapsed.push(mergeCluster(conflict ? list : [...list, ...labels], conflict)))
+    if (conflict && labels.length) collapsed.push(mergeCluster(labels, false))
+  })
+  return collapsed
+}
+
+function rowFromFact(fact: DownstreamFact): ResultRow {
+  const evidenceList = fact.evidence || []
+  const evidence = evidenceList.find((item) => item.page_number && item.quote) || evidenceList.find((item) => item.page_number) || evidenceList[0]
+  const evidenceIndex = evidence ? Math.max(0, evidenceList.indexOf(evidence)) : 0
+  const cells = Object.fromEntries(Object.entries(fact.table_row?.cells || {}).map(([key, cell]) => [key, cellText(cell)]))
+  const text = fact.statement?.text || (fact.target_type === 'table' ? fact.table_row_key || fact.value : fact.value) || fact.normalized || '不可确认'
+  const ready = fact.available_for_downstream === true || fact.target_status === 'DELIVERABLE' || fact.row_status === 'DELIVERABLE'
+  const review = fact.row_status === 'REVIEW_REQUIRED' || fact.target_status === 'REVIEW_REQUIRED' || fact.available_for_downstream === false
+  return {
+    id: fact.fact_id,
+    text: String(text),
+    unit: fact.unit,
+    quote: fact.statement?.quote || evidence?.quote || fact.raw || null,
+    polarity: fact.statement?.polarity || null,
+    page: evidence?.page_number,
+    evidenceId: evidence?.evidence_id || (evidence ? `fact-evidence-${fact.fact_id}-${evidenceIndex}` : undefined),
+    dimensions: fact.dimensions || {},
+    status: review && !ready ? 'review' : ready ? 'ready' : 'review',
+    statusLabel: ready ? '可交付' : '待核对',
+    cells,
+    kind: fact.value_kind,
+  }
+}
+
+function rowFromInstance(instance: NonNullable<ExtractedField['instances']>[number], index: number): ResultRow {
+  return {
+    id: instance.occurrence_id || `instance-${index}`,
+    text: instance.value ?? '不可确认',
+    unit: instance.unit,
+    quote: instance.context || null,
+    page: instance.page_num,
+    evidenceId: `instance-${index}`,
+    dimensions: instance.dimensions || {},
+    status: instance.quality_status && instance.quality_status !== 'passed' ? 'review' : 'review',
+    statusLabel: '待核对',
+    cells: {},
+    kind: instance.value_kind || undefined,
+  }
+}
+
+function buildRows(item: ExtractedField, facts: DownstreamFact[]) {
+  const own = facts.filter((fact) => fact.field_key === item.field_key).map(rowFromFact)
+  const rows = own.length ? own : (item.instances || item.extraction_detail?.instances || []).map(rowFromInstance)
+  return collapseInstances(rows)
+}
+
+function activeDimensionKeys(rows: ResultRow[], skip: string[] = []) {
+  const present = new Set<string>()
+  rows.forEach((row) => Object.keys(row.dimensions).forEach((key) => {
+    if (!skip.includes(key) && dimensionValue(row.dimensions[key])) present.add(key)
+  }))
+  return [...dimensionOrder.filter((key) => present.has(key)), ...[...present].filter((key) => !dimensionOrder.includes(key))]
+}
+
+function emptyFieldText(item: ExtractedField) {
   const status = item.validation_status || item.extraction_detail?.validation_status
-  if (item.field_value != null) return item.field_value
-  const candidateCount = item.instances?.length || item.extraction_detail?.instances?.length || 0
-  if (status === 'multiple_values' || candidateCount > 1) return `${candidateCount} 条候选事实`
-  // Plan B: say why there is no value instead of one generic "未提取到".
-  if (status === 'partial_candidates') return `${candidateCount} 条候选未确认`
+  if (status === 'partial_candidates') return '已有候选，未完成核对'
   if (status === 'not_found') return '未找到'
   if (status === 'incomplete') return '未完成'
-  return '未提取到'
+  return '未找到'
+}
+
+function fieldDisplayValue(item: ExtractedField, rules: ProfileRule[] = [], facts: DownstreamFact[] = []) {
+  const rule = profileRule(item, rules)
+  const kind = targetKind(item, rule)
+  const rows = buildRows(item, facts)
+  const summary = identitySummary(rows.map((row) => row.dimensions))
+  const several = multiConfigured(rule) || rows.length > 1
+  if (!rows.length) return emptyFieldText(item)
+  if (kind === 'table') return `${rows.length} 行`
+  if (kind === 'statement') return several ? `${rows.length} 段原文` : clipText(rows[0].text)
+  if (several) return summary ? `${rows.length} 组 · ${summary}` : `${rows.length} 组`
+  const text = `${rows[0].text}${rows[0].unit ? ` ${rows[0].unit}` : ''}`
+  return summary ? `${text} · ${summary}` : text
+}
+
+function focusLabel(row: ResultRow) {
+  const pages = row.pages?.length ? row.pages : row.page ? [row.page] : []
+  if (!pages.length) return '无页码'
+  if (pages.length === 1) return `第 ${pages[0]} 页`
+  const shown = pages.slice(0, 4).map((page) => `第 ${page} 页`).join('、')
+  return pages.length > 4 ? `${shown} 等 ${pages.length} 页` : shown
+}
+
+function tableColumns(rule: ProfileRule | undefined, rows: ResultRow[]) {
+  const configured = (rule?.output_schema?.columns || []).filter((column) => column.key).map((column) => ({
+    key: column.key || '', label: column.header || column.key || '', from: 'cell' as const,
+  }))
+  if (configured.length) return configured
+  return [...new Set(rows.flatMap((row) => Object.keys(row.cells)))].map((key) => ({ key, label: key, from: 'cell' as const }))
+}
+
+function ResultTable({ rows, columns, selectedId, onSelect, valueHeader = '值' }: {
+  rows: ResultRow[]
+  columns: Array<{ key: string; label: string; from: 'dimension' | 'cell' }>
+  selectedId?: string
+  onSelect: (row: ResultRow) => void
+  valueHeader?: string
+}) {
+  return (
+    <div className="result-grid-wrap">
+      <table className="result-grid">
+        <thead>
+          <tr>
+            {columns.map((column) => <th key={column.key}>{column.label}</th>)}
+            {valueHeader && <th>{valueHeader}</th>}
+            <th>页</th>
+            <th>状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id} tabIndex={0} aria-selected={!!selectedId && selectedId === row.evidenceId} className={selectedId && selectedId === row.evidenceId ? 'selected' : ''} onClick={() => onSelect(row)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(row) } }}>
+              {columns.map((column) => <td key={column.key}>{column.from === 'cell' ? (row.cells[column.key] || '—') : (dimensionValue(row.dimensions[column.key]) || '—')}</td>)}
+              {valueHeader && <td>{row.text}{row.unit ? ` ${row.unit}` : ''}</td>}
+              <td>{focusLabel(row)}</td>
+              <td><span className={`result-status ${row.status}`}>{row.statusLabel}</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function FactGroups({ rows, selectedId, onSelect }: { rows: ResultRow[]; selectedId?: string; onSelect: (row: ResultRow) => void }) {
+  const grouped = rows.some((row) => dimensionValue(row.dimensions.workface))
+  const groups = grouped
+    ? [...rows.reduce((map, row) => {
+      const face = dimensionValue(row.dimensions.workface) || '未标明工作面'
+      map.set(face, [...(map.get(face) || []), row])
+      return map
+    }, new Map<string, ResultRow[]>())]
+    : [['', rows] as [string, ResultRow[]]]
+  return (
+    <>
+      {groups.map(([face, group]) => {
+        const columns = activeDimensionKeys(group, grouped ? ['workface'] : []).map((key) => ({ key, label: dimensionNames[key] || key, from: 'dimension' as const }))
+        return (
+          <section className="result-group" key={face || 'all'}>
+            {face && <h4>工作面 {face}</h4>}
+            <ResultTable rows={group} columns={columns} selectedId={selectedId} onSelect={onSelect} />
+          </section>
+        )
+      })}
+    </>
+  )
+}
+
+function FactCard({ row, selected, onSelect }: { row: ResultRow; selected: boolean; onSelect: (row: ResultRow) => void }) {
+  const identity = dimensionEntries(row.dimensions)
+  return (
+    <article className={`result-card ${selected ? 'selected' : ''}`}>
+      <div className="evidence-value">{row.text}{row.unit ? ` ${row.unit}` : ''}</div>
+      {!!identity.length && <p className="result-identity">{identity.map(([key, value]) => `${key} ${value}`).join(' · ')}</p>}
+      <p className="result-meta">
+        {row.kind && row.kind !== 'unknown' && <span>值类型 {valueKindNames[row.kind] || row.kind}</span>}
+        <span className={`result-status ${row.status}`}>{row.statusLabel}</span>
+        <Button type="link" size="small" disabled={!row.page} onClick={() => onSelect(row)}>{selected ? '正在查看原文' : '在原文中查看'} · {focusLabel(row)}</Button>
+      </p>
+      {row.quote && <blockquote>{row.quote}</blockquote>}
+    </article>
+  )
+}
+
+function Passages({ rows, selectedId, onSelect }: { rows: ResultRow[]; selectedId?: string; onSelect: (row: ResultRow) => void }) {
+  return (
+    <div className="passage-list">
+      {rows.map((row) => {
+        const identity = dimensionEntries(row.dimensions).map(([key, value]) => `${key} ${value}`).join(' · ')
+        return (
+          <button type="button" key={row.id} className={`result-passage ${selectedId === row.evidenceId ? 'selected' : ''}`} onClick={() => onSelect(row)}>
+            {row.polarity && <Tag>{polarityNames[row.polarity] || row.polarity}</Tag>}
+            <span className={`result-status ${row.status}`}>{row.statusLabel}</span>
+            <p>{row.text}</p>
+            <span>{[identity, row.page ? `第 ${row.page} 页` : ''].filter(Boolean).join(' · ') || '未标明位置'}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
 }
 
 export function exportResult(result: ParseResultResponse) {
@@ -154,6 +508,7 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
   const [reviewPage, setReviewPage] = useState<number>()
   const [reviewEvidence, setReviewEvidence] = useState<FactEvidence>()
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>()
+  const [selectionRequest, setSelectionRequest] = useState(0)
   const [factView, setFactView] = useState<'automatic' | 'reviewed'>('automatic')
   const [reviewedFacts, setReviewedFacts] = useState<DownstreamFact[]>([])
   const [automaticFacts, setAutomaticFacts] = useState<DownstreamFact[]>()
@@ -166,6 +521,10 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
   const [assistantSelectedEvidence, setAssistantSelectedEvidence] = useState<FactEvidence>()
   const assistantRef = useRef<HTMLDivElement>(null)
   const [execution, setExecution] = useState<ExecutionResponse>()
+  const [fieldQuery, setFieldQuery] = useState('')
+  const [fieldFilter, setFieldFilter] = useState<'all' | 'review' | 'ready'>('all')
+  const [evidenceTab, setEvidenceTab] = useState('facts')
+  const [evidenceOpen, setEvidenceOpen] = useState(false)
   const extracted = result?.fields || []
   const fields: ExtractedField[] = useMemo(() => {
     const found = result?.fields || []
@@ -177,6 +536,12 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
     }))]
   }, [result?.fields, result?.missing_fields])
   const field = fields.find((item) => item.field_key === selected) || fields[0]
+  const visibleFields = fields.filter((item) => {
+    const query = fieldQuery.trim().toLowerCase()
+    const matchesQuery = !query || `${item.field_name} ${item.field_key} ${fieldDisplayValue(item, profileRules(result), result?.facts || [])}`.toLowerCase().includes(query)
+    const review = fieldStatus(item).review
+    return matchesQuery && (fieldFilter === 'all' || (fieldFilter === 'review' ? review : !review))
+  })
   const displayStatus = execution && !execution.legacy ? execution.status : result?.status || ''
   const active = ['PENDING', 'QUEUED', 'RUNNING', 'PROCESSING', 'RETRYING', 'WAITING_QUOTA', 'WAITING_SERVICE'].includes(displayStatus)
   const reliable = result?.contract_version === 'reliable-extraction-v2'
@@ -188,6 +553,10 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
   }, [assistantOpen])
   useEffect(() => {
     setSelected(undefined)
+    setFieldQuery('')
+    setFieldFilter('all')
+    setEvidenceTab('facts')
+    setEvidenceOpen(false)
     setSelectedOccurrence(undefined)
     setReviewPage(undefined)
     setReviewEvidence(undefined)
@@ -214,31 +583,41 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
   }
   const extractedCount = extracted.filter(hasExtractedValue).length
   const occurrence = selectedOccurrence == null ? undefined : instances[selectedOccurrence]
-  const validationStatus = field?.validation_status || field?.extraction_detail?.validation_status
-  const validation = validationStatus ? validationNames[validationStatus] : undefined
   const candidates = field?.extraction_detail?.fusion?.candidate_groups || []
   const rejected = field?.extraction_detail?.rejected_candidates || field?.extraction_detail?.fusion?.rejected_candidates || []
-  const valueGroups = field?.extraction_detail?.value_groups || []
   const runtime = result?.extraction_profile?.agent_runtime
   const visitedPages = runtime?.coverage?.visited_pages || runtime?.coverage?.viewed_pages || []
   const allAutomaticFacts = automaticFacts || result?.facts || []
   const fieldFacts: DownstreamFact[] = (factView === 'reviewed' ? reviewedFacts : allAutomaticFacts).filter((fact) => fact.field_key === field?.field_key)
+  const readingRule = field ? profileRule(field, profileRules(result)) : undefined
+  const readingKind = field ? targetKind(field, readingRule) : 'fact'
+  const readingRows = field ? buildRows(field, fieldFacts) : []
+  const readingMulti = readingRule ? multiConfigured(readingRule) : readingRows.length > 1
+  const selectReading = (row: ResultRow) => {
+    setSelectionRequest((value) => value + 1)
+    setSelectedOccurrence(undefined)
+    setReviewEvidence(undefined)
+    setSelectedEvidenceId(row.evidenceId)
+    setReviewPage(row.page || undefined)
+  }
   const evidenceRegistry = field?.extraction_detail?.evidence_registry || {}
   const legacyEvidence: FactEvidence[] = Object.entries(evidenceRegistry).map(([id, value]) => ({ ...value, evidence_id: id }))
-  const instanceEvidence: FactEvidence[] = instances.map((item, index) => ({
+  const instanceEvidence: FactEvidence[] = instances.map((item, index) => located({
     evidence_id: `instance-${index}`, page_number: item.page_num, bbox: item.bbox,
     coordinate_system: item.coordinate_system, coordinate_origin: item.coordinate_origin,
     page_rotation: item.page_rotation, image_width: item.image_width, image_height: item.image_height,
     location_status: item.location_status, quote: item.context, role: 'value',
   })).filter((item) => !!item.page_number)
-  const fieldEvidence: FactEvidence[] = evidence?.page_number ? [{ ...evidence.locator,
+  const fieldEvidence: FactEvidence[] = evidence?.page_number ? [located({ ...evidence.locator,
     evidence_id: 'field-evidence', page_number: evidence.page_number, quote: evidence.quote, role: 'value',
     location_status: evidence.location_status,
     bbox: evidence.location_status && evidence.location_status !== 'unavailable' ? evidence.locator?.bbox : null,
-  }] : []
-  const factEvidence: FactEvidence[] = fieldFacts.flatMap((fact) => fact.evidence.map((item, index) => ({ ...item, evidence_id: item.evidence_id || `fact-evidence-${fact.fact_id}-${index}` })))
+  })] : []
+  const factEvidence: FactEvidence[] = fieldFacts.flatMap((fact) => fact.evidence.map((item, index) => located({ ...item, evidence_id: item.evidence_id || `fact-evidence-${fact.fact_id}-${index}` })))
+  // 列表按引句合并，预览保留证据身份，避免事实行选中的 ID 被去重丢掉。
   const previewEvidence: FactEvidence[] = [...(reviewEvidence ? [reviewEvidence] : []), ...assistantEvidence, ...factEvidence, ...(factView === 'automatic' ? [...legacyEvidence, ...instanceEvidence, ...fieldEvidence] : [])]
     .filter((item, index, all) => item.evidence_id ? all.findIndex((candidate) => candidate.evidence_id === item.evidence_id && candidate.role === item.role) === index : true)
+  const sourceEvidence = sourceCards(previewEvidence)
   const selectedFact = fieldFacts.find((fact) => fact.evidence.some((item) => item.evidence_id === selectedEvidenceId))
   const loadReviewedFacts = () => setReviewedRefresh((value) => value + 1)
   const downloadFacts = async (format: 'json' | 'csv') => {
@@ -267,12 +646,12 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
     <button
       className={`field-row ${field?.field_key === item.field_key ? 'selected' : ''}`}
       key={item.field_key}
-      onClick={() => { setSelected(item.field_key); setSelectedOccurrence(undefined); setReviewPage(undefined); setReviewEvidence(undefined); setSelectedEvidenceId(undefined) }}
+      onClick={() => { setSelected(item.field_key); setEvidenceOpen(true); setSelectedOccurrence(undefined); setReviewPage(undefined); setReviewEvidence(undefined); setSelectedEvidenceId(undefined) }}
       aria-pressed={field?.field_key === item.field_key}
     >
       <span>{index + 1}</span>
-      <span title={item.field_name}>{item.field_name}</span>
-      <span title={fieldDisplayValue(item)}>{fieldDisplayValue(item)}</span>
+      <span className="field-name-cell" title={item.field_name}><strong>{item.field_name}{item.required && <em aria-label="必填"> *</em>}</strong><small>{methodNames[item.extraction_method || ''] || item.extraction_method || '提取方法未知'}</small></span>
+      <span title={fieldDisplayValue(item, profileRules(result), allAutomaticFacts)}>{fieldDisplayValue(item, profileRules(result), allAutomaticFacts)}</span>
       <span>{methodNames[item.extraction_method || ''] || item.extraction_method || '—'}</span>
       <span>{matchScore(item.confidence)}</span>
       <span
@@ -321,16 +700,16 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
 
       {assistantStarted && result && <div className="assistant-workspace" ref={assistantRef} style={!assistantOpen ? { display: 'none' } : undefined}>
         <section className="preview-panel"><div className="panel-bar"><strong>附件原文</strong>{fileUrl && <a href={fileUrl} target="_blank" rel="noreferrer">打开原文</a>}</div><div className="assistant-paper-stage">{fileUrl ? <PdfPreview url={fileUrl} evidence={assistantEvidence} evidencePage={assistantSelectedEvidence?.page_number || undefined} selectedEvidenceId={assistantSelectedEvidence?.evidence_id} /> : <Empty description="当前附件没有可预览的 PDF" />}</div></section>
-        <AssistantPanel documentId={result.document_id} parseRunId={result.parse_run_id} onCitations={(citations, selected) => {
+        <AssistantErrorBoundary key={result.document_id}><AssistantPanel documentId={result.document_id} parseRunId={result.parse_run_id} onCitations={(citations, selected) => {
           setAssistantEvidence(citations)
           setAssistantSelectedEvidence(selected)
           setReviewEvidence(selected)
           setSelectedEvidenceId(selected?.evidence_id)
           setReviewPage(selected?.page_number || undefined)
-        }} />
+        }} /></AssistantErrorBoundary>
       </div>}
 
-      {!assistantOpen && <>
+      {!assistantOpen && <div className="parse-results-shell">
       {result?.status === 'FAILED' && (
         <Alert
           className="run-alert"
@@ -351,12 +730,14 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
       )}
       {completed && result?.quality_status && result.quality_status !== 'QUALITY_OK' && (
         <Alert className="run-alert" type="warning" showIcon message="解析已完成，结果需要核对"
-          description={result.quality_status === 'FAILED' ? '未获得可用字段，请检查原文与提取规则。' : '请核对缺失字段、全部出现位置及质量提示。不同值均保留，由下游按业务场景使用。'} />
+          description={result.quality_status === 'FAILED' ? '未获得可用字段，请检查原文与提取规则。' : '请核对待核对字段，以及各工作面、单元或表格行上的取值。'} />
       )}
       {!!result?.warnings?.length && (
         <Alert className="run-alert" type="warning" showIcon message="解析提示"
           description={<ul>{result.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul>} />
       )}
+      <details className="run-records">
+      <summary>解析进度与运行记录 <span>查看处理范围、执行状态与模型调用</span></summary>
       {result && (result.artifact_id || result.mode || result.parent_parse_run_id) && (
         <Alert className="run-alert" type="info" showIcon message="文档前处理结果已关联"
           description={<>
@@ -375,6 +756,7 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
           </pre></details>
         </>} />}
       {result?.parse_run_id && <ExecutionPanel runId={result.parse_run_id} fields={fields} onChange={setExecution} />}
+      </details>
 
       <div className="workspace-three" style={assistantOpen ? { display: 'none' } : undefined}>
         <section className="preview-panel">
@@ -393,6 +775,7 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
                 evidencePage={reviewPage || occurrence?.page_num || evidence?.page_number}
                 evidence={previewEvidence}
                 selectedEvidenceId={selectedEvidenceId}
+                selectionRequest={selectionRequest}
               />
             ) : (
               <div className="preview-empty">
@@ -409,11 +792,12 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
           </div>
         </section>
 
+        <div className="results-side">
         <section className="fields-panel">
           <div className="panel-bar">
             <div>
               <strong>字段抽取结果</strong>
-              <span>{fields.length ? `共 ${fields.length} 个字段` : '等待解析'}</span>
+              <span>{fields.length ? `共 ${fields.length} 个字段 · 显示 ${visibleFields.length}` : '等待解析'}</span>
             </div>
             {result && completed && (
               <Button size="small" icon={<DownloadOutlined />} onClick={() => exportResult(result)}>
@@ -422,6 +806,10 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
             )}
           </div>
 
+          <div className="field-toolbar">
+            <Input size="small" allowClear prefix={<SearchOutlined />} placeholder="搜索字段、字段键或抽取值" value={fieldQuery} onChange={(event) => setFieldQuery(event.target.value)} />
+            <Segmented size="small" value={fieldFilter} options={[{ label: '全部', value: 'all' }, { label: '待核对', value: 'review' }, { label: '已就绪', value: 'ready' }]} onChange={(value) => setFieldFilter(value as typeof fieldFilter)} />
+          </div>
           <div className="result-summary">
             <span className="green-dot" />
             必填命中 {requiredCount}
@@ -439,7 +827,8 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
               <span>方法匹配分</span>
               <span>核对状态</span>
             </div>
-            {fields.map(renderField)}
+            {visibleFields.map((item) => renderField(item, fields.indexOf(item)))}
+            {!!fields.length && !visibleFields.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的字段，请调整搜索或筛选条件" />}
           </div>
 
           {!fields.length && (
@@ -453,8 +842,8 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
             </div>
           )}
 
-          <div className="field-scope">
-            <strong>当前提取范围</strong>
+          <details className="field-scope">
+            <summary>当前提取范围与方法说明</summary>
             <div>
               {fields.length ? (
                 fields.map((item) => (
@@ -471,201 +860,113 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
               )}
             </div>
             <p>方法匹配分仅反映提取路径匹配程度，未经正确率校准，不能作为字段正确概率。</p>
-          </div>
+          </details>
         </section>
 
-        <aside className="evidence-panel">
-          <div className="panel-bar">
+        <details className="evidence-panel" open={evidenceOpen} onToggle={(event) => setEvidenceOpen(event.currentTarget.open)}>
+          <summary className="panel-bar">
             <strong>证据详情</strong>
-            <span>{field ? `${fields.indexOf(field) + 1} / ${fields.length}` : '未选择字段'}</span>
-          </div>
+            <span className="evidence-selection">{field?.field_name || '未选择字段'}</span>
+            <span className="evidence-toggle">{evidenceOpen ? '收起详情' : '展开详情'}</span>
+          </summary>
           {field ? (
             <>
               <div className="evidence-title">
                 <strong>{field.field_name}</strong>
-                {validation ? (
-                  <Tag color={validation.color}>{validation.label}</Tag>
-                ) : (
-                  <Tag color={fieldStatus(field).review ? 'gold' : 'blue'}>{fieldStatus(field).label}</Tag>
-                )}
+                <Tag>{targetKindNames[readingKind]}</Tag>
+                {readingMulti && readingKind !== 'table' && <Tag color="purple">多实例</Tag>}
+                <Tag color={fieldStatus(field).review ? 'gold' : 'blue'}>{fieldStatus(field).label}</Tag>
               </div>
+              <Tabs className="evidence-tabs" activeKey={evidenceTab} onChange={setEvidenceTab} items={[
+                { key: 'facts', label: '事实结果' }, { key: 'source', label: '原文证据' },
+                { key: 'review', label: '人工复核' }, { key: 'trace', label: '提取追溯' },
+              ]} />
               <div className="evidence-content">
-                <div className="field-badges">
-                  {field.required && <Tag color="red">必填</Tag>}
-                  {field.data_type && <Tag>{typeNames[field.data_type] || field.data_type}</Tag>}
-                  {field.unit && <Tag color="blue">{field.unit}</Tag>}
-                  {instances.length > 1 && <Tag color="purple">{instances.length} 个实例</Tag>}
+                <div hidden={evidenceTab !== 'facts'}>
+                {!readingRows.length && <p className="muted result-empty">{emptyFieldText(field)}</p>}
+                {!!readingRows.length && readingKind === 'fact' && !readingMulti && (
+                  <>
+                    <FactCard row={readingRows.find((row) => row.evidenceId === selectedEvidenceId) || readingRows[0]} selected={selectedEvidenceId === (readingRows.find((row) => row.evidenceId === selectedEvidenceId) || readingRows[0]).evidenceId} onSelect={selectReading} />
+                    {readingRows.length > 1 && (
+                      <>
+                        <p className="muted">规则配置为单实例，结果里还有其他条。点一行可在原文中定位。</p>
+                        <FactGroups rows={readingRows} selectedId={selectedEvidenceId} onSelect={selectReading} />
+                      </>
+                    )}
+                  </>
+                )}
+                {!!readingRows.length && readingKind === 'fact' && readingMulti && (
+                  <>
+                    <p className="muted">点一行，在左侧原文标出这一条的位置。</p>
+                    <FactGroups rows={readingRows} selectedId={selectedEvidenceId} onSelect={selectReading} />
+                  </>
+                )}
+                {!!readingRows.length && readingKind === 'statement' && (
+                  <>
+                    <p className="muted">点一段原文，在左侧标出它所在的位置。</p>
+                    <Passages rows={readingRows} selectedId={selectedEvidenceId} onSelect={selectReading} />
+                  </>
+                )}
+                {!!readingRows.length && readingKind === 'table' && (
+                  <>
+                    <p className="muted">一行对应原文中的一行。点一行，在左侧标出位置。</p>
+                    <ResultTable
+                      rows={readingRows}
+                      valueHeader={tableColumns(readingRule, readingRows).length ? '' : '内容'}
+                      selectedId={selectedEvidenceId}
+                      onSelect={selectReading}
+                      columns={tableColumns(readingRule, readingRows)}
+                    />
+                  </>
+                )}
+                {(readingKind === 'table' || (readingKind === 'fact' && readingMulti)) && readingRows.find((row) => row.evidenceId === selectedEvidenceId)?.quote && (
+                  <blockquote>{readingRows.find((row) => row.evidenceId === selectedEvidenceId)?.quote}</blockquote>
+                )}
+
                 </div>
-
-                <label>提取值</label>
-                <div className="evidence-value">{fieldDisplayValue(field)}</div>
-
-                {result?.facts && <>
-                  <label>事实交付（{fieldFacts.length} 条）</label>
-                  <Segmented size="small" value={factView} options={[{ label: '自动事实', value: 'automatic' }, { label: '人工修订事实', value: 'reviewed' }]} onChange={(value) => {
-                    setFactView(value as 'automatic' | 'reviewed'); setSelectedEvidenceId(undefined); setReviewEvidence(undefined)
-                    if (value === 'reviewed') void loadReviewedFacts()
-                  }} />
-                  <div style={{ marginTop: 8 }}><Button size="small" onClick={() => void downloadFacts('json')}>导出事实 JSON</Button> <Button size="small" onClick={() => void downloadFacts('csv')}>导出事实 CSV</Button></div>
-                  {reviewedLoading && <p className="muted">读取人工事实…</p>}
-                  {factView === 'reviewed' && reviewedError && <Alert type="error" showIcon message={reviewedError} action={<Button size="small" onClick={() => void loadReviewedFacts()}>重试</Button>} />}
-                  {factView === 'reviewed' && !reviewedLoading && !reviewedError && !fieldFacts.length && <p className="muted">该字段没有可展示的人工修订事实（未复核或最新修订已拒绝）。自动事实保留在独立视图中。</p>}
-                  <div className="instance-list">
-                    {fieldFacts.map((fact) => <div className="instance-item" key={fact.fact_id}>
-                      <strong>{fact.value || fact.normalized || '不可确认'}{fact.unit ? ` ${fact.unit}` : ''}</strong>
-                      <div className="instance-meta">
-                        <span>事实ID {fact.fact_id}</span>
-                        <span>状态 {fact.review_status === 'HUMAN_REVIEWED' ? '人工修订' : fact.review_status === 'REJECTED' ? '已拒绝' : '自动结果'}</span>
-                        {fact.field_review_status && <span>字段复核 {fact.field_review_status === 'HUMAN_REVIEWED' ? '已有人工版本' : fact.field_review_status === 'REJECTED' ? '已拒绝' : '未复核'}</span>}
-                        <span>可供下游 {fact.available_for_downstream == null ? '未评估' : fact.available_for_downstream ? '是' : '否'}</span>
-                        <span>置信度 {fact.confidence?.score == null ? '未知' : fact.confidence.score.toFixed(3)} · {fact.confidence?.kind || '未知方法'}</span>
-                      </div>
-                      {!!Object.keys(fact.dimensions || {}).length && <div className="instance-meta">{Object.entries(fact.dimensions).map(([key, value]) => <span key={key}>{key}：{typeof value === 'object' && value ? String((value as { value?: unknown }).value ?? JSON.stringify(value)) : String(value ?? '—')}</span>)}</div>}
-                      {!!fact.risk?.length && <div className="instance-meta">{fact.risk.map((risk, riskIndex) => <Tag color="orange" key={`${risk.code}-${riskIndex}`}>{String(risk.code)}</Tag>)}</div>}
-                      <p>原文值：{fact.raw_values?.join('、') || fact.raw || '—'} · 值类型：{valueKindNames[fact.value_kind] || fact.value_kind} · 来源：{fact.source_role}</p>
-                      <details><summary>检查项、覆盖与版本追溯</summary><pre style={{ whiteSpace: 'pre-wrap', maxHeight: 220, overflow: 'auto' }}>{JSON.stringify({ checks: fact.checks, risk: fact.risk, coverage: fact.coverage, confidence: fact.confidence, provenance: fact.provenance }, null, 2)}</pre></details>
-                      {!!fact.evidence.length && <div className="instance-meta">{fact.evidence.map((ref, refIndex) => <Button type="link" size="small" key={`${ref.evidence_id || refIndex}-${ref.role}`} onClick={() => {
-                        setSelectedEvidenceId(ref.evidence_id || `fact-evidence-${fact.fact_id}-${refIndex}`)
-                        setReviewEvidence(undefined); setSelectedOccurrence(undefined)
-                        setReviewPage(ref.page_number || undefined)
-                      }}>查看{ref.role ? ` ${ref.role}` : ''} · 第 {ref.page_number || '—'} 页</Button>)}</div>}
-                    </div>)}
+                <div hidden={evidenceTab !== 'source'}>
+                  <p className="muted">同一页、同一句原文只列一次。点「查看第几页」可定位原文；可匹配的引句会高亮，区域坐标显示为取证范围。</p>
+                  {!sourceEvidence.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前字段未返回原文证据，请对照 PDF 核验" />}
+                  <div className="source-evidence-list">{sourceEvidence.map((ref, index) => <article key={`${ref.evidence_id || index}-${ref.role}`} className={`source-evidence ${ref.evidence_id === selectedEvidenceId ? 'selected' : ''}`}>
+                    <div className="source-evidence-heading"><strong>{({ value: '数值证据', unit: '单位证据', header: '表头证据', scope: '范围证据', dimension: '维度证据', object: '对象证据' } as Record<string, string>)[ref.role || 'value'] || ref.role}</strong>
+                      <Button size="small" type="link" disabled={!ref.page_number} onClick={() => { setSelectionRequest((value) => value + 1); setReviewEvidence(undefined); setSelectedEvidenceId(ref.evidence_id); setReviewPage(ref.page_number || undefined); setSelectedOccurrence(undefined) }}>查看第 {ref.page_number || '—'} 页</Button></div>
+                    {ref.quote ? <blockquote>{ref.quote}</blockquote> : <p className="muted">未返回原文引句，可按页查看。</p>}
+                    <p className="muted">{ref.bbox && ref.coordinate_system ? '已返回区域坐标，请结合原文核对' : '页级证据 · 未提供精确定位'}</p>
+                  </article>)}</div>
+                </div>
+                <div hidden={evidenceTab !== 'trace'}>
+                <details className="audit-fold" open>
+                  <summary>核对依据</summary>
+                  <div className="audit-body">
+                    <Segmented size="small" value={factView} options={[{ label: '自动结果', value: 'automatic' }, { label: '人工修订', value: 'reviewed' }]} onChange={(value) => {
+                      setFactView(value as 'automatic' | 'reviewed'); setSelectedEvidenceId(undefined); setReviewEvidence(undefined)
+                      if (value === 'reviewed') void loadReviewedFacts()
+                    }} />
+                    <div className="audit-actions"><Button size="small" onClick={() => void downloadFacts('json')}>导出 JSON</Button><Button size="small" onClick={() => void downloadFacts('csv')}>导出 CSV</Button></div>
+                    {reviewedLoading && <p className="muted">读取人工修订…</p>}
+                    {factView === 'reviewed' && reviewedError && <Alert type="error" showIcon message={reviewedError} action={<Button size="small" onClick={() => void loadReviewedFacts()}>重试</Button>} />}
+                    {factView === 'reviewed' && !reviewedLoading && !reviewedError && !readingRows.length && <p className="muted">该字段没有可展示的人工修订。</p>}
+                    <div className="evidence-meta">
+                      <span>方法匹配分<strong>{matchScore(field.confidence)}</strong></span>
+                      <span>提取方法<strong>{methodNames[field.extraction_method || ''] || field.extraction_method || '—'}</strong></span>
+                    </div>
+                    {!!field.extraction_detail?.incomplete_reasons?.length && <ul className="audit-list">{field.extraction_detail.incomplete_reasons.map((code) => <li key={code}>{incompleteReasonNames[code] || code}</li>)}</ul>}
+                    {field.extraction_detail?.retrieval && <p className="muted">候选 {field.extraction_detail.retrieval.candidates_total ?? '—'} · 已接受 {field.extraction_detail.retrieval.accepted ?? '—'} · 未通过 {field.extraction_detail.retrieval.rejected ?? '—'}</p>}
+                    {!!candidates.length && <p className="muted">多路径候选：{candidates.map((candidate) => candidate.value).join('、')}</p>}
+                    {!!rejected.length && <p className="muted">未通过校验：{rejected.map((candidate) => candidate.value).join('、')}</p>}
+                    {selectedFact && <p className="muted">当前事实 {selectedFact.fact_id} · 可供下游 {selectedFact.available_for_downstream == null ? '未评估' : selectedFact.available_for_downstream ? '是' : '否'}</p>}
+                    {selectedEvidenceId && !readingRows.find((row) => row.evidenceId === selectedEvidenceId)?.page && <p className="muted">选中条目没有页码，原文上不画框。</p>}
                   </div>
-                  <p className="muted">“可供下游使用”表示具备来源关联等结构条件，仍可能带风险。置信度是当前提取方法的质量信号，未校准为正确率。</p>
-                </>}
-                {selectedFact && <Alert type="info" showIcon message={`当前查看事实 ${selectedFact.fact_id}`} description={String(selectedFact.provenance?.source || '已选中事实的证据区域')} />}
-
-                {!!valueGroups.length && <>
-                  <label>同值归并结果（{valueGroups.length} 组）</label>
-                  <div className="instance-list">{valueGroups.map((group, index) => <div className="instance-item" key={index}>
-                    <strong>{group.value ?? '不可确认'}{group.unit ? ` ${group.unit}` : ''}</strong>
-                    <p>未核验 · {(group.evidence_refs || group.evidence_ids || []).length} 处证据</p>
-                    {!!group.identity && <p>业务身份：{JSON.stringify(group.identity)}</p>}
-                    {!!group.raw_values?.length && <p>原文值：{group.raw_values.join('、')}</p>}
-                    <details><summary>证据引用</summary>
-                      {(group.evidence_refs || group.evidence_ids || []).map((ref, refIndex) => <p key={refIndex}>
-                        {typeof ref === 'string' ? ref : `${ref.evidence_id || '—'} · 第 ${ref.page_number || '—'} 页 · ${ref.location_status || '定位未确认'}`}
-                      </p>)}
-                    </details>
-                  </div>)}</div>
-                </>}
-                {field.extraction_detail?.coverage && <details><summary>该字段取证覆盖范围</summary><pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(field.extraction_detail.coverage, null, 2)}</pre></details>}
-                {!!field.extraction_detail?.incomplete_reasons?.length && <Alert type="warning" showIcon message="未完成原因（不能据此判定缺失或正确）"
-                  description={<ul style={{ margin: 0, paddingLeft: 18 }}>{field.extraction_detail.incomplete_reasons.map((code) => <li key={code}>{incompleteReasonNames[code] || code}</li>)}</ul>} />}
-                {field.extraction_detail?.retrieval && <div className="evidence-meta">
-                  <span>候选<strong>{field.extraction_detail.retrieval.candidates_total ?? '—'}</strong></span>
-                  <span>送审<strong>{field.extraction_detail.retrieval.candidates_sent ?? '—'}</strong></span>
-                  <span>模型调用<strong>{field.extraction_detail.retrieval.calls ?? '—'}</strong></span>
-                  <span>已接受<strong>{field.extraction_detail.retrieval.accepted ?? '—'}</strong></span>
-                  <span>非目标<strong>{field.extraction_detail.retrieval.negative ?? '—'}</strong></span>
-                  <span>未通过<strong>{field.extraction_detail.retrieval.rejected ?? '—'}</strong></span>
-                </div>}
-                {!!field.extraction_detail?.unresolved?.length && <Alert type="warning" showIcon message="存在不可确认内容"
-                  description={<pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(field.extraction_detail.unresolved, null, 2)}</pre>} />}
-
-                {!!candidates.length && (
-                  <>
-                    <label>多路径候选{validationStatus === 'conflict' ? '（存在冲突）' : ''}</label>
-                    <div className="instance-list">
-                      {candidates.map((candidate, index) => <div className="instance-item" key={index}>
-                        <strong>{candidate.value}</strong>
-                        <p>{candidate.methods?.map((method) => methodNames[method] || method).join('、') || '来源未知'} · 页码 {candidate.pages?.join('、') || '—'}</p>
-                      </div>)}
-                    </div>
-                  </>
-                )}
-                {!!rejected.length && (
-                  <>
-                    <label>未通过校验的候选</label>
-                    <div className="instance-list">
-                      {rejected.map((candidate, index) => <div className="instance-item" key={index}>
-                        <strong>{candidate.value}</strong>
-                        <p>{validationNames[candidate.validation_status || '']?.label || candidate.validation_status || '未通过校验'} · 第 {candidate.page_num || '—'} 页</p>
-                      </div>)}
-                    </div>
-                  </>
-                )}
-
-                <div className="evidence-meta">
-                  <span>
-                    方法匹配分<strong>{matchScore(field.confidence)}</strong>
-                  </span>
-                  <span>
-                    提取方法
-                    <strong>{methodNames[field.extraction_method || ''] || field.extraction_method}</strong>
-                  </span>
+                </details>
+                <details className="audit-fold"><summary>完整事实、质量风险与覆盖记录</summary><pre className="trace-json">{JSON.stringify({ facts: fieldFacts, extraction_detail: field.extraction_detail, evidence: field.evidence }, null, 2)}</pre></details>
                 </div>
-
-                {!!instances.length && (
-                  <>
-                    <label>全部出现位置（{instances.length}）</label>
-                    <div className="instance-list">
-                      {instances.map((instance, index) => (
-                        <div className="instance-item" key={instance.occurrence_id || `${instance.value}-${instance.page_num}-${index}`}>
-                          <strong>
-                            {instance.value ?? '（未提供值）'}
-                            {instance.unit ? ` ${instance.unit}` : ''}
-                          </strong>
-                          <div className="instance-meta">
-                            <span>第 {instance.page_num || '—'} 页</span>
-                            <span>方法匹配分 {matchScore(instance.confidence)}</span>
-                            <span>{instance.methods?.length ? instance.methods.map((method) => methodNames[method] || method).join('、') : methodNames[instance.source || ''] || instance.source || ''}</span>
-                            {instance.value_kind && <span>值类型 {valueKindNames[instance.value_kind] || instance.value_kind}</span>}
-                            {instance.binding_status && <span>维度 {bindingNames[instance.binding_status] || instance.binding_status}</span>}
-                          </div>
-                          {!!instance.quality_issues?.length && <div className="instance-meta">
-                            {instance.quality_issues.map((issue, issueIndex) => <Tag color="orange" key={`${issue.code}-${issueIndex}`}>
-                              {qualityIssueNames[issue.code] || issue.code}
-                            </Tag>)}
-                          </div>}
-                          {instance.quality_status && instance.quality_status !== 'passed' && (
-                            <div className="instance-meta"><Tag color="gold">质量：{validationNames[instance.quality_status]?.label || instance.quality_status}</Tag></div>
-                          )}
-                          {!!instance.dimensions && <div className="instance-meta">
-                            {Object.entries(instance.dimensions).map(([key, dimension]) => (
-                              <span key={key} title={typeof dimension === 'string' ? undefined : dimension?.evidence || undefined}>{key}：{typeof dimension === 'string' ? dimension : dimension?.value || '—'}</span>
-                            ))}
-                          </div>}
-                          {(instance.table_title || instance.table_id || instance.row_index != null || instance.column_index != null) && (
-                            <div className="instance-meta">
-                              <span>表格 {instance.table_title || instance.table_id || '—'}</span>
-                              {instance.row_index != null && <span>第 {instance.row_index + 1} 行</span>}
-                              {instance.column_index != null && <span>第 {instance.column_index + 1} 列</span>}
-                            </div>
-                          )}
-                          {instance.context && <p>{instance.context}</p>}
-                          {instance.bbox && <p>{instance.source === 'agent_extract' ? '查看区域坐标（未核验为字段精确位置）' : '证据坐标'}{instance.coordinate_system ? `（${instance.coordinate_system}）` : ''}：({instance.bbox.x0}, {instance.bbox.y0}) – ({instance.bbox.x1}, {instance.bbox.y1})</p>}
-                          {!instance.bbox && <p className="muted">未提供精确证据坐标，仅可按页查看原图。</p>}
-                          {instance.start_offset != null && <p>页内文本位置：{instance.start_offset} – {instance.end_offset ?? '—'}</p>}
-                          <Button type="link" size="small" disabled={!instance.page_num} onClick={() => { setSelectedOccurrence(index); setReviewPage(undefined); setReviewEvidence(undefined); setSelectedEvidenceId(`instance-${index}`) }}>
-                            {selectedOccurrence === index ? '正在查看此处原文' : '查看此处原文'}
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                <label>来源片段</label>
-                {occurrence?.context || evidence?.quote ? (
-                  <blockquote>{occurrence?.context || evidence?.quote}</blockquote>
-                ) : (
-                  <p className="muted">该字段未返回原文证据，请对照 PDF 核验。</p>
-                )}
-
-                <label>来源位置</label>
-                <p className="muted">
-                  {occurrence?.page_num || evidence?.page_number ? `第 ${occurrence?.page_num || evidence?.page_number} 页` : '暂无页码'}
-                  {evidence?.locator?.bbox && !evidence.location_status && '（历史记录中的坐标为占位值，不能用于定位）'}
-                </p>
-                {evidence?.location_status === 'unavailable' && (
-                  <p className="muted">该证据仅提供页码；未提供可靠坐标时不绘制区域框。</p>
-                )}
-
+                <div hidden={evidenceTab !== 'review'}>
                 {result && field && ['COMPLETED', 'COMPLETED_WITH_REVIEW', 'FAILED'].includes(displayStatus) && <HumanReviewPanel result={result} field={field} onPage={(page) => { setReviewPage(page); setSelectedOccurrence(undefined) }} onEvidence={(ref) => {
                   const id = ref.evidence_id || 'review-evidence'
                   setReviewEvidence({ ...ref, evidence_id: id }); setReviewPage(ref.page_number || undefined); setSelectedEvidenceId(id)
                 }} onSaved={loadReviewedFacts} />}
+                {(!result || !['COMPLETED', 'COMPLETED_WITH_REVIEW', 'FAILED'].includes(displayStatus)) && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前执行状态尚未开放人工复核" />}
+                </div>
               </div>
             </>
           ) : (
@@ -679,7 +980,8 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
               </p>
             </div>
           )}
-        </aside>
+        </details>
+        </div>
       </div>
 
       <div className="workspace-bottom">
@@ -690,7 +992,7 @@ export default function ParseWorkspace({ fileName, fileUrl, result, extra }: Pro
         <span>文档前处理 → 清单知识与按需取证 → 同值归并与多来源证据 → 核对后使用</span>
         <span>提取信息，不作达标判断</span>
       </div>
-      </>}
+      </div>}
     </>
   )
 }

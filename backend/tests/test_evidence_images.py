@@ -8,6 +8,16 @@ import pymupdf
 import pytest
 
 from app.services.evidence_images import EvidenceImages
+from app.services.evidence_images import InvalidEvidenceRegion, clip_page_bbox
+
+
+def test_page_boundary_crop_preserves_overlap_and_rejects_unusable_regions():
+    page = {"width": 200, "height": 300}
+    assert clip_page_bbox(page, [-1, 5, 201, 301]) == [0, 5, 200, 300]
+    assert clip_page_bbox(page, None) is None
+    for bbox in ([210, 0, 220, 20], [100, 0, 10, 20], [0, 0, float("nan"), 1], [False, 0, 10, 20]):
+        with pytest.raises(InvalidEvidenceRegion):
+            clip_page_bbox(page, bbox)
 
 
 class MemoryStorage:

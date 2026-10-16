@@ -185,7 +185,7 @@ async def review_field(
     if locked.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="解析运行不存在")
     run, doc, field = await _context(db, parse_run_id, field_key)
-    if run.status not in {"COMPLETED", "FAILED"}:
+    if run.status not in {"COMPLETED", "COMPLETED_WITH_REVIEW", "FAILED"}:
         raise HTTPException(status_code=409, detail="运行尚未结束，不能提交人工复核")
     if payload.file_hash != doc.file_hash:
         raise HTTPException(status_code=409, detail="文件hash已变化，拒绝写入复核结果")

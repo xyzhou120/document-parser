@@ -15,10 +15,12 @@ import httpx
 from fastapi import HTTPException
 from sqlalchemy import select, text
 
+from app.config import settings
 from app.models.database import Document, ExtractedFieldModel, ParseRun
 from app.models.integrations import IntegrationOutbox, IntegrationRequest, utcnow
 from app.rules.repository import rule_repository
 from app.services.fact_service import build_fact_view
+from app.services.target_contract import structured_target_rejection
 from app.services.parse_service import rule_snapshot
 from app.services.release_service import bundle_specs, release_service, validate_bundle
 
@@ -134,6 +136,9 @@ class IntegrationService:
             raise HTTPException(422, "该文档清单没有启用规则")
         if payload["engine"] == "rules" and any(rule.methods == ["agent_extract"] for rule in rules):
             raise HTTPException(422, "此规则包包含智能体专用字段，请指定 checklist_agent")
+        rejection = structured_target_rejection(rules, payload["engine"], settings.agent.reliable_strategy)
+        if rejection:
+            raise HTTPException(422, rejection)
         profile = rule_snapshot(rules, document.checklist_type, payload["engine"])
         if payload.get("rule_bundle_id"):
             profile["rule_bundle_id"] = payload["rule_bundle_id"]

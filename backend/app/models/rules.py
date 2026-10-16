@@ -40,6 +40,14 @@ class ExtractionRule(Base):
     )
     checklist_type: Mapped[str] = mapped_column(String(100), index=True)
     field_key: Mapped[str] = mapped_column(String(100), index=True)
+    # field_key remains the stable compatibility key. These fields describe the
+    # first-class extraction target without forcing old rules to migrate at once.
+    target_type: Mapped[str] = mapped_column(String(30), default="fact", server_default="fact")
+    target_group_key: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    target_group_name: Mapped[Optional[str]] = mapped_column(String(255))
+    output_schema: Mapped[dict] = mapped_column(JSON, default=dict)
+    source_policy: Mapped[dict] = mapped_column(JSON, default=dict)
+    evidence_policy: Mapped[dict] = mapped_column(JSON, default=dict)
     field_name_cn: Mapped[str] = mapped_column(String(255))
     field_description: Mapped[Optional[str]] = mapped_column(Text)
     dimension_schema: Mapped[dict] = mapped_column(JSON, default=dict)

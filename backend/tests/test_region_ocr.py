@@ -34,6 +34,26 @@ def client_without_init():
     return client
 
 
+def test_content_ocr_reuses_transport_until_explicit_close():
+    import httpx
+    calls = []
+    async def handle(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, json=[])
+    async def run():
+        transport = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+        client = client_without_init()
+        client._http_client = transport
+        for page in (1, 2):
+            outcome = await client.recognize_regions_outcome(png(10, 10), page, 10, 10)
+            assert outcome.status == "empty"
+        assert not transport.is_closed
+        await client.aclose()
+        assert transport.is_closed
+    asyncio.run(run())
+    assert calls == ["/vl_ocr", "/vl_ocr"]
+
+
 def test_region_items_keep_text_pixel_box_and_layout_label_without_a_score():
     payload = [
         {"label": "doc_title", "bbox": [100, 40, 500, 80], "image": None, "content": "乔子梁煤矿"},

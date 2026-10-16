@@ -31,6 +31,15 @@ from app.services.execution.field_scheduler import QuantumExecutor
 CONTRACT_VERSION = "reliable-extraction-v2"
 
 
+def runnable_jobs(run: ParseRun, jobs: list[ParseFieldJob], *, now: datetime | None = None) -> list[ParseFieldJob]:
+    profile = run.extraction_profile or {}
+    coordinator = profile.get("coordinator_field_key") if profile.get("extraction_strategy") == "page_batch_v1" else None
+    now = now or datetime.utcnow()
+    return [job for job in jobs if job.execution_state in {"queued", "yielded"}
+        and (coordinator is None or job.field_key == coordinator)
+        and (job.next_attempt_at is None or job.next_attempt_at <= now)]
+
+
 class ReliableExecutionError(RuntimeError):
     pass
 
@@ -50,7 +59,7 @@ class ReliableExtractionService:
     async def start(self, db: AsyncSession, document_id: UUID, *, rules: list[Any],
                     revision_id: UUID | None = None, parent_run_id: UUID | None = None,
                     document_token_hard_limit: int | None = None, request_id: str | None = None,
-                    extraction_strategy: str | None = None) -> ParseRun:
+                    extraction_strategy: str | None = None, attachment_version_id: UUID | None = None) -> ParseRun:
         """创建新的显式 v2 运行，并冻结规则、内容和模型快照。"""
         from app.config import settings
         from app.services.content_publish_service import content_publish_service
@@ -69,6 +78,8 @@ class ReliableExtractionService:
         strategy = extraction_strategy or settings.agent.reliable_strategy
         if strategy not in {"page_batch_v1", "field_retrieval_v2"}:
             raise ReliableExecutionError("unsupported reliable extraction strategy")
+        if any(rule.target_type in {"statement", "table"} for rule in rules) and strategy != "page_batch_v1":
+            raise ReliableExecutionError("原文和表格目标需要 page_batch_v1 策略")
         if strategy == "page_batch_v1":
             # 私有部署按页走完。不设整篇墙钟，也不设整篇 token 预算。
             # 单次请求仍受模型超时限制。平台上下文预算放在模型窗口以内，
@@ -97,6 +108,8 @@ class ReliableExtractionService:
                 return existing
         if not rules:
             raise ReliableExecutionError("no selected rules")
+        from app.services.attachment_version_service import bind_start
+        version = await bind_start(db, document, frozen_profile, attachment_version_id)
         head = await content_publish_service._head(db, document_id)
         if revision_id is not None and head.active_content_revision_id != revision_id:
             raise ReliableExecutionError("requested content revision is not active")
@@ -108,12 +121,14 @@ class ReliableExtractionService:
                 from app.services.content_preparation_service import content_preparation_service
                 build = await content_preparation_service.prepare_build(db, document_id,
                     profile=frozen_profile, request_id=request_id or f"reliable:{document_id}:{uuid4()}")
+                version.build_id, version.state = UUID(build["build_id"]), "PREPARING_CONTENT"
                 raise ContentPreparationRequired(UUID(build["build_id"]))
             from app.services.content_adapter import ContentAdapter
             if not ContentAdapter().adapt(artifact).coverage_complete:
                 from app.services.content_preparation_service import content_preparation_service
                 build = await content_preparation_service.prepare_build(db, document_id,
                     profile=frozen_profile, request_id=request_id or f"reliable:{document_id}:{uuid4()}")
+                version.build_id, version.state = UUID(build["build_id"]), "PREPARING_CONTENT"
                 raise ContentPreparationRequired(UUID(build["build_id"]))
             published = await content_publish_service.publish_artifact(db, artifact,
                 expected_parent_revision_id=None, expected_cas_version=head.cas_version,
@@ -129,6 +144,7 @@ class ReliableExtractionService:
             build = await content_preparation_service.prepare_build(db, document_id,
                 profile=frozen_profile, request_id=request_id or f"reliable:{document_id}:{uuid4()}",
                 parent_revision_id=pinned_id)
+            version.build_id, version.state = UUID(build["build_id"]), "PREPARING_CONTENT"
             raise ContentPreparationRequired(UUID(build["build_id"]))
         parent = await db.get(ParseRun, parent_run_id) if parent_run_id else None
         if parent_run_id and (parent is None or parent.document_id != document_id):
@@ -146,6 +162,7 @@ class ReliableExtractionService:
             requested_field_keys=[rule.field_key for rule in rules])
         db.add(run)
         await db.flush()
+        version.run_id, version.state = run.parse_run_id, "RUNNING"
         repo = JobRepository(db)
         jobs = await repo.initialize_jobs(run.parse_run_id, revision_id=pinned_id, fields=[
             {"field_key": rule.field_key, "rule_hash": rule.rule_semantic_hash, "snapshot": asdict(rule)} for rule in rules])
@@ -293,19 +310,32 @@ class ReliableExtractionService:
             repo = JobRepository(db)
             current = await db.get(ParseRun, run_id)
             head = None
-            if before_publish is not None and current.status not in {"CANCELLED", "SUPERSEDED", "PAUSED"}:
+            managed = bool((current.extraction_profile or {}).get("attachment_version_id"))
+            if managed:
+                # 与附件控制入口一致：先业务父记录，再执行运行，禁止 run -> document 锁序反转。
+                from app.models.attachments import Attachment, AttachmentVersion
+                await db.get(Document, current.document_id, with_for_update=True, populate_existing=True)
+                await db.scalar(select(Attachment).where(Attachment.document_id == current.document_id).with_for_update())
+                await db.get(AttachmentVersion, UUID(current.extraction_profile["attachment_version_id"]), with_for_update=True)
+                # 字段结果提交使用 head -> run；聚合前先拿 head，避免与它形成反向等待。
+                from app.services.content_publish_service import content_publish_service
+                await content_publish_service._head(db, current.document_id)
+            if before_publish is not None and not managed and current.status not in {"CANCELLED", "SUPERSEDED", "PAUSED"}:
                 from app.services.content_publish_service import content_publish_service
                 head = await content_publish_service.guard_revision(db, document_id=current.document_id,
                     revision_id=current.content_revision_id,
                     expected_invalidation_watermark=(current.extraction_profile or {}).get("invalidation_watermark"))
             status = await repo.aggregate(run_id)
+            if managed:
+                from app.services.attachment_version_service import finalize_version
+                await finalize_version(db, current)
             if head is not None and status == "COMPLETED":
                 await content_publish_service.publish_parse_run(db, run_id,
                     expected_cas_version=head.cas_version,
                     expected_invalidation_watermark=head.invalidation_watermark,
                     expected_current_parse_run_id=head.current_parse_run_id)
             jobs = list((await db.execute(select(ParseFieldJob).where(ParseFieldJob.run_id == run_id))).scalars().all())
-            runnable = [job for job in jobs if job.execution_state in {"queued", "yielded"}]
+            runnable = runnable_jobs(current, jobs)
             # 每次 yield 已在同一事务中写入一个持久化字段唤醒事件。
             # 不要在此追加窗口级广播；调度器会按 run_id 合并待处理唤醒事件。
             if runnable:
@@ -317,9 +347,8 @@ class ReliableExtractionService:
                 # 只包含已完成字段的窗口不会产生 yield 唤醒事件。
                 # 使用一个事件保留剩余可运行工作。
                 if pending_wake is None:
-                    await repo.enqueue_outbox(kind="field_job_wakeup", aggregate_id=runnable[0].job_id,
-                        dedupe_key=f"run:{run_id}:continue:{current.execution_generation}:{sum(job.attempt for job in jobs)}:{sum(job.progress_seq for job in jobs)}",
-                        payload={"run_id": str(run_id), "execution_generation": current.execution_generation})
+                    await repo.ensure_run_continuation_wakeup(run_id, jobs,
+                        execution_generation=current.execution_generation)
             return {"status": status, "run_id": str(run_id), "quantums_executed": executed,
                     "remaining_runnable": len(runnable),
                     "successor_run_id": (current.extraction_profile or {}).get("successor_run_id")}
@@ -334,6 +363,10 @@ class ReliableExtractionService:
                                            kinds=kinds or ["field_job_wakeup"])
             if kinds is None or "field_job_wakeup" in kinds:
                 await JobRepository(db).requeue_due(limit=limit)
+                await JobRepository(db).recover_idle_runs(limit=limit)
+            if kinds and "content.build.execute" in kinds:
+                from app.services.content_preparation_service import content_preparation_service
+                await content_preparation_service.recover_builds(db, limit=limit)
             aggregate_ids = None
             if run_id is not None:
                 aggregate_ids = list((await db.execute(select(ParseFieldJob.job_id).where(

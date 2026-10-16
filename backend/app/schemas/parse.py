@@ -76,8 +76,14 @@ class ReliableUploadResponse(BaseModel):
 
 
 class ParseFieldResponse(BaseModel):
+    source_parse_run_id: UUID | None = None
     field_key: str
+    target_key: str | None = None
     field_name: str
+    target_type: str = "fact"
+    target_group_key: str | None = None
+    target_status: str = "NOT_RUN"
+    status_reason: dict[str, Any] = Field(default_factory=dict)
     field_value: str | None = None
     extraction_method: str
     confidence: float | None = None
@@ -102,13 +108,23 @@ class FactConfidence(BaseModel):
 class FactResponse(BaseModel):
     fact_id: str
     field_key: str
+    target_key: str | None = None
     field_name: str
+    target_type: str = "fact"
+    target_group_key: str | None = None
+    target_status: str = "DELIVERABLE"
+    status_reason: dict[str, Any] = Field(default_factory=dict)
     raw: str
     raw_values: list[str] = Field(default_factory=list)
     normalized: str
     value: str
     unit: str | None = None
     dimensions: dict[str, Any] = Field(default_factory=dict)
+    target_payload: dict[str, Any] = Field(default_factory=dict)
+    statement: dict[str, Any] | None = None
+    table_row: dict[str, Any] | None = None
+    table_row_key: str | None = None
+    row_status: str | None = None
     value_kind: str = "unknown"
     source_role: str = "unknown"
     evidence: list[dict[str, Any]] = Field(default_factory=list)
@@ -140,6 +156,7 @@ class FactViewResponse(BaseModel):
     document_id: UUID
     view: Literal["automatic", "reviewed", "available"]
     facts: list[FactResponse] = Field(default_factory=list)
+    targets: list[dict[str, Any]] = Field(default_factory=list)
     reviews: list[dict[str, Any]] = Field(default_factory=list)
     missing_fields: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

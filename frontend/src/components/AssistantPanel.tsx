@@ -3,6 +3,7 @@ import { Alert, Button, Empty, Input, Segmented, Select, Space, Tag, message as 
 import { ReloadOutlined, SendOutlined } from '@ant-design/icons'
 import axios from 'axios'
 import { apiError } from '@/services/api'
+import { createRequestId } from '@/utils/requestId'
 import { askAssistant, compareAssistantMessage, createAssistantSession, getDocumentCard, getAssistantLocations, getAssistantMessage, getAssistantStatus, requestDocumentCard, resumeAssistantMessage, submitAssistantFeedback, type AssistantComparison, type AssistantSession, type DocumentCard } from '@/services/assistant'
 import type { AssistantCitation, AssistantMessage, AssistantStatus, FactEvidence } from '@/types/api'
 
@@ -60,8 +61,8 @@ export default function AssistantPanel({ documentId, parseRunId, onCitations }: 
   const callback = useRef(onCitations)
   callback.current = onCitations
   const submitKey = useRef<{ input: string; requestId: string }>()
-  const sessionKey = useRef(crypto.randomUUID())
-  const cardKey = useRef(crypto.randomUUID())
+  const sessionKey = useRef(createRequestId())
+  const cardKey = useRef(createRequestId())
   const feedbackKey = useRef<{ input: string; requestId: string }>()
   const messageList = useRef<HTMLDivElement>(null)
   const canAsk = status?.can_ask && status.answerer_status !== 'unavailable'
@@ -72,7 +73,7 @@ export default function AssistantPanel({ documentId, parseRunId, onCitations }: 
     setLoading(true); setError(''); setUnavailable(false); setStatus(undefined)
     setSession(undefined); setMessages([]); setLocations({}); setCursors({}); setPollId(''); callback.current([])
     setCard(undefined); setCardError(''); setComparison(undefined); setFeedbackTarget(undefined); setCardExpanded(false)
-    sessionKey.current = crypto.randomUUID(); cardKey.current = crypto.randomUUID(); submitKey.current = undefined
+    sessionKey.current = createRequestId(); cardKey.current = createRequestId(); submitKey.current = undefined
     void getAssistantStatus(documentId).then((value) => { if (!disposed && request === requestSequence.current) setStatus(value) })
       .catch((failure) => {
         if (disposed) return
@@ -151,7 +152,7 @@ export default function AssistantPanel({ documentId, parseRunId, onCitations }: 
       setSession(activeSession)
       const parentId = messages[messages.length - 1]?.message_id
       const input = JSON.stringify({ text, mode, parent: parentId })
-      if (submitKey.current?.input !== input) submitKey.current = { input, requestId: crypto.randomUUID() }
+      if (submitKey.current?.input !== input) submitKey.current = { input, requestId: createRequestId() }
       const value = await askAssistant(activeSession.session_id, { request_id: submitKey.current.requestId, question: text, mode, parent_message_id: parentId })
       if (request !== requestSequence.current) return
       putMessage({ ...value, question: value.question || text, mode: value.mode || mode }); setQuestion(''); submitKey.current = undefined
@@ -192,7 +193,7 @@ export default function AssistantPanel({ documentId, parseRunId, onCitations }: 
       const value = await getDocumentCard(documentId, versions)
       if (request !== requestSequence.current) return
       if (value.status === 'not_generated' || force && value.status === 'failed') {
-        if (value.status === 'failed') cardKey.current = crypto.randomUUID()
+        if (value.status === 'failed') cardKey.current = createRequestId()
         const requested = await requestDocumentCard(documentId, { request_id: cardKey.current, ...versions })
         if (request !== requestSequence.current) return
         setCard(requested)
@@ -220,7 +221,7 @@ export default function AssistantPanel({ documentId, parseRunId, onCitations }: 
     try {
       const input = { expected_correction: { type: feedbackType, text: feedbackText.trim() }, reason: feedbackReason.trim(), submitted_by: feedbackActor.trim(), locator }
       const signature = JSON.stringify([feedbackTarget.message_id, input])
-      if (feedbackKey.current?.input !== signature) feedbackKey.current = { input: signature, requestId: crypto.randomUUID() }
+      if (feedbackKey.current?.input !== signature) feedbackKey.current = { input: signature, requestId: createRequestId() }
       await submitAssistantFeedback(feedbackTarget.message_id, { request_id: feedbackKey.current.requestId, ...input })
       toast.success('反馈已登记，等待离线裁决，不会直接修改事实或规则')
       setFeedbackTarget(undefined); setFeedbackText(''); setFeedbackReason(''); feedbackKey.current = undefined

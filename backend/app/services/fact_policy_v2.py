@@ -10,6 +10,8 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
+from app.services.target_contract import target_type
+
 VERSION = "reliable-extraction-v2"
 
 
@@ -86,6 +88,7 @@ def project_metadata(run: Any, field: Any, item: Mapping, rule: Mapping, fact: A
     reasons = deepcopy(item.get("availability_reasons") or [])
     contract = rule.get("semantic_contract") or (rule.get("strategy") or {}).get("semantic_contract") or rule
     required = {"value", "unit", "value_kind", "source_role", "table_relation"}
+    kind = target_type(rule)
     dimensions = contract.get("applicable_dimensions") or list(rule.get("dimension_schema") or {})
     required.update(f"dimensions.{key}" for key in dimensions)
     identity = contract.get("identity_dimensions") or ((rule.get("strategy") or {}).get("agent_extract") or {}).get("identity_dimensions") or list(rule.get("dimension_schema") or {})
@@ -100,7 +103,9 @@ def project_metadata(run: Any, field: Any, item: Mapping, rule: Mapping, fact: A
         supported = state == "supported" and bool(assertion.get("basis") and assertion.get("evidence_ids"))
         if state == "not_applicable":
             supported = ((key == "unit" and contract.get("unit_policy", {}).get("mode") == "not_applicable")
-                         or (key == "table_relation" and assertion.get("basis") == "source.non_table"))
+                         or (key == "table_relation" and assertion.get("basis") == "source.non_table")
+                         or (kind == "statement" and key in {"unit", "value_kind", "table_relation"}
+                             and assertion.get("basis") == "target.statement"))
         if not supported:
             reasons.append({"code": "ATTRIBUTE_UNSUPPORTED", "attribute": key, "status": state or "unknown"})
     if coverage is not True:
@@ -116,6 +121,12 @@ def project_metadata(run: Any, field: Any, item: Mapping, rule: Mapping, fact: A
     if get(fact, "available_for_downstream") is not True:
         reasons.append({"code": "STRUCTURAL_VALIDATION_FAILED"})
     risks = [*get(fact, "risk", []), *(completion.get("risks") or [])]
+    if kind == "table" and item.get("row_status") == "DELIVERABLE" and completion.get("range_closed") is True:
+        # 同一目标里其他行待复核时，已绑定的行仍按本行交付。
+        reasons = [reason for reason in reasons if reason.get("code") not in {
+            "FIELD_SEARCH_NOT_COMPLETED", "RANGE_SCOPE_OPEN", "FACT_ATTRIBUTES_UNSUPPORTED",
+        }]
+        risks = [risk for risk in risks if not (isinstance(risk, Mapping) and risk.get("code") == "FACT_ATTRIBUTES_UNSUPPORTED")]
     blockers = {"SAME_IDENTITY_CONFLICT", "SAME_IDENTITY_VALUE_CONFLICT", "IDENTITY_UNVERIFIED",
                 "OCR_CORRECTION_PENDING_PUBLICATION", "OCR_IMAGE_REQUIRED", "FACT_ATTRIBUTES_UNSUPPORTED",
                 "CANDIDATES_UNRESOLVED", "CARDINALITY_CONFLICT"}

@@ -261,6 +261,33 @@ async def test_thirty_native_pages_small_quantum_progresses_to_last_page():
 
 
 @pytest.mark.asyncio
+async def test_native_checkpoint_batches_but_yield_and_ocr_results_are_durable():
+    current = job()
+    connection = db(current)
+    service = ContentBuildService(ocr_parallelism=1)
+    pages = [{"page_number": n, "text": f"native page {n}", "native_coverage_complete": True}
+             for n in range(1, 11)]
+    checkpoint = await service.process(connection, current, pages, max_regions=6)
+    assert current.dispatch_state == "yielded"
+    assert len(checkpoint["regions"]) == 6
+    # 领取 + 第 4 区域 + 窗口 yield；第 5/6 区域不能丢在内存中。
+    assert connection.commit.await_count == 3
+    calls = []
+    async def ocr(image, page, region):
+        calls.append(page)
+        if len(calls) == 2:
+            assert current.checkpoint["regions"]["p11:r"]["state"] == "processed"
+            raise RuntimeError("synthetic outage")
+        return {"text": "已付费 OCR 结果"}
+    pages += [{"page_number": n, "regions_scope_complete": True,
+               "regions": [{"region_id": "r", "image_bytes": bytes([n])}]}
+              for n in (11, 12)]
+    with pytest.raises(ServiceUnavailable):
+        await service.process(db(current), current, pages, ocr=ocr)
+    assert current.checkpoint["regions"]["p11:r"]["raw_ocr"] == "已付费 OCR 结果"
+
+
+@pytest.mark.asyncio
 async def test_scan_mixed_rotated_pages_use_renderer_and_preserve_region_identity():
     current = job()
     render = AsyncMock(side_effect=lambda page, region: {"image_bytes": f"page-{page['page_number']}".encode(), "scope_complete": True,

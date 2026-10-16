@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from app.services.model_capacity import limited_model_request
+
 import base64
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -53,18 +55,19 @@ async def _complete_with_settings(image: bytes, page_number: int) -> str:
         http_client=httpx.AsyncClient(trust_env=config.trust_env),
     )
     try:
-        response = await client.chat.completions.create(
-            model=config.model_name,
-            temperature=0,
-            max_tokens=4000,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": f"第 {page_number} 页。{_PROMPT}"},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}},
-                ],
-            }],
-        )
+        async with limited_model_request(client, config.model_name, timeout=config.timeout):
+            response = await client.chat.completions.create(
+                model=config.model_name,
+                temperature=0,
+                max_tokens=4000,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": f"第 {page_number} 页。{_PROMPT}"},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}},
+                    ],
+                }],
+            )
     finally:
         await client.close()
     message = response.choices[0].message.content if response.choices else ""

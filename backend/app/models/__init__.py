@@ -34,6 +34,10 @@ from app.models.content import (
 from app.models.assistant import DocumentCard, QAMessage, QASession
 from app.models.assistant_feedback import AssistantFeedbackSample
 from app.models.rules import ChecklistType, ExtractionRule, RuleChangeLog
+from app.models.attachments import (
+    Attachment, AttachmentFileRevision, AttachmentImport, AttachmentImportRow,
+    AttachmentChecklistMapping, AttachmentVersion, AttachmentVersionSummary,
+)
 from app.models.schemas import (
     DocumentCreate,
     DocumentListResponse,
@@ -86,6 +90,8 @@ __all__ = [
     "ChecklistType",
     "ExtractionRule",
     "RuleChangeLog",
+    "Attachment", "AttachmentFileRevision", "AttachmentImport", "AttachmentImportRow",
+    "AttachmentChecklistMapping", "AttachmentVersion", "AttachmentVersionSummary",
     # 数据模式
     "DocumentCreate",
     "DocumentListResponse",

@@ -9,28 +9,31 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import logging
 import os
 import struct
 import tempfile
 from collections.abc import Callable
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.content import ContentBuildJob
 from app.models.database import Document, DocumentArtifact, ParseRun
+from app.models.execution import ExecutionOutbox
 from app.parsers.ocr_client import PaddleOCRClient
 from app.parsers.pdf_parser import PDFParser
 from app.rules.semantic_contract import rule_semantic_hash
 from app.services.artifact_service import preprocessing_profile
 from app.services.assistant.index_repository import digest
-from app.services.content_build_service import ContentBuildService, ServiceUnavailable
+from app.services.content_build_service import ContentBuildError, ContentBuildService, ServiceUnavailable
 from app.services.content_publish_service import ContentPublishService
 from app.services.execution.job_repository import JobRepository
 from app.services.ocr_capacity import RedisOCRCapacity
@@ -39,6 +42,7 @@ from app.services.vision_transcription import VisionPageTranscriber
 from app.storage.minio_client import minio_client
 
 CONTENT_BUILD_OUTBOX = "content.build.execute"
+logger = logging.getLogger(__name__)
 
 
 class ContentPreparationError(RuntimeError):
@@ -54,6 +58,75 @@ class ContentPreparationService:
         self.publisher = publisher or ContentPublishService()
         self.ocr = ocr
         self.cache_dir = Path(cache_dir) if cache_dir else Path(tempfile.gettempdir()) / "document-parser-content-v2"
+
+    async def _process_with_heartbeat(self, sessions, db, job, pages, *, worker_id, **kwargs):
+        expected_fence = (job.fence_token or 0) + 1
+
+        async def heartbeat_loop():
+            while True:
+                await asyncio.sleep(max(1.0, min(30.0, self.builder.lease_seconds / 3)))
+                try:
+                    async with sessions() as heartbeat_db, heartbeat_db.begin():
+                        current = await heartbeat_db.get(ContentBuildJob, job.build_id,
+                            with_for_update=True, populate_existing=True)
+                        if (current is None or current.fence_token != expected_fence
+                                or current.lease_owner != worker_id
+                                or current.lease_until is None or current.lease_until <= datetime.utcnow()):
+                            raise ContentBuildError("stale content build worker cannot continue")
+                        current.lease_until = datetime.utcnow() + timedelta(seconds=self.builder.lease_seconds)
+                except ContentBuildError:
+                    raise
+                except Exception:
+                    logger.warning("内容构建续租失败 build_id=%s", job.build_id, exc_info=True)
+
+        heartbeat = asyncio.create_task(heartbeat_loop())
+        execution = asyncio.create_task(self.builder.process(db, job, pages, worker_id=worker_id, **kwargs))
+        try:
+            done, _ = await asyncio.wait((heartbeat, execution), return_when=asyncio.FIRST_COMPLETED)
+            if execution not in done:
+                await heartbeat
+            return await execution
+        finally:
+            for task in (heartbeat, execution):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(heartbeat, execution, return_exceptions=True)
+
+    async def recover_builds(self, db: AsyncSession, *, limit: int = 100) -> int:
+        """补偿已投递但丢失的内容任务，以及 worker 退出后无人持有的构建。"""
+        now = datetime.utcnow()
+        rows = (await db.scalars(select(ContentBuildJob).where(
+            ContentBuildJob.dispatch_state.in_(["queued", "yielded", "waiting_service", "running", "succeeded"]),
+            ContentBuildJob.phase != "published",
+            ContentBuildJob.updated_at <= now - timedelta(minutes=5),
+        ).order_by(ContentBuildJob.updated_at).limit(limit).with_for_update(skip_locked=True))).all()
+        count = 0
+        for job in rows:
+            if job.lease_until and job.lease_until > now:
+                continue
+            retry_at = (job.checkpoint or {}).get("retry_at")
+            if job.dispatch_state == "waiting_service" and retry_at and datetime.fromisoformat(retry_at) > now:
+                continue
+            outstanding = await db.scalar(select(ExecutionOutbox.event_id).where(
+                ExecutionOutbox.kind == CONTENT_BUILD_OUTBOX, ExecutionOutbox.aggregate_id == job.build_id,
+                ExecutionOutbox.dispatch_state.in_(["pending", "failed", "sending"])).limit(1))
+            if outstanding is not None:
+                continue
+            job.fence_token = (job.fence_token or 0) + 1
+            job.lease_owner = job.lease_until = None
+            job.updated_at = now
+            recoveries = int((job.checkpoint or {}).get("worker_recoveries", 0)) + 1
+            job.checkpoint = {**dict(job.checkpoint or {}), "worker_recoveries": recoveries}
+            if recoveries > 6:
+                job.dispatch_state, job.last_error = "failed_terminal", "content_worker_recovery_exhausted"
+                continue
+            job.dispatch_state = "queued"
+            job.last_error = "content_worker_recovered"
+            await JobRepository(db).enqueue_outbox(kind=CONTENT_BUILD_OUTBOX, aggregate_id=job.build_id,
+                dedupe_key=f"content-recovery:{job.build_id}:{job.fence_token}",
+                payload={"build_id": str(job.build_id), "document_id": str(job.document_id), "file_hash": job.file_hash})
+            count += 1
+        return count
 
     async def prepare_build(self, db: AsyncSession, document_id: UUID, *, profile: dict[str, Any],
                             request_id: str, parent_revision_id: UUID | None = None) -> dict[str, Any]:
@@ -164,6 +237,8 @@ class ContentPreparationService:
             job = await db.get(ContentBuildJob, build_id)
             if job is None:
                 raise KeyError("content build不存在")
+            if job.dispatch_state in {"paused", "cancelled", "superseded", "failed_terminal"}:
+                return {"build": self.serialize(job), "status": job.dispatch_state}
             document = await db.get(Document, job.document_id)
             if document is None or document.file_hash != job.file_hash:
                 raise ContentPreparationError("构建文件版本已变化")
@@ -210,7 +285,10 @@ class ContentPreparationService:
             if ocr_call is None:
                 if self.ocr is None and preprocessing_profile("checklist_agent")["version"] != frozen_profile["preprocess_profile"]["version"]:
                     raise ContentPreparationError("冻结OCR部署配置已变化，不能混用识别版本")
-                client = self.ocr or PaddleOCRClient()
+                own_ocr_client = self.ocr is None
+                client = self.ocr or PaddleOCRClient(
+                    http_client=httpx.AsyncClient(timeout=settings.models["ocr"].timeout)
+                )
                 ocr_limit = int(settings.models["ocr"].max_concurrency)
                 transcriber = VisionPageTranscriber()
 
@@ -243,12 +321,13 @@ class ContentPreparationService:
             async with sessions() as db:
                 job = await db.get(ContentBuildJob, build_id, with_for_update=True)
                 try:
-                    checkpoint = await self.builder.process(db, job, page_inputs, renderer=render, ocr=ocr_call,
+                    checkpoint = await self._process_with_heartbeat(sessions, db, job, page_inputs, renderer=render, ocr=ocr_call,
                         vision=vision,
                         service_key_value=service_key("ocr", str(frozen_profile["preprocess_profile"]["manifest"].get("ocr_service") or "injected"),
                                                       str(frozen_profile["preprocess_profile"]["manifest"].get("ocr_model") or "ocr"),
                                                       frozen_profile["preprocess_profile"]["version"]),
-                        worker_id=worker_id, expected_page_count=len(page_inputs), max_regions=max_regions)
+                        worker_id=worker_id, expected_page_count=len(page_inputs), max_regions=max_regions,
+                        max_seconds=settings.agent.reliable_wakeup_seconds)
                 except ServiceUnavailable:
                     job = await db.get(ContentBuildJob, build_id, populate_existing=True)
                     checkpoint = job.checkpoint
@@ -262,7 +341,19 @@ class ContentPreparationService:
                     await db.commit()
                     return {"build": self.serialize(job), "status": job.dispatch_state, "coverage_manifest": checkpoint.get("coverage_manifest")}
             async with sessions() as db, db.begin():
-                job = await db.get(ContentBuildJob, build_id, with_for_update=True)
+                # 发布桥与控制保持 Document -> Attachment -> Version -> Build -> Head 顺序。
+                job0 = await db.get(ContentBuildJob, build_id)
+                version = None
+                if job0.profile.get("attachment_version_id"):
+                    from app.models.attachments import Attachment, AttachmentVersion
+                    await db.get(Document, job0.document_id, with_for_update=True, populate_existing=True)
+                    await db.scalar(select(Attachment).where(Attachment.document_id == job0.document_id).with_for_update())
+                    version = await db.get(AttachmentVersion, UUID(job0.profile["attachment_version_id"]), with_for_update=True)
+                    if version is None or version.state not in {"PREPARING_CONTENT", "QUEUED", "RUNNING"}:
+                        return {"status": "cancelled_or_paused", "build_id": str(build_id)}
+                job = await db.get(ContentBuildJob, build_id, with_for_update=True, populate_existing=True)
+                if job.dispatch_state in {"cancelled", "superseded", "failed_terminal", "paused"}:
+                    return {"status": job.dispatch_state, "build_id": str(build_id)}
                 if job.phase == "published":
                     return {"build": self.serialize(job), "status": "published", "revision_id": job.checkpoint["published_revision_id"],
                             "run_id": job.checkpoint.get("parse_run_id")}
@@ -296,6 +387,12 @@ class ContentPreparationService:
                                                     "source_recompute_policy": "FULL"}, status="PLANNED", cache_status="ARTIFACT_MISS")
                 db.add(run)
                 await db.flush()
+                if job.profile.get("attachment_version_id"):
+                    from app.models.attachments import AttachmentVersion
+                    version = await db.get(AttachmentVersion, UUID(job.profile["attachment_version_id"]), with_for_update=True)
+                    if version is None or version.state not in {"PREPARING_CONTENT", "QUEUED"}:
+                        raise ContentPreparationError("附件操作已取消或不允许启动")
+                    version.run_id, version.state = run.parse_run_id, "RUNNING"
                 fields = []
                 for rule in rules:
                     item = deepcopy(rule)
@@ -318,6 +415,8 @@ class ContentPreparationService:
                 return {"build": self.serialize(job), "status": "published", "revision_id": str(published["revision"].revision_id),
                         "run_id": str(run.parse_run_id), "successor_run_id": str(published["successor"].parse_run_id) if published.get("successor") else None}
         finally:
+            if 'own_ocr_client' in locals() and own_ocr_client:
+                await client.aclose()
             if 'redis' in locals() and redis is not None:
                 self.builder.circuit = None
                 await redis.aclose()

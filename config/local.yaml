@@ -16,7 +16,7 @@ models:
 database:
   host: 172.26.10.132
   port: 5432
-  name: document_parser_new
+  name: document_parser_local_1015
   user: postgres
   password: dpPass2017
 redis:
@@ -37,3 +37,6 @@ celery:
 app:
   reliable_enabled: true
   assistant_enabled: true
+
+attachment_import:
+  parse_concurrency: 8

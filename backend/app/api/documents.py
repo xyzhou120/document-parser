@@ -106,6 +106,11 @@ async def require_document(db, document_id, *, lock=False):
 
 
 async def latest_completed(db, document_id):
+    from app.models.attachments import Attachment, AttachmentVersion
+    managed = await db.scalar(select(Attachment).where(Attachment.document_id == document_id))
+    if managed:
+        version = await db.get(AttachmentVersion, managed.current_version_id) if managed.current_version_id else None
+        return await db.get(ParseRun, version.run_id) if version else None
     return await db.scalar(
         select(ParseRun)
         .where(ParseRun.document_id == document_id, ParseRun.status == "COMPLETED")
@@ -462,7 +467,15 @@ async def related_facts(document_id: UUID, db: AsyncSession = Depends(get_db)):
             .scalars()
             .all()
         )
-        view = build_fact_view(run, fields)
+        from app.models.attachments import Attachment, AttachmentVersion
+        from app.services.attachment_read_service import snapshot_fact_view
+        managed = await db.scalar(select(Attachment).where(Attachment.document_id == current_id))
+        if managed and managed.current_version_id:
+            version = await db.get(AttachmentVersion, managed.current_version_id)
+            view = await snapshot_fact_view(db, version, overlay=True)
+        else:
+            from app.services.fact_service import build_fact_view_with_invalidations
+            view = await build_fact_view_with_invalidations(db, run, fields)
         sources.append(
             {
                 "document_id": str(current_id),

@@ -50,11 +50,65 @@ def fact(value, identity, cid):
         "assertions": assertions, "dimensions": {"unit": identity}}
 
 
+def test_dimension_on_the_page_counts_when_the_value_quote_omits_it():
+    page = "评价单元A 可解吸瓦斯含量 0.18 m³/t 实测"
+    result = validate_candidate_decision(
+        decision(), candidate(text="0.18"), rule(), {"ev-text": receipt(text=page)})
+    assert result["assertions"]["dimensions.unit"]["status"] == "supported"
+
+
+def test_optional_dimension_stays_empty_without_blocking_the_required_workface():
+    spec = RuleSpec(
+        field_key="holes", field_name_cn="实际钻孔数", data_type="integer", unit="个",
+        value_kind="actual", dimensions=["workface", "evaluation_unit"],
+        dimension_schema={"workface": {"required": True}, "evaluation_unit": {"required": False}},
+        strategy={"semantic_contract": {
+            "cardinality": "multi_identity",
+            "identity_dimensions": ["workface", "evaluation_unit"],
+            "applicable_dimensions": ["workface", "evaluation_unit"],
+            "value_kind_policy": {"allowed_bases": ["wording"]},
+            "unit_policy": {"mode": "source_evidence"},
+            "evidence_requirements": ["value"],
+        }},
+    )
+    page = "40216工作面 实际钻孔 12 个"
+    checked = validate_candidate_decision(
+        {"candidate_id": "c1", "judgement": "accepted", "value": "12", "unit": "个",
+         "value_kind": "actual", "source_role": "report_body",
+         "dimensions": {"workface": "40216", "evaluation_unit": None}, "evidence_ids": ["ev-text"]},
+        {"candidate_id": "c1", "text": "12", "context": page, "source": "native", "table": False,
+         "page_number": 1, "content_revision": "rev-1"},
+        spec, {"ev-text": receipt(text=page)})
+    assert checked["assertions"]["dimensions.workface"]["status"] == "supported"
+    assert checked["assertions"]["dimensions.evaluation_unit"]["status"] == "not_applicable"
+    assertions = {key: {"status": "supported", "basis": "literal", "evidence_ids": ["ev-text"]}
+                  for key in ("value", "unit", "value_kind", "source_role", "dimensions.workface")}
+    assertions["dimensions.evaluation_unit"] = {"status": "not_applicable", "basis": "rule.dimension_optional", "evidence_ids": []}
+    assertions["table_relation"] = {"status": "not_applicable", "basis": "source.non_table", "evidence_ids": []}
+    rows = []
+    for cid, unit in (("a", None), ("b", "Ⅰ")):
+        rows.append({"candidate_id": cid, "value": "12", "unit": "个", "value_kind": "actual",
+            "source_role": "report_body", "content_revision": "rev-1", "source_validity": "valid",
+            "assertions": assertions, "dimensions": {"workface": "40216", "evaluation_unit": unit},
+            "occurrence_id": cid})
+    merged = complete_field(spec, [closed_range()],
+        [{"candidate_id": "a", "state": "accepted"}, {"candidate_id": "b", "state": "accepted"}], rows)
+    assert "IDENTITY_UNVERIFIED" not in {item["code"] for item in merged["risks"]}
+    assert len(merged["facts"]) == 2
+
+
 def test_acceptance_requires_platform_receipt_and_explicit_attributes():
     result = validate_candidate_decision(decision(), candidate(), rule(),
         {"ev-text": receipt()})
     assert result["accepted"] is True
     assert result["fact"]["source_role"] == "report_body"
+
+
+def test_source_role_policy_rejects_wrong_source_before_delivery():
+    result = validate_candidate_decision(decision(), candidate(),
+        rule(source_policy={"allowed_roles": ["design"]}), {"ev-text": receipt()})
+    assert result["usable"] is False
+    assert "SOURCE_ROLE_UNCONFIGURED" in {item["code"] for item in result["issues"]}
 
 
 def test_fake_image_without_revision_or_source_does_not_prove_ocr_semantics():

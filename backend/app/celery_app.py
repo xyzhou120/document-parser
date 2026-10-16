@@ -15,6 +15,11 @@ celery_app = Celery(
 
 # 配置
 beat_schedule = {}
+if settings.attachment_import.enabled:
+    beat_schedule["attachment-import-recovery"] = {"task": "attachment_import_recovery", "schedule": 30.0,
+                                                  "options": {"queue": "reliable-control"}}
+    beat_schedule["attachment-object-cleanup"] = {"task": "attachment_object_cleanup", "schedule": 86400.0,
+                                                "options": {"queue": "celery"}}
 if settings.app.reliable_enabled:
     beat_schedule["reliable-execution-recovery"] = {"task": "reliable_execution_dispatch", "schedule": 30.0,
                                                   "options": {"queue": "reliable-control"}}
@@ -33,6 +38,10 @@ celery_app.conf.update(
     task_default_queue=settings.celery.task_default_queue,
     # 新执行唤醒任务与现有 parse_document 任务隔离。
     task_routes={"reliable_execution_wakeup": {"queue": "reliable-execution"},
+                 "attachment_import_preview": {"queue": "celery"},
+                 "attachment_download": {"queue": "celery"},
+                 "attachment_object_cleanup": {"queue": "celery"},
+                 "attachment_import_recovery": {"queue": "reliable-control"},
                  "reliable_content_build": {"queue": "reliable-execution"},
                  "reliable_execution_dispatch": {"queue": "reliable-control"},
                  "assistant_message_execute": {"queue": "assistant"},

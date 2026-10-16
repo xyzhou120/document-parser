@@ -9,6 +9,7 @@ OCR服务客户端（PaddleOCR）
 """
 
 import logging
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 import httpx
@@ -35,7 +36,7 @@ class RegionOCROutcome:
 class PaddleOCRClient:
     """PaddleOCR服务客户端"""
 
-    def __init__(self):
+    def __init__(self, http_client: httpx.AsyncClient | None = None):
         ocr_config = settings.models.get("ocr")
         if not ocr_config:
             raise ValueError("ocr 配置缺失")
@@ -44,6 +45,21 @@ class PaddleOCRClient:
         self.api_key = ocr_config.api_key
         self.timeout = ocr_config.timeout
         self.endpoint = "/ocr"
+        self._http_client = http_client
+
+    async def aclose(self) -> None:
+        """关闭调用方交给本客户端管理的连接池。"""
+        if getattr(self, "_http_client", None) is not None:
+            await self._http_client.aclose()
+            self._http_client = None
+
+    @asynccontextmanager
+    async def _client(self):
+        if getattr(self, "_http_client", None) is not None:
+            yield self._http_client
+        else:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                yield client
 
     @staticmethod
     def _normalize_base(raw: str) -> str:
@@ -79,7 +95,7 @@ class PaddleOCRClient:
             文本块列表
         """
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with self._client() as client:
                 headers = {}
                 if self.api_key:
                     headers["Authorization"] = f"Bearer {self.api_key}"
@@ -120,7 +136,7 @@ class PaddleOCRClient:
     ) -> RegionOCROutcome:
         """区分成功无文字和服务失败。内容准备只把 unavailable 记入 OCR 熔断。"""
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with self._client() as client:
                 headers = {}
                 if self.api_key:
                     headers["Authorization"] = f"Bearer {self.api_key}"

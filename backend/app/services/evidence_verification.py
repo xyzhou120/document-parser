@@ -19,6 +19,7 @@ from app.services.candidate_retrieval import (
     normalize,
     normalize_unit,
 )
+from app.services.target_contract import normalize_decision, target_type
 from app.services.candidate_retrieval import (
     value_in_text as _search_value_in_text,
 )
@@ -297,8 +298,11 @@ def _verify_attribute(key: str, observed: Any, expected: Any, decision: Mapping,
                 # OCR 已在上方的纯文本分支中排除。
                 valid, platform_basis = True, "source.reported_literal"
         elif key.startswith("dimensions."):
-            valid = value_in_text(observed, scope_text, False) and (
-                value_in_text(observed, text, False) or value_in_text(observed, context, False))
+            # 工作面、评价单元常在页标题或表头，不在数值那几个字里。
+            # 只要同一页证据或上下文能逐字对上，就承认这个维度。
+            valid = (value_in_text(observed, ev_text, False)
+                     or value_in_text(observed, context, False)
+                     or value_in_text(observed, text, False))
         else:
             valid = bool(verified.get("status") == "supported" and verified.get("basis")
                          and _same_value(observed, verified.get("value"), key, numeric))
@@ -317,6 +321,7 @@ def _verify_attribute(key: str, observed: Any, expected: Any, decision: Mapping,
 def validate_candidate_decision(decision: Mapping, candidate: Any, rule: Any,
                                 evidence: Mapping | None = None) -> dict:
     """返回属性断言和诊断事实；accepted 表示证据完整支持。"""
+    decision = normalize_decision(decision, rule)
     payload = _input(candidate)
     contract = semantic_contract(rule)
     cid = str(payload.get("candidate_id") or payload.get("id") or "")
@@ -330,19 +335,56 @@ def validate_candidate_decision(decision: Mapping, candidate: Any, rule: Any,
     if judgement != "accepted":
         return {"accepted": False, "usable": False, "fact": None, "assertions": {},
                 "issues": [{"code": "JUDGEMENT_INVALID"}]}
+    if target_type(rule) == "statement":
+        configured = str((get(rule, "output_schema", {}) or {}).get("polarity") or "any")
+        observed = str((decision.get("statement") or {}).get("polarity") or "unknown")
+        if configured not in {"any", "unknown"} and observed != configured:
+            return {"accepted": True, "usable": False, "fact": None, "assertions": {},
+                    "issues": [{"code": "STATEMENT_POLARITY_EXCLUDED", "expected": configured,
+                                "observed": observed}], "candidate_state": "rejected"}
     numeric = str(get(rule, "data_type", contract.get("data_type", "string"))).lower() in NUMERIC_TYPES
     assertions, codes = {}, []
+    kind = target_type(rule)
     expected = {"value": None, "unit": get(rule, "unit"), "value_kind": get(rule, "value_kind"),
                 "source_role": None, "table_relation": None}
+    if kind == "statement":
+        # 原文目标交付原文事实，单位、值类型和表格关系不是必需属性。
+        expected["unit"] = None
+        expected["value_kind"] = None
+        expected["table_relation"] = None
     dimensions = list(contract.get("applicable_dimensions") or [])
     expected.update({f"dimensions.{key}": None for key in dimensions})
     knowledge = (get(rule, "strategy", {}) or {}).get("agent_extract") or {}
-    source_roles = knowledge.get("source_roles") or []
+    source_policy = get(rule, "source_policy", {}) or {}
+    source_roles = source_policy.get("allowed_roles") or knowledge.get("source_roles") or []
     if isinstance(source_roles, str):
         source_roles = [source_roles]
     allowed_roles = {str(role) for role in source_roles if isinstance(role, str) and role.strip()}
+    excluded_roles = {str(role) for role in (source_policy.get("excluded_roles") or []) if str(role).strip()}
+    excluded_terms = [str(term) for term in (source_policy.get("exclude_terms") or []) if str(term).strip()]
+    required_headers = [str(term) for term in (source_policy.get("required_headers") or []) if str(term).strip()]
+    candidate_text = str(payload.get("text") or payload.get("window") or payload.get("context") or "")
+    if excluded_terms and any(term.casefold() in candidate_text.casefold() for term in excluded_terms):
+        return {"accepted": True, "usable": False, "fact": None, "assertions": {},
+                "issues": [{"code": "SOURCE_EXCLUDED_BY_RULE", "terms": excluded_terms}],
+                "candidate_state": "rejected"}
+    if required_headers and not any(header.casefold() in candidate_text.casefold() for header in required_headers):
+        return {"accepted": True, "usable": False, "fact": None, "assertions": {},
+                "issues": [{"code": "REQUIRED_SOURCE_HEADER_NOT_FOUND", "headers": required_headers}],
+                "candidate_state": "rejected"}
+    schema = get(rule, "dimension_schema") or {}
     for key, target in expected.items():
         observed, _ = _attribute(decision, key)
+        if key.startswith("dimensions."):
+            dim_key = key.split(".", 1)[1]
+            cfg = schema.get(dim_key) if isinstance(schema, Mapping) else None
+            optional = isinstance(cfg, dict) and cfg.get("required") is False
+            if optional and observed in (None, "", "unknown"):
+                assertions[key] = _assert(None, None, "not_applicable", basis="rule.dimension_optional")
+                continue
+        if kind == "statement" and key in {"unit", "value_kind", "table_relation"}:
+            assertions[key] = _assert(observed, None, "not_applicable", basis="target.statement")
+            continue
         if key == "unit" and contract.get("unit_policy", {}).get("mode") == "not_applicable":
             assertions[key] = _assert(observed, None, "not_applicable", basis="rule.unit_policy")
             continue
@@ -355,6 +397,10 @@ def validate_candidate_decision(decision: Mapping, candidate: Any, rule: Any,
             assertions[key]["status"] = "mismatch" if observed not in (None, "", "unknown") else "unknown"
             assertions[key]["expected"] = sorted(allowed_roles)
             errors.append("SOURCE_ROLE_UNCONFIGURED")
+        if key == "source_role" and observed in excluded_roles:
+            assertions[key]["status"] = "mismatch"
+            assertions[key]["expected"] = {"excluded_roles": sorted(excluded_roles)}
+            errors.append("SOURCE_ROLE_EXCLUDED")
         codes.extend(errors)
     usable = all(a["status"] in SUPPORTED for a in assertions.values())
     fact = {key: _attribute(decision, key)[0] for key in ("value", "unit", "value_kind", "source_role", "table_relation")}
@@ -364,6 +410,9 @@ def validate_candidate_decision(decision: Mapping, candidate: Any, rule: Any,
         "assertions": assertions, "attribute_support": assertions, "usable": usable,
         "source_validity": "valid", "evidence_ids": sorted({eid for a in assertions.values() for eid in a["evidence_ids"]}),
         "page_num": payload.get("page_number") or payload.get("page"), "bbox": payload.get("bbox"),
+        "coordinate_system": payload.get("coordinate_system") or ("PDF_POINT" if payload.get("bbox") else None),
+        "coordinate_origin": payload.get("coordinate_origin") or (
+            "MUPDF_UNROTATED_TOP_LEFT" if payload.get("bbox") else None),
         "segment_ids": list(payload.get("segment_ids") or []), "source": payload.get("source"),
         "quote": payload.get("text") or payload.get("window"), "occurrence_id": payload.get("stable_key") or cid})
     return {"accepted": usable, "usable": usable, "fact": fact, "assertions": assertions,

@@ -204,8 +204,15 @@ async def _check_text_llm() -> dict:
         }
 
 
+_worker_probe: dict = {"at": 0.0, "value": None}
+
+
 async def _check_worker() -> dict:
     """检查 Celery Worker 是否在线（通过 Celery inspect ping）"""
+    # 广播探测不知道有多少 Worker，会一直等到超时。结果缓存一小段时间，避免每次打开页面都空等。
+    cached = _worker_probe.get("value")
+    if cached is not None and time.monotonic() - _worker_probe["at"] < 30:
+        return cached
     try:
         import asyncio
 
@@ -213,10 +220,10 @@ async def _check_worker() -> dict:
 
         started = time.perf_counter()
         replies = await asyncio.wait_for(
-            asyncio.to_thread(celery_app.control.inspect(timeout=3).ping), timeout=5
+            asyncio.to_thread(celery_app.control.inspect(timeout=1).ping), timeout=2
         )
         online = bool(replies)
-        return {
+        result = {
             "name": "Celery Worker",
             "key": "worker",
             "status": "online" if online else "offline",
@@ -227,6 +234,9 @@ async def _check_worker() -> dict:
                 else "未发现 Worker，解析任务会停留在等待状态，请启动 Worker"
             ),
         }
+        _worker_probe["at"] = time.monotonic()
+        _worker_probe["value"] = result
+        return result
     except Exception as exc:
         return {
             "name": "Celery Worker",

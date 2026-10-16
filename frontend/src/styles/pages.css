@@ -125,3 +125,13 @@
   .editor-grid,.editor-grid-four{grid-template-columns:1fr}
   .list-toolbar{flex-wrap:wrap}
 }
+
+/* 附件导入与版本工作区沿用平台操作界面 */
+.attachment-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;padding:16px;background:#fff;margin-bottom:16px;border:1px solid #dce5ef;border-radius:5px}
+.attachment-toolbar{margin-bottom:16px}.attachment-toolbar .ant-select{min-width:150px}
+.import-summary{display:flex;gap:24px;flex-wrap:wrap;padding:16px 0;border-bottom:1px solid #dce5ef}
+.import-summary p{margin:6px 0;color:#43587a}.snapshot-panel{padding:20px;background:#fff;border:1px solid #dce5ef;border-radius:5px}
+.page-stack{display:flex;flex-direction:column;gap:16px}.page-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.page-heading h1{font-size:22px;line-height:1.5;margin:0 0 8px}.page-heading p{margin:0;color:#43587a}
+.attachment-business-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+@media(max-width:700px){.page-heading{flex-direction:column}.attachment-filters{grid-template-columns:1fr}.import-summary{display:block}.import-summary>div{margin-bottom:16px}}
+.attachment-json{max-height:500px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;font-variant-numeric:tabular-nums}

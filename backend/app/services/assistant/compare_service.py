@@ -26,7 +26,12 @@ class CompareService:
         fields = list((await db.execute(select(ExtractedFieldModel).where(ExtractedFieldModel.parse_run_id == run.parse_run_id))).scalars().all())
         reviews = list((await db.execute(select(FieldReviewRevision).where(FieldReviewRevision.parse_run_id == run.parse_run_id))).scalars().all())
         invalidations = list((await db.execute(select(ContentInvalidation).where(ContentInvalidation.document_id == run.document_id))).scalars().all())
-        facts = build_fact_view(run, fields, view="reviewed" if view == "human" else "automatic", revisions=reviews, invalidations=invalidations)
+        from app.models.attachments import AttachmentVersion
+        from app.services.attachment_read_service import snapshot_fact_view
+        version = await db.scalar(select(AttachmentVersion).where(AttachmentVersion.run_id == run.parse_run_id))
+        facts = (await snapshot_fact_view(db, version, view="reviewed" if view == "human" else "automatic", overlay=True)
+                 if version and version.snapshot else build_fact_view(run, fields,
+                    view="reviewed" if view == "human" else "automatic", revisions=reviews, invalidations=invalidations))
         mismatch = run.content_revision_id != message.revision_id
         warnings = ["原文答案和提取事实来自不同内容版本，请分别核对"] if mismatch else []
         if message.execution_state != "succeeded":

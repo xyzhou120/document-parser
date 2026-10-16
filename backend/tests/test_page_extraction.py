@@ -29,6 +29,16 @@ def test_short_pages_pack_together_and_tables_stay_separate():
     assert ocr_text_needs_image(readable[0]) is False
 
 
+def test_same_page_text_and_table_become_one_request():
+    pages = [{"page_number": 1, "text": "正文 瓦斯压力 1.23MPa", "tables": [
+        {"table_id": "t", "header": ["测点", "值"], "rows": [["1", "1.23"]], "text": "测点 值"}]}]
+    units = pack_page_units(build_page_units(pages))
+    assert len(units) == 1
+    assert units[0]["page_numbers"] == [1]
+    assert "正文" in units[0]["text"] and "测点" in units[0]["text"]
+    assert units[0]["table"] is True
+
+
 def test_final_page_and_long_page_tail_are_never_dropped():
     text = "报告正文\n" + "瓦斯含量1.23m³/t\n" * 1900 + "末尾测点Z99=7.89"
     pages = [{"page_number": 1, "text": text}, {"page_number": 29, "text": "最终页孔数123个"}]
@@ -141,7 +151,7 @@ def test_multi_field_request_retains_knowledge_and_reaches_gateway_prompt():
     assert schema["candidate_id"] == "candidate9"
     assert set(schema["facts"][0]) == {
         "field_key", "value", "quote", "unit", "value_kind", "dimensions", "source_role", "table_relation"}
-    assert "many facts" in candidate["instruction"]
+    assert "同一字段可以有多条事实" in candidate["instruction"]
     request["rules"][0]["identity_dimensions"].append("workface")
     assert rules[0]["identity_dimensions"] == ["measurement_point"]
 

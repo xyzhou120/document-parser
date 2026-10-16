@@ -28,6 +28,7 @@ ALLOWED_VALUE_KINDS = {
     "process",
     "unknown",
 }
+ALLOWED_TARGET_TYPES = {"fact", "statement", "table"}
 
 
 class DimensionSpec(BaseModel):
@@ -36,6 +37,50 @@ class DimensionSpec(BaseModel):
     repeatable: bool = False
     parent_key: str | None = None
     description: str = Field(default="", max_length=1000)
+
+
+class TableColumnSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    key: str = Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")
+    header: str = Field(min_length=1, max_length=255)
+    aliases: list[str] = Field(default_factory=list)
+    data_type: str = "string"
+    unit: str | None = None
+    required: bool = True
+
+    @field_validator("data_type")
+    @classmethod
+    def valid_data_type(cls, value):
+        if value not in ALLOWED_DATA_TYPES:
+            raise ValueError("表格列数据类型无效")
+        return value
+
+
+class TableOutputSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    row_identity: list[str] = Field(min_length=1)
+    columns: list[TableColumnSpec] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def valid_identity(self):
+        keys = [column.key for column in self.columns]
+        if len(keys) != len(set(keys)):
+            raise ValueError("表格列标识不能重复")
+        if set(self.row_identity) - set(keys):
+            raise ValueError("行身份必须引用已配置的表格列")
+        return self
+
+
+class StatementOutputSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    polarity: str = "any"
+
+    @field_validator("polarity")
+    @classmethod
+    def valid_polarity(cls, value):
+        if value not in {"affirmed", "negated", "uncertain", "unknown", "any"}:
+            raise ValueError("原文目标的 polarity 配置无效")
+        return value
 
 
 class AgentKnowledge(BaseModel):
@@ -179,6 +224,12 @@ class RulePayload(BaseModel):
     checklist_type: str = Field(min_length=1, max_length=100)
     field_key: str = Field(min_length=1, max_length=100)
     field_name_cn: str = Field(min_length=1, max_length=255)
+    target_type: str = "fact"
+    target_group_key: str | None = Field(default=None, max_length=100)
+    target_group_name: str | None = Field(default=None, max_length=255)
+    output_schema: dict[str, Any] = Field(default_factory=dict)
+    source_policy: dict[str, Any] = Field(default_factory=dict)
+    evidence_policy: dict[str, Any] = Field(default_factory=dict)
     field_description: str | None = None
     dimension_schema: dict[str, DimensionSpec] = Field(default_factory=dict)
     value_kind: str = "unknown"
@@ -212,6 +263,25 @@ class RulePayload(BaseModel):
         if value not in ALLOWED_VALUE_KINDS:
             raise ValueError(f"值类型需为 {sorted(ALLOWED_VALUE_KINDS)} 之一")
         return value
+
+    @field_validator("target_type")
+    @classmethod
+    def validate_target_type(cls, value):
+        if value not in ALLOWED_TARGET_TYPES:
+            raise ValueError(f"目标类型需为 {sorted(ALLOWED_TARGET_TYPES)} 之一")
+        return value
+
+    @model_validator(mode="after")
+    def validate_target_schema(self):
+        if self.target_type == "table":
+            if self.enabled or self.output_schema:
+                self.output_schema = TableOutputSpec.model_validate(self.output_schema).model_dump()
+        if self.target_type == "statement":
+            self.output_schema = StatementOutputSpec.model_validate(self.output_schema).model_dump()
+        for name, policy in (("source_policy", self.source_policy), ("evidence_policy", self.evidence_policy)):
+            if not isinstance(policy, dict):
+                raise ValueError(f"{name} 必须是对象")
+        return self
 
     @field_validator("strategy")
     @classmethod
@@ -254,6 +324,12 @@ class RulePatch(BaseModel):
 
     field_key: str | None = None
     field_name_cn: str | None = Field(default=None, max_length=255)
+    target_type: str | None = None
+    target_group_key: str | None = Field(default=None, max_length=100)
+    target_group_name: str | None = Field(default=None, max_length=255)
+    output_schema: dict[str, Any] | None = None
+    source_policy: dict[str, Any] | None = None
+    evidence_policy: dict[str, Any] | None = None
     field_description: str | None = None
     dimension_schema: dict[str, DimensionSpec] | None = None
     value_kind: str | None = None
@@ -301,6 +377,13 @@ class RulePatch(BaseModel):
     def validate_value_kind(cls, value):
         return RulePayload.validate_value_kind(value)
 
+    @field_validator("target_type")
+    @classmethod
+    def validate_patch_target_type(cls, value):
+        if value is not None and value not in ALLOWED_TARGET_TYPES:
+            raise ValueError(f"目标类型需为 {sorted(ALLOWED_TARGET_TYPES)} 之一")
+        return value
+
     @field_validator("strategy")
     @classmethod
     def validate_strategy_config(cls, value):
@@ -335,7 +418,14 @@ class RuleResponse(BaseModel):
     rule_id: UUID
     checklist_type: str
     field_key: str
+    target_key: str | None = None
     field_name_cn: str
+    target_type: str = "fact"
+    target_group_key: str | None = None
+    target_group_name: str | None = None
+    output_schema: dict[str, Any] = Field(default_factory=dict)
+    source_policy: dict[str, Any] = Field(default_factory=dict)
+    evidence_policy: dict[str, Any] = Field(default_factory=dict)
     field_description: str | None = None
     dimension_schema: dict[str, DimensionSpec] = Field(default_factory=dict)
     value_kind: str = "unknown"

@@ -153,6 +153,12 @@ class RuleRepository:
             checklist_type=payload["checklist_type"],
             field_key=payload["field_key"],
             field_name_cn=payload.get("field_name_cn") or payload["field_key"],
+            target_type=payload.get("target_type") or "fact",
+            target_group_key=payload.get("target_group_key"),
+            target_group_name=payload.get("target_group_name"),
+            output_schema=payload.get("output_schema") or {},
+            source_policy=payload.get("source_policy") or {},
+            evidence_policy=payload.get("evidence_policy") or {},
             field_description=payload.get("field_description"),
             dimension_schema=payload.get("dimension_schema") or {},
             value_kind=payload.get("value_kind") or "unknown",
@@ -195,6 +201,12 @@ class RuleRepository:
         editable = (
             "field_key",
             "field_name_cn",
+            "target_type",
+            "target_group_key",
+            "target_group_name",
+            "output_schema",
+            "source_policy",
+            "evidence_policy",
             "field_description",
             "dimension_schema",
             "value_kind",
@@ -343,9 +355,16 @@ class RuleRepository:
             if checklist is None or not checklist.is_active:
                 return []
 
-            # 规则包显式发布后，新的解析运行使用其不可变快照。
-            # 首次发布前，CRUD 编辑仍是草稿来源。将此查询保留在本地，
-            # 避免与 release_service 的草稿捕获辅助函数形成循环导入。
+            # CRUD is the active source for new runs. Release bundles remain
+            # immutable audit/rollback artifacts and can still be selected by
+            # an explicit run request.
+            rules = await self.list_rules(db, checklist_type, only_enabled=True)
+            if rules:
+                specs = [RuleSpec.from_orm(rule) for rule in rules]
+                return specs
+
+            # Compatibility for legacy checklists that only have an immutable
+            # release bundle. New and edited rules always take precedence.
             from app.models.releases import ChecklistReleaseHead, RuleBundle
             head = await db.get(ChecklistReleaseHead, checklist_type)
             if head is not None and getattr(head, "bundle_id", None):
@@ -354,11 +373,6 @@ class RuleRepository:
                 if bundle is None or not validate_bundle(bundle)["valid"]:
                     raise ValueError("已发布规则 bundle 校验失败")
                 return bundle_specs(bundle)
-
-            rules = await self.list_rules(db, checklist_type, only_enabled=True)
-            if rules:
-                specs = [RuleSpec.from_orm(rule) for rule in rules]
-                return specs
 
             logger.warning("清单 %s 没有启用的规则", checklist_type)
 
@@ -448,7 +462,14 @@ class RuleRepository:
             "rule_id": str(rule.rule_id),
             "checklist_type": rule.checklist_type,
             "field_key": rule.field_key,
+            "target_key": rule.field_key,
             "field_name_cn": rule.field_name_cn,
+            "target_type": getattr(rule, "target_type", None) or "fact",
+            "target_group_key": getattr(rule, "target_group_key", None),
+            "target_group_name": getattr(rule, "target_group_name", None),
+            "output_schema": getattr(rule, "output_schema", None) or {},
+            "source_policy": getattr(rule, "source_policy", None) or {},
+            "evidence_policy": getattr(rule, "evidence_policy", None) or {},
             "field_description": rule.field_description,
             "dimension_schema": rule.dimension_schema or {},
             "value_kind": rule.value_kind or "unknown",

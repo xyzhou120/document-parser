@@ -12,7 +12,16 @@
 
 ## 本地启动
 
-前置：Python 3.12、Poetry 2.x、Node.js 20、npm，以及内网依赖的访问权限。
+一条命令启动前端、API、5 个文档解析 worker（都消费 reliable-execution，每个 prefork 并发 2，同时最多 10 份文档），以及恢复调度 worker、助手 worker 和 1 个 beat。
+
+```bash
+./scripts/dev start
+./scripts/dev status
+./scripts/dev logs
+./scripts/dev stop
+```
+
+前置：Python 3.12、Poetry 2.x、Node.js 20、npm，以及内网依赖的访问权限。backend/.venv 和 frontend/node_modules 需要已经安装好。
 
 1. 从项目根目录复制 config/local.yaml.example 到 config/local.yaml，填写现场服务地址。已有文件不要直接覆盖。
 2. 在 backend 目录执行 poetry install，然后启动 API：

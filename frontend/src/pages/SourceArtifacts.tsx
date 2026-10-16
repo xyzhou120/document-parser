@@ -4,6 +4,7 @@ import { ReloadOutlined } from '@ant-design/icons'
 import { Link, useSearchParams } from 'react-router-dom'
 import axios from 'axios'
 import { apiError } from '@/services/api'
+import { createRequestId } from '@/utils/requestId'
 import { getDocumentFile } from '@/services/parse'
 import {
   createSourceRevision, extractSourceRevision, getArtifactHistory, getArtifactPage,
@@ -125,7 +126,7 @@ export default function SourceArtifacts() {
   const extract = async (revisionId: string, retry = false) => {
     setBusy(revisionId); setError('')
     try {
-      const requestId = extractionKeys.current[revisionId] ||= crypto.randomUUID()
+      const requestId = extractionKeys.current[revisionId] ||= createRequestId()
       const result = retry ? await retrySourceExtraction(revisionId) : await extractSourceRevision(revisionId, {
         request_id: requestId,
         ...(snapshotMode === 'parent' ? { parent_run_id: snapshotId.trim() } : {}),

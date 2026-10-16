@@ -1,15 +1,99 @@
 """P13-A 显式隔离 PostgreSQL 的恢复、控制和发件箱集成测试。"""
 
 from collections import Counter
+from datetime import datetime, timedelta
 
 import pytest
 
 from app.services.execution import JobRepository, QuantumOutcome
+from app.services.execution import DispatchOutbox
+from app.models.execution import ExecutionOutbox, ParseFieldJob
+from sqlalchemy import select, func
+from app.models.database import ParseRun
 from app.services.reliable_extraction_service import ReliableExtractionService
 from tests.test_field_scheduler_postgres import seed
 from tests.test_field_scheduler_postgres import sessions as pg_sessions
 
 sessions = pg_sessions
+
+
+@pytest.mark.asyncio
+async def test_repeated_consumed_empty_claim_rearms_one_durable_wakeup(sessions, monkeypatch):
+    """真实 run 行竞争 + 稳定进度：每次消费后都仍可续投，不依赖 idle 超时。"""
+    run_id, _, ids = await seed(sessions, 1)
+    service = ReliableExtractionService()
+
+    async def empty_claim(self, **kwargs):
+        async with sessions() as blocker, blocker.begin():
+            await blocker.get(ParseRun, run_id, with_for_update=True)
+            async with sessions() as claimant, claimant.begin():
+                assert await JobRepository(claimant).claim_next(run_id=run_id, owner="contended") is None
+        return None
+
+    monkeypatch.setattr("app.services.execution.field_scheduler.FieldSchedulerRunner.run_next", empty_claim)
+    async def unused(*args):
+        raise AssertionError("empty claim must not invoke model executor")
+    initial = await service.process_run(sessions, run_id, executor=unused, owner="empty", max_quantums=1)
+    assert initial["quantums_executed"] == 0 and initial["remaining_runnable"] == 1
+    event_id = None
+    for attempt in range(1, 4):
+        async with sessions() as db, db.begin():
+            events = await DispatchOutbox(db).claim_field_runs(run_id=run_id)
+            assert len(events) == 1
+            event = events[0]
+            event_id = event_id or event.event_id
+            assert event.event_id == event_id and event.attempts == attempt
+            # 故意在 sender mark_sent 之前消费，覆盖快速 worker 竞争窗口。
+        async with sessions() as db, db.begin():
+            if attempt > 1:
+                assert not await JobRepository(db).consume_run_wakeup(run_id, event_id, dispatch_attempt=attempt - 1)
+            assert await JobRepository(db).consume_run_wakeup(run_id, event_id, dispatch_attempt=attempt)
+        await service.process_run(sessions, run_id, executor=unused, owner="empty", max_quantums=1)
+        async with sessions() as db:
+            event = await db.get(ExecutionOutbox, event_id)
+            assert event.dispatch_state == "pending" and not event.payload["dispatch_outstanding"]
+            assert await db.scalar(select(func.count()).select_from(ExecutionOutbox).where(
+                ExecutionOutbox.aggregate_id.in_(ids))) == 1
+        async with sessions() as db, db.begin():
+            assert not await JobRepository(db).consume_run_wakeup(run_id, event_id, dispatch_attempt=attempt)
+    monkeypatch.undo()
+    async def finish(token, checkpoint):
+        return QuantumOutcome("done", checkpoint, semantic_state="completed")
+    result = await service.process_run(sessions, run_id, executor=finish, owner="recovered", max_quantums=1)
+    assert result["quantums_executed"] == 1 and result["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_preserves_pending_wakeup_during_live_lease(sessions):
+    run_id, _, ids = await seed(sessions, 1)
+    async with sessions() as db, db.begin():
+        repo = JobRepository(db)
+        token = await repo.claim_next(run_id=run_id, owner="live")
+        await repo.enqueue_outbox(kind="field_job_wakeup", aggregate_id=ids[0],
+            dedupe_key=f"lease-test:{run_id}", payload={"run_id": str(run_id)})
+    async with sessions() as db, db.begin():
+        assert await DispatchOutbox(db).claim_field_runs(run_id=run_id) == []
+        assert (await db.scalar(select(ExecutionOutbox).where(
+            ExecutionOutbox.aggregate_id == ids[0]))).dispatch_state == "pending"
+        await JobRepository(db).transition(token, "yield", checkpoint={})
+    async with sessions() as db, db.begin():
+        assert len(await DispatchOutbox(db).claim_field_runs(run_id=run_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_waiting_page_coordinator_does_not_emit_sibling_wakeup_storm(sessions):
+    run_id, revision_id, ids = await seed(sessions, 3)
+    async with sessions() as db, db.begin():
+        run = await db.get(ParseRun, run_id)
+        run.extraction_profile = {"extraction_strategy": "page_batch_v1", "coordinator_field_key": "f000"}
+    async def execute(token, checkpoint):
+        return QuantumOutcome("waiting_service", checkpoint,
+                              retry_at=datetime.utcnow() + timedelta(seconds=60), error="outage")
+    result = await ReliableExtractionService().process_run(sessions, run_id, executor=execute,
+        owner="outage", max_quantums=5)
+    assert result["quantums_executed"] == 1
+    assert result["remaining_runnable"] == 0
+    assert result["status"] == "WAITING_SERVICE"
 
 
 @pytest.mark.asyncio
@@ -69,7 +153,6 @@ async def test_model_quantum_can_pause_run_from_another_session_without_db_lock(
         return QuantumOutcome("done", {}, semantic_state="completed")
 
     from app.services.execution import StaleLeaseError
-
     with pytest.raises(StaleLeaseError):
         await ReliableExtractionService().process_run(sessions, run_id, executor=execute,
                                                       owner="late-return", max_quantums=1)

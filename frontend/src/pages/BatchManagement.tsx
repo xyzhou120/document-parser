@@ -3,6 +3,7 @@ import { Alert, Button, Card, Empty, Input, Progress, Select, Space, Table, Tag,
 import { DownloadOutlined, ReloadOutlined, CloudUploadOutlined, RollbackOutlined } from '@ant-design/icons'
 import type { UploadFile } from 'antd'
 import { apiError } from '@/services/api'
+import { createRequestId } from '@/utils/requestId'
 import { batchExportUrl, cancelBatchItem, createBatch, getBatch, listBatches, retryBatchItem, uploadBatchItem, type BatchItem, type BatchItemInput, type BatchSummary } from '@/services/batches'
 import { getChecklistTypes } from '@/services/rules'
 
@@ -73,7 +74,7 @@ export default function BatchManagement() {
       <Card title="新建批次" extra={<Button type="primary" loading={creating} icon={<CloudUploadOutlined />} onClick={() => void create()}>登记并上传</Button>}>
         <Space direction="vertical" style={{ width: '100%' }}>
         <Input value={name} disabled={creating} onChange={(e) => setName(e.target.value)} placeholder="批次名称，例如：2026年10月安全生产月报" />
-        <Upload accept=".pdf" multiple showUploadList={false} disabled={creating} beforeUpload={(file) => { setDrafts((rows) => [...rows, { client_key: crypto.randomUUID(), file_name: file.name, file, mine_id: '', mine_name: '', checklist_type: '', reporting_period: '' }]); return false }}><Button>选择PDF文件</Button></Upload>
+        <Upload accept=".pdf" multiple showUploadList={false} disabled={creating} beforeUpload={(file) => { setDrafts((rows) => [...rows, { client_key: createRequestId(), file_name: file.name, file, mine_id: '', mine_name: '', checklist_type: '', reporting_period: '' }]); return false }}><Button>选择PDF文件</Button></Upload>
         {drafts.length > 0 && <Table rowKey="client_key" dataSource={drafts} scroll={{ x: 980 }} pagination={false} columns={[
           { title: '文件', dataIndex: 'file_name', width: 220 },
           { title: '煤矿编号', render: (_: unknown, row: Draft) => <Input aria-label={`${row.file_name} 煤矿编号`} disabled={creating} value={row.mine_id} onChange={(e) => updateDraft(row.client_key, 'mine_id', e.target.value)} /> },

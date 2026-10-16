@@ -8,14 +8,16 @@ models:
     base_url: "http://172.16.14.2:8001/v1"  # 替换为实际地址
     api_key: "your-api-key-here"  # 如需要API Key
     model_name: "qwen3.7-27b"
-    timeout: 60
+    timeout: 180
+    max_concurrency: 12
 
   # 视觉模型（Phase 1启用）
   vision_llm:
     base_url: "http://172.16.14.2:8002/v1"
     api_key: "your-api-key-here"
     model_name: "qwen3.6-27b"
-    timeout: 120
+    timeout: 180
+    max_concurrency: 12
 
   # OCR服务
   ocr:

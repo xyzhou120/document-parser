@@ -41,8 +41,10 @@ WHERE tgname = '{table}_immutable_audit' AND tgrelid = '{table}'::regclass) THEN
 CREATE TRIGGER {table}_immutable_audit BEFORE UPDATE OR DELETE ON {table}
 FOR EACH ROW EXECUTE FUNCTION reject_platform_audit_mutation();
 END IF; END; $$;""")
+    from app.models.attachments import APPEND_ONLY_DDL
+    output.extend(ddl.strip().rstrip(';') + ';' for ddl in APPEND_ONLY_DDL)
     output.append("COMMIT;")
-    return "\n\n".join(output) + "\n"
+    return "\n".join(line.rstrip() for line in "\n\n".join(output).splitlines()) + "\n"
 
 
 def main(argv=None):

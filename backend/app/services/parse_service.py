@@ -28,7 +28,9 @@ from app.parsers import PaddleOCRClient, PDFParser
 from app.rules import RuleSpec, rule_engine, rule_repository
 from app.services.artifact_service import artifact_service, preprocessing_profile
 from app.services.evidence_images import EvidenceImages
+from app.services.quality_inputs import quality_inputs_from_detail
 from app.services.quality_service import assess_page_quality
+from app.services.target_contract import target_status_for_state
 from app.storage import minio_client
 
 logger = logging.getLogger(__name__)
@@ -327,6 +329,8 @@ class ParseService:
                 await self._save_results(db, document_id, parse_run_id, fields, details, selected, [])
                 for old in inherited:
                     if old.field_key not in set(field_keys):
+                        inherited_detail = {**(old.extraction_detail or {}), "provenance": "inherited",
+                                            "inherited_from_parse_run_id": str(parent_id)}
                         db.add(ExtractedFieldModel(
                             parse_run_id=parse_run_id, document_id=document_id,
                             field_key=old.field_key, field_name=old.field_name,
@@ -335,8 +339,8 @@ class ParseService:
                             data_type=old.data_type, unit=old.unit, required=old.required,
                             instances=old.instances, rule_id=old.rule_id,
                             rule_version=old.rule_version, validation_status=old.validation_status,
-                            extraction_detail={**(old.extraction_detail or {}), "provenance": "inherited",
-                                               "inherited_from_parse_run_id": str(parent_id)},
+                            extraction_detail=inherited_detail,
+                            quality_inputs=quality_inputs_from_detail(inherited_detail),
                         ))
                 parse_run.status = "COMPLETED"
                 parse_run.fields_extracted = len(fields) + len([
@@ -632,6 +636,10 @@ class ParseService:
                 field_key=field.field_key,
                 field_name=detail.get("field_name")
                 or (rule.field_name_cn if rule else field.field_key),
+                target_type=(rule.target_type if rule else "fact"),
+                target_group_key=(rule.target_group_key if rule else None),
+                target_status=target_status_for_state(detail.get("validation_status")),
+                status_reason={"validation_status": detail.get("validation_status") or "passed"},
                 field_value=field.field_value,
                 extraction_method=field.extraction_method,
                 confidence=None if field.extraction_method == "agent_extract" else field.confidence,
@@ -655,6 +663,7 @@ class ParseService:
                 rule_version=detail.get("rule_version") or (rule.version if rule else None),
                 validation_status=detail.get("validation_status") or "passed",
                 extraction_detail=detail or None,
+                quality_inputs=quality_inputs_from_detail(detail),
             )
             db.add(db_field)
 
@@ -671,6 +680,10 @@ class ParseService:
                 document_id=document_id,
                 field_key=field_key,
                 field_name=detail.get("field_name") or (rule.field_name_cn if rule else field_key),
+                target_type=(rule.target_type if rule else "fact"),
+                target_group_key=(rule.target_group_key if rule else None),
+                target_status=target_status_for_state(detail.get("validation_status")),
+                status_reason={"validation_status": detail.get("validation_status") or "missing"},
                 field_value=None,
                 extraction_method=detail.get("extraction_method") or "none",
                 confidence=None,
@@ -683,6 +696,7 @@ class ParseService:
                 rule_version=detail.get("rule_version") or (rule.version if rule else None),
                 validation_status=detail.get("validation_status") or "missing",
                 extraction_detail=detail or None,
+                quality_inputs=quality_inputs_from_detail(detail),
             ))
 
         await db.flush()

@@ -111,7 +111,8 @@ def parse_document_task(self, document_id: str, parse_run_id: str, field_keys: l
         raise
 
 
-@celery_app.task(name="reliable_execution_wakeup", bind=True, max_retries=3)
+@celery_app.task(name="reliable_execution_wakeup", bind=True, max_retries=3,
+                 acks_late=True, reject_on_worker_lost=True, soft_time_limit=3300)
 def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: str | None = None,
                                  dispatch_attempt: int | None = None):
     """在 v2 队列上执行有界的真实检索、模型和校验量子。"""
@@ -130,9 +131,10 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
 
         from app.rules.strategies.llm import LLMStrategy
         from app.services.call_ledger import CallLedger
-        from app.services.evidence_images import EvidenceImages
+        from app.services.evidence_images import EvidenceImages, InvalidEvidenceRegion, clip_page_bbox
         from app.services.execution import JobRepository
         from app.services.model_gateway import GatewayPolicy, ModelGateway
+        from app.services.model_capacity import RedisModelCapacity
         from app.services.reliable_extraction_service import reliable_extraction_service
         from app.services.reliable_field_executor import (
             ReliableFieldExecutor,
@@ -172,7 +174,10 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
                 "max_image_tokens_per_call": settings.agent.reliable_max_image_tokens,
             }
             policy_kwargs.update(profile.get("gateway_policy") or {})
-            gateway = ModelGateway(client, ledger, circuit, GatewayPolicy(**policy_kwargs))
+            capacity = RedisModelCapacity(redis_client,
+                model.get("base_url", config.base_url), model.get("model_name", config.model_name),
+                timeout=model.get("timeout", config.timeout))
+            gateway = ModelGateway(client, ledger, circuit, GatewayPolicy(**policy_kwargs), capacity=capacity)
             with TemporaryDirectory(prefix="reliable-evidence-") as directory:
                 renderers = {}
 
@@ -182,8 +187,14 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
                         workspace = Path(directory) / str(document.document_id)
                         workspace.mkdir()
                         renderers[key] = EvidenceImages(document, pages, workspace)
-                    return await renderers[key].get_with_receipt(
-                        candidate["page_number"], candidate.get("bbox"))
+                    page = renderers[key].pages.get(candidate["page_number"])
+                    if page is None:
+                        raise InvalidEvidenceRegion("来源页面不存在")
+                    requested = candidate.get("bbox")
+                    bbox = clip_page_bbox(page, requested)
+                    data, receipt = await renderers[key].get_with_receipt(candidate["page_number"], bbox)
+                    return data, {**receipt, "requested_bbox": requested,
+                                  "bbox_clipped": requested is not None and list(requested) != bbox}
 
                 executor_class = ReliableFieldExecutor
                 if profile.get("extraction_strategy") == "page_batch_v1":
@@ -196,15 +207,15 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
                         thinking_enabled=model.get("thinking_enabled", True),
                         page_parallelism=int(profile.get("page_parallelism")
                             or settings.agent.reliable_page_parallelism)), image_provider=images)
-                # 按页提取由这次唤醒把剩余页做完。其他文档留在队列里等待，不因此终止。
-                # 接近 Celery 的 1 小时上限时交回剩余页，下一次唤醒继续同一份运行。
+                # 有界执行窗口交还 worker，让后来的文档也能获得执行机会。
+                # 结束窗口只移交持久化进度，不限制整篇文档页数或 token。
                 page_batch = profile.get("extraction_strategy") == "page_batch_v1"
-                quantums = 5000 if page_batch else 3
+                quantums = settings.agent.reliable_wakeup_quantums if page_batch else 3
                 result = await reliable_extraction_service.process_run(sessions, run_id, executor=executor,
                     writer=executor.write_result, before_publish=executor.before_publish,
                     owner=f"celery:{self.request.id}", max_quantums=quantums,
                     lease_seconds=600 if page_batch else 300,
-                    max_seconds=3000 if page_batch else None)
+                    max_seconds=settings.agent.reliable_wakeup_seconds if page_batch else None)
                 if result.get("remaining_runnable"):
                     try:
                         await asyncio.to_thread(reliable_execution_dispatch_task.delay)
@@ -218,7 +229,52 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
             await redis_client.aclose()
             await engine.dispose()
 
-    return asyncio.run(wake())
+    try:
+        return asyncio.run(wake())
+    except Exception as exc:
+        from app.services.execution import StaleLeaseError
+        if isinstance(exc, StaleLeaseError):
+            # 控制操作或接管使 token 失效，旧 worker 只退出，不能把新运行写成失败。
+            logger.info("v2 worker 已失去租约 run_id=%s", parse_run_id)
+            return {"status": "lease_lost", "run_id": parse_run_id}
+        if _retryable(exc) and self.request.retries < self.max_retries:
+            # 投递凭据已在第一次执行消费；重试必须作为新唤醒领取，仍受租约保护。
+            raise self.retry(exc=exc, args=[parse_run_id], kwargs={},
+                             countdown=min(15 * 2 ** self.request.retries, 120)) from exc
+        if not _retryable(exc):
+            # 初始化模型/执行器就失败时还没有字段 token。只关闭无人持有的运行，
+            # 不能让迟到的重复消息结束其他 worker 正在处理的解析。
+            async def fail_unclaimed():
+                from app.models.database import ParseRun
+                from app.models.execution import ParseFieldJob
+                from app.services.execution import JobRepository
+                from app.services.execution.field_scheduler import ACTIVE_RUN_STATES, ACTIVE_FIELD_STATES
+                from sqlalchemy import select
+                engine = create_async_engine(settings.database.url, poolclass=NullPool)
+                sessions = async_sessionmaker(engine, expire_on_commit=False)
+                try:
+                    async with sessions() as db, db.begin():
+                        run = await db.get(ParseRun, UUID(parse_run_id), with_for_update=True, populate_existing=True)
+                        if (run is None or run.contract_version != "reliable-extraction-v2"
+                                or run.status not in ACTIVE_RUN_STATES):
+                            return
+                        jobs = (await db.scalars(select(ParseFieldJob).where(
+                            ParseFieldJob.run_id == run.parse_run_id).with_for_update())).all()
+                        if any(job.execution_state == "running" for job in jobs):
+                            return
+                        for job in jobs:
+                            if job.execution_state in ACTIVE_FIELD_STATES:
+                                job.execution_state, job.semantic_state, job.phase = "failed_terminal", "incomplete", "failed"
+                                job.last_error = f"worker_setup_failed:{type(exc).__name__}"
+                                job.next_attempt_at = job.lease_owner = job.lease_until = None
+                        await JobRepository(db).aggregate(run.parse_run_id)
+                finally:
+                    await engine.dispose()
+            try:
+                asyncio.run(fail_unclaimed())
+            except Exception:
+                logger.exception("无法记录 v2 worker 初始化失败 run_id=%s", parse_run_id)
+        raise
 
 
 @celery_app.task(name="reliable_execution_dispatch", max_retries=0)
@@ -249,7 +305,8 @@ def reliable_execution_dispatch_task():
     return asyncio.run(dispatch())
 
 
-@celery_app.task(name="reliable_content_build", bind=True, max_retries=3)
+@celery_app.task(name="reliable_content_build", bind=True, max_retries=3,
+                 acks_late=True, reject_on_worker_lost=True, soft_time_limit=3300)
 def reliable_content_build_task(self, build_id: str):
     import asyncio
     if not settings.app.reliable_enabled:
@@ -271,7 +328,7 @@ def reliable_content_build_task(self, build_id: str):
                 initial_fence = current.fence_token if current else None
                 initial_file_hash = current.file_hash if current else None
             result = await content_preparation_service.run_build(sessions, UUID(build_id),
-                worker_id=worker_id, max_regions=400)
+                worker_id=worker_id, max_regions=settings.agent.reliable_wakeup_quantums)
             if result.get("run_id"):
                 await asyncio.to_thread(reliable_execution_wakeup_task.delay, result["run_id"])
             return result
@@ -285,10 +342,22 @@ def reliable_content_build_task(self, build_id: str):
                 allowed = content_build_failure_allowed(job, worker_id=worker_id,
                     initial_fence=initial_fence, file_hash=initial_file_hash, error=exc, now=now)
                 if allowed and document and document.file_hash == initial_file_hash:
-                    job.dispatch_state = "partial"
+                    failures = int((job.checkpoint or {}).get("infrastructure_failures", 0)) + 1
+                    job.checkpoint = {**dict(job.checkpoint or {}), "infrastructure_failures": failures}
+                    retryable = _retryable(exc) and failures <= 6
+                    job.dispatch_state = "waiting_service" if retryable else "failed_terminal"
                     job.last_error = f"content_preparation_failed:{type(exc).__name__}"
                     job.lease_owner = None
                     job.lease_until = None
+                    if retryable:
+                        from datetime import timedelta
+                        from app.services.execution import JobRepository
+                        retry_at = now + timedelta(seconds=min(300, 15 * 2 ** min(failures - 1, 5)))
+                        job.checkpoint = {**dict(job.checkpoint or {}), "retry_at": retry_at.isoformat()}
+                        event = await JobRepository(db).enqueue_outbox(kind="content.build.execute", aggregate_id=job.build_id,
+                            dedupe_key=f"content-failure:{job.build_id}:{job.fence_token}:{job.attempt}",
+                            payload={"build_id": str(job.build_id), "document_id": str(job.document_id), "file_hash": job.file_hash})
+                        event.next_attempt_at = retry_at
             raise
         finally:
             await engine.dispose()
@@ -401,3 +470,65 @@ def assistant_card_build_task(card_id: str):
         finally:
             await engine.dispose()
     return asyncio.run(build())
+
+
+@celery_app.task(name='attachment_import_preview', max_retries=0)
+def attachment_import_preview_task(import_id: str):
+    import asyncio
+    from app.services.attachment_import_service import process_preview
+    async def execute():
+        engine = create_async_engine(settings.database.url, poolclass=NullPool)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            await process_preview(sessions, UUID(import_id))
+        finally:
+            await engine.dispose()
+    return asyncio.run(execute())
+
+
+@celery_app.task(name='attachment_download', max_retries=0)
+def attachment_download_task(attachment_id: str):
+    import asyncio
+    from app.services.attachment_runtime import download_attachment
+    async def execute():
+        engine = create_async_engine(settings.database.url, poolclass=NullPool)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            await download_attachment(sessions, UUID(attachment_id))
+        finally:
+            await engine.dispose()
+    return asyncio.run(execute())
+
+
+@celery_app.task(name='attachment_import_recovery', max_retries=0)
+def attachment_import_recovery_task():
+    import asyncio
+    from app.services.attachment_runtime import recover_imports
+    async def execute():
+        engine = create_async_engine(settings.database.url, poolclass=NullPool)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async def sender(kind, item_id):
+                task = attachment_import_preview_task if kind == 'preview' else attachment_download_task
+                await asyncio.to_thread(task.delay, item_id)
+            return await recover_imports(sessions, sender)
+        finally:
+            await engine.dispose()
+    return asyncio.run(execute())
+
+
+@celery_app.task(name='attachment_object_cleanup', max_retries=0)
+def attachment_object_cleanup_task(after=None):
+    import asyncio
+    from app.services.attachment_runtime import cleanup_attempt_objects
+    async def execute():
+        engine = create_async_engine(settings.database.url, poolclass=NullPool)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            return await cleanup_attempt_objects(sessions, after=after)
+        finally:
+            await engine.dispose()
+    result = asyncio.run(execute())
+    if result['next_after']:
+        attachment_object_cleanup_task.apply_async(args=[result['next_after']], countdown=5)
+    return result

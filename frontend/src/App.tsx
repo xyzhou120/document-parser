@@ -18,6 +18,9 @@ import SourceArtifacts from './pages/SourceArtifacts'
 import ChecklistManagement from './pages/ChecklistManagement'
 import ReviewWorkspace from './pages/ReviewWorkspace'
 import ContentPreparation from './pages/ContentPreparation'
+import AttachmentList from './pages/AttachmentList'
+import AttachmentDetail from './pages/AttachmentDetail'
+import ExcelImport from './pages/ExcelImport'
 
 function App() {
   return (
@@ -32,6 +35,9 @@ function App() {
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="upload" element={<DocumentUpload />} />
             <Route path="documents" element={<Documents />} />
+            <Route path="attachments" element={<AttachmentList />} />
+            <Route path="attachments/:attachmentId" element={<AttachmentDetail />} />
+            <Route path="imports" element={<ExcelImport />} />
             <Route path="query" element={<BatchQuery />} />
             <Route path="tasks" element={<ParseTaskList />} />
             <Route path="result/:parseRunId" element={<ParseResult />} />

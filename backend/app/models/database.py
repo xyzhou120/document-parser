@@ -118,6 +118,10 @@ class ExtractedFieldModel(Base):
     # 字段信息
     field_key: Mapped[str] = mapped_column(String(100), index=True)
     field_name: Mapped[str] = mapped_column(String(200))
+    target_type: Mapped[Optional[str]] = mapped_column(String(30))
+    target_group_key: Mapped[Optional[str]] = mapped_column(String(100), index=True)
+    target_status: Mapped[Optional[str]] = mapped_column(String(40), index=True)
+    status_reason: Mapped[Optional[dict]] = mapped_column(JSON)
     field_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # 提取方法
@@ -136,6 +140,8 @@ class ExtractedFieldModel(Base):
     rule_version: Mapped[Optional[int]] = mapped_column(Integer)
     validation_status: Mapped[Optional[str]] = mapped_column(String(30))
     extraction_detail: Mapped[Optional[dict]] = mapped_column(JSON)
+    # 数据分析只读这份小摘要。完整 extraction_detail 里的证据原文不参与列表统计。
+    quality_inputs: Mapped[Optional[dict]] = mapped_column(JSON)
 
     # 时间戳
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)

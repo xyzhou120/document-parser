@@ -8,14 +8,51 @@
 
 BEGIN;
 
+CREATE TABLE IF NOT EXISTS attachment_checklist_mappings (
+	id UUID NOT NULL,
+	source_system VARCHAR(100) NOT NULL,
+	file_name_id VARCHAR(200) NOT NULL,
+	checklist_type VARCHAR(100) NOT NULL,
+	revision INTEGER NOT NULL,
+	actor VARCHAR(200) NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_attachment_checklist_mapping UNIQUE (source_system, file_name_id)
+);
+
+CREATE TABLE IF NOT EXISTS attachment_imports (
+	id UUID NOT NULL,
+	source_system VARCHAR(100) NOT NULL,
+	file_name VARCHAR(500) NOT NULL,
+	file_hash VARCHAR(64) NOT NULL,
+	staging_file BYTEA,
+	state VARCHAR(40) NOT NULL,
+	mappings JSON NOT NULL,
+	counts JSON NOT NULL,
+	last_error VARCHAR(500),
+	actor VARCHAR(200) NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	confirmed_at TIMESTAMP WITHOUT TIME ZONE,
+	control_action VARCHAR(20),
+	control_after UUID,
+	control_group VARCHAR(200),
+	control_actor VARCHAR(200),
+	control_reason VARCHAR(2000),
+	PRIMARY KEY (id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_attachment_imports_created_at ON attachment_imports (created_at);
+
+CREATE INDEX IF NOT EXISTS ix_attachment_imports_state ON attachment_imports (state);
+
 CREATE TABLE IF NOT EXISTS batches (
-	batch_id UUID NOT NULL, 
-	name VARCHAR(200) NOT NULL, 
-	status VARCHAR(30) NOT NULL, 
-	version INTEGER NOT NULL, 
-	metadata_json JSON, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
+	batch_id UUID NOT NULL,
+	name VARCHAR(200) NOT NULL,
+	status VARCHAR(30) NOT NULL,
+	version INTEGER NOT NULL,
+	metadata_json JSON,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	PRIMARY KEY (batch_id)
 );
 
@@ -24,28 +61,28 @@ CREATE INDEX IF NOT EXISTS ix_batches_created_at ON batches (created_at);
 CREATE INDEX IF NOT EXISTS ix_batches_status ON batches (status);
 
 CREATE TABLE IF NOT EXISTS checklist_types (
-	checklist_type VARCHAR(100) NOT NULL, 
-	checklist_name VARCHAR(255) NOT NULL, 
-	description TEXT, 
-	is_active BOOLEAN NOT NULL, 
-	sort_order INTEGER NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
+	checklist_type VARCHAR(100) NOT NULL,
+	checklist_name VARCHAR(255) NOT NULL,
+	description TEXT,
+	is_active BOOLEAN NOT NULL,
+	sort_order INTEGER NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	PRIMARY KEY (checklist_type)
 );
 
 CREATE INDEX IF NOT EXISTS ix_checklist_types_is_active ON checklist_types (is_active);
 
 CREATE TABLE IF NOT EXISTS document_artifacts (
-	artifact_id UUID NOT NULL, 
-	document_id UUID NOT NULL, 
-	file_hash VARCHAR(64) NOT NULL, 
-	preprocess_profile_version VARCHAR(50) NOT NULL, 
-	status VARCHAR(20) NOT NULL, 
-	pages JSON NOT NULL, 
-	quality JSON, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
+	artifact_id UUID NOT NULL,
+	document_id UUID NOT NULL,
+	file_hash VARCHAR(64) NOT NULL,
+	preprocess_profile_version VARCHAR(50) NOT NULL,
+	status VARCHAR(20) NOT NULL,
+	pages JSON NOT NULL,
+	quality JSON,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	PRIMARY KEY (artifact_id)
 );
 
@@ -60,15 +97,15 @@ CREATE INDEX IF NOT EXISTS ix_document_artifacts_preprocess_profile_version ON d
 CREATE INDEX IF NOT EXISTS ix_document_artifacts_status ON document_artifacts (status);
 
 CREATE TABLE IF NOT EXISTS document_context_audits (
-	audit_id UUID NOT NULL, 
-	document_id UUID NOT NULL, 
-	context_id UUID, 
-	action VARCHAR(30) NOT NULL, 
-	before JSON, 
-	after JSON, 
-	actor VARCHAR(100) NOT NULL, 
-	reason TEXT NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
+	audit_id UUID NOT NULL,
+	document_id UUID NOT NULL,
+	context_id UUID,
+	action VARCHAR(30) NOT NULL,
+	before JSON,
+	after JSON,
+	actor VARCHAR(100) NOT NULL,
+	reason TEXT NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	PRIMARY KEY (audit_id)
 );
 
@@ -79,15 +116,15 @@ CREATE INDEX IF NOT EXISTS ix_document_context_audits_created_at ON document_con
 CREATE INDEX IF NOT EXISTS ix_document_context_audits_document_id ON document_context_audits (document_id);
 
 CREATE TABLE IF NOT EXISTS document_contexts (
-	context_id UUID NOT NULL, 
-	document_id UUID NOT NULL, 
-	subtype VARCHAR(30) NOT NULL, 
-	context JSON NOT NULL, 
-	revision INTEGER NOT NULL, 
-	actor VARCHAR(100) NOT NULL, 
-	reason TEXT NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (context_id), 
+	context_id UUID NOT NULL,
+	document_id UUID NOT NULL,
+	subtype VARCHAR(30) NOT NULL,
+	context JSON NOT NULL,
+	revision INTEGER NOT NULL,
+	actor VARCHAR(100) NOT NULL,
+	reason TEXT NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (context_id),
 	CONSTRAINT uq_document_context_revision UNIQUE (document_id, revision)
 );
 
@@ -98,17 +135,17 @@ CREATE INDEX IF NOT EXISTS ix_document_contexts_document_id ON document_contexts
 CREATE INDEX IF NOT EXISTS ix_document_contexts_subtype ON document_contexts (subtype);
 
 CREATE TABLE IF NOT EXISTS document_relation_audits (
-	audit_id UUID NOT NULL, 
-	relation_id UUID, 
-	source_document_id UUID NOT NULL, 
-	target_document_id UUID NOT NULL, 
-	action VARCHAR(30) NOT NULL, 
-	revision INTEGER NOT NULL, 
-	snapshot JSON, 
-	actor VARCHAR(100) NOT NULL, 
-	reason TEXT NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (audit_id), 
+	audit_id UUID NOT NULL,
+	relation_id UUID,
+	source_document_id UUID NOT NULL,
+	target_document_id UUID NOT NULL,
+	action VARCHAR(30) NOT NULL,
+	revision INTEGER NOT NULL,
+	snapshot JSON,
+	actor VARCHAR(100) NOT NULL,
+	reason TEXT NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (audit_id),
 	CONSTRAINT uq_document_relation_revision UNIQUE (source_document_id, revision)
 );
 
@@ -121,15 +158,15 @@ CREATE INDEX IF NOT EXISTS ix_document_relation_audits_source_document_id ON doc
 CREATE INDEX IF NOT EXISTS ix_document_relation_audits_target_document_id ON document_relation_audits (target_document_id);
 
 CREATE TABLE IF NOT EXISTS document_relations (
-	relation_id UUID NOT NULL, 
-	source_document_id UUID NOT NULL, 
-	target_document_id UUID NOT NULL, 
-	source_role VARCHAR(30) NOT NULL, 
-	relation_type VARCHAR(40) NOT NULL, 
-	actor VARCHAR(100) NOT NULL, 
-	reason TEXT NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (relation_id), 
+	relation_id UUID NOT NULL,
+	source_document_id UUID NOT NULL,
+	target_document_id UUID NOT NULL,
+	source_role VARCHAR(30) NOT NULL,
+	relation_type VARCHAR(40) NOT NULL,
+	actor VARCHAR(100) NOT NULL,
+	reason TEXT NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (relation_id),
 	CONSTRAINT uq_document_relation_pair UNIQUE (source_document_id, target_document_id)
 );
 
@@ -140,21 +177,21 @@ CREATE INDEX IF NOT EXISTS ix_document_relations_source_document_id ON document_
 CREATE INDEX IF NOT EXISTS ix_document_relations_target_document_id ON document_relations (target_document_id);
 
 CREATE TABLE IF NOT EXISTS documents (
-	document_id UUID NOT NULL, 
-	file_name VARCHAR(500) NOT NULL, 
-	original_name VARCHAR(500) NOT NULL, 
-	file_path TEXT NOT NULL, 
-	file_size BIGINT NOT NULL, 
-	file_hash VARCHAR(64) NOT NULL, 
-	mime_type VARCHAR(100) NOT NULL, 
-	mine_id VARCHAR(100), 
-	mine_name VARCHAR(200), 
-	checklist_type VARCHAR(100), 
-	report_period VARCHAR(50), 
-	page_count INTEGER, 
-	parse_status VARCHAR(50) NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
+	document_id UUID NOT NULL,
+	file_name VARCHAR(500) NOT NULL,
+	original_name VARCHAR(500) NOT NULL,
+	file_path TEXT NOT NULL,
+	file_size BIGINT NOT NULL,
+	file_hash VARCHAR(64) NOT NULL,
+	mime_type VARCHAR(100) NOT NULL,
+	mine_id VARCHAR(100),
+	mine_name VARCHAR(200),
+	checklist_type VARCHAR(100),
+	report_period VARCHAR(50),
+	page_count INTEGER,
+	parse_status VARCHAR(50) NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	PRIMARY KEY (document_id)
 );
 
@@ -171,18 +208,18 @@ CREATE INDEX IF NOT EXISTS ix_documents_parse_status ON documents (parse_status)
 CREATE INDEX IF NOT EXISTS ix_documents_report_period ON documents (report_period);
 
 CREATE TABLE IF NOT EXISTS execution_outbox (
-	event_id UUID NOT NULL, 
-	kind VARCHAR(100) NOT NULL, 
-	aggregate_id UUID NOT NULL, 
-	dedupe_key VARCHAR(500) NOT NULL, 
-	payload JSON NOT NULL, 
-	dispatch_state VARCHAR(32) NOT NULL, 
-	next_attempt_at TIMESTAMP WITHOUT TIME ZONE, 
-	attempts INTEGER NOT NULL, 
-	last_error TEXT, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (event_id), 
+	event_id UUID NOT NULL,
+	kind VARCHAR(100) NOT NULL,
+	aggregate_id UUID NOT NULL,
+	dedupe_key VARCHAR(500) NOT NULL,
+	payload JSON NOT NULL,
+	dispatch_state VARCHAR(32) NOT NULL,
+	next_attempt_at TIMESTAMP WITHOUT TIME ZONE,
+	attempts INTEGER NOT NULL,
+	last_error TEXT,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (event_id),
 	CONSTRAINT uq_execution_outbox_kind_dedupe UNIQUE (kind, dedupe_key)
 );
 
@@ -197,24 +234,28 @@ CREATE INDEX IF NOT EXISTS ix_execution_outbox_kind ON execution_outbox (kind);
 CREATE INDEX IF NOT EXISTS ix_execution_outbox_next_attempt_at ON execution_outbox (next_attempt_at);
 
 CREATE TABLE IF NOT EXISTS extracted_fields (
-	field_id UUID NOT NULL, 
-	parse_run_id UUID NOT NULL, 
-	document_id UUID NOT NULL, 
-	field_key VARCHAR(100) NOT NULL, 
-	field_name VARCHAR(200) NOT NULL, 
-	field_value TEXT, 
-	extraction_method VARCHAR(50) NOT NULL, 
-	confidence FLOAT, 
-	evidence JSON, 
-	data_type VARCHAR(20), 
-	unit VARCHAR(50), 
-	required BOOLEAN NOT NULL, 
-	instances JSON, 
-	rule_id UUID, 
-	rule_version INTEGER, 
-	validation_status VARCHAR(30), 
-	extraction_detail JSON, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
+	field_id UUID NOT NULL,
+	parse_run_id UUID NOT NULL,
+	document_id UUID NOT NULL,
+	field_key VARCHAR(100) NOT NULL,
+	field_name VARCHAR(200) NOT NULL,
+	target_type VARCHAR(30),
+	target_group_key VARCHAR(100),
+	target_status VARCHAR(40),
+	status_reason JSON,
+	field_value TEXT,
+	extraction_method VARCHAR(50) NOT NULL,
+	confidence FLOAT,
+	evidence JSON,
+	data_type VARCHAR(20),
+	unit VARCHAR(50),
+	required BOOLEAN NOT NULL,
+	instances JSON,
+	rule_id UUID,
+	rule_version INTEGER,
+	validation_status VARCHAR(30),
+	extraction_detail JSON,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	PRIMARY KEY (field_id)
 );
 
@@ -226,28 +267,38 @@ CREATE INDEX IF NOT EXISTS ix_extracted_fields_parse_run_id ON extracted_fields 
 
 CREATE INDEX IF NOT EXISTS ix_extracted_fields_rule_id ON extracted_fields (rule_id);
 
+CREATE INDEX IF NOT EXISTS ix_extracted_fields_target_group_key ON extracted_fields (target_group_key);
+
+CREATE INDEX IF NOT EXISTS ix_extracted_fields_target_status ON extracted_fields (target_status);
+
 CREATE TABLE IF NOT EXISTS extraction_rules (
-	rule_id UUID NOT NULL, 
-	checklist_type VARCHAR(100) NOT NULL, 
-	field_key VARCHAR(100) NOT NULL, 
-	field_name_cn VARCHAR(255) NOT NULL, 
-	field_description TEXT, 
-	dimension_schema JSON NOT NULL, 
-	value_kind VARCHAR(30) NOT NULL, 
-	data_type VARCHAR(20) NOT NULL, 
-	unit VARCHAR(50), 
-	required BOOLEAN NOT NULL, 
-	multi_instance BOOLEAN NOT NULL, 
-	merge_strategy VARCHAR(30) NOT NULL, 
-	strategy JSON NOT NULL, 
-	validation JSON, 
-	fallback_value VARCHAR(255), 
-	priority INTEGER NOT NULL, 
-	enabled BOOLEAN NOT NULL, 
-	version INTEGER NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (rule_id), 
+	rule_id UUID NOT NULL,
+	checklist_type VARCHAR(100) NOT NULL,
+	field_key VARCHAR(100) NOT NULL,
+	target_type VARCHAR(30) DEFAULT 'fact' NOT NULL,
+	target_group_key VARCHAR(100),
+	target_group_name VARCHAR(255),
+	output_schema JSON NOT NULL,
+	source_policy JSON NOT NULL,
+	evidence_policy JSON NOT NULL,
+	field_name_cn VARCHAR(255) NOT NULL,
+	field_description TEXT,
+	dimension_schema JSON NOT NULL,
+	value_kind VARCHAR(30) NOT NULL,
+	data_type VARCHAR(20) NOT NULL,
+	unit VARCHAR(50),
+	required BOOLEAN NOT NULL,
+	multi_instance BOOLEAN NOT NULL,
+	merge_strategy VARCHAR(30) NOT NULL,
+	strategy JSON NOT NULL,
+	validation JSON,
+	fallback_value VARCHAR(255),
+	priority INTEGER NOT NULL,
+	enabled BOOLEAN NOT NULL,
+	version INTEGER NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (rule_id),
 	CONSTRAINT uq_rule_checklist_field UNIQUE (checklist_type, field_key)
 );
 
@@ -259,21 +310,23 @@ CREATE INDEX IF NOT EXISTS ix_extraction_rules_field_key ON extraction_rules (fi
 
 CREATE INDEX IF NOT EXISTS ix_extraction_rules_priority ON extraction_rules (priority);
 
+CREATE INDEX IF NOT EXISTS ix_extraction_rules_target_group_key ON extraction_rules (target_group_key);
+
 CREATE TABLE IF NOT EXISTS field_review_revisions (
-	review_id UUID NOT NULL, 
-	parse_run_id UUID NOT NULL, 
-	document_id UUID NOT NULL, 
-	field_key VARCHAR(100) NOT NULL, 
-	revision INTEGER NOT NULL, 
-	previous_revision INTEGER NOT NULL, 
-	action VARCHAR(20) NOT NULL, 
-	reviewer VARCHAR(200) NOT NULL, 
-	reason TEXT NOT NULL, 
-	file_hash VARCHAR(64) NOT NULL, 
-	before_snapshot JSON NOT NULL, 
-	facts JSON NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (review_id), 
+	review_id UUID NOT NULL,
+	parse_run_id UUID NOT NULL,
+	document_id UUID NOT NULL,
+	field_key VARCHAR(100) NOT NULL,
+	revision INTEGER NOT NULL,
+	previous_revision INTEGER NOT NULL,
+	action VARCHAR(20) NOT NULL,
+	reviewer VARCHAR(200) NOT NULL,
+	reason TEXT NOT NULL,
+	file_hash VARCHAR(64) NOT NULL,
+	before_snapshot JSON NOT NULL,
+	facts JSON NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (review_id),
 	CONSTRAINT uq_field_review_revision UNIQUE (parse_run_id, field_key, revision)
 );
 
@@ -286,19 +339,19 @@ CREATE INDEX IF NOT EXISTS ix_field_review_revisions_field_key ON field_review_r
 CREATE INDEX IF NOT EXISTS ix_field_review_revisions_parse_run_id ON field_review_revisions (parse_run_id);
 
 CREATE TABLE IF NOT EXISTS integration_outbox (
-	event_id VARCHAR(160) NOT NULL, 
-	parse_run_id UUID NOT NULL, 
-	document_id UUID NOT NULL, 
-	payload JSON NOT NULL, 
-	destination VARCHAR(1000) NOT NULL, 
-	state VARCHAR(30) NOT NULL, 
-	attempts INTEGER NOT NULL, 
-	max_attempts INTEGER NOT NULL, 
-	next_attempt_at TIMESTAMP WITHOUT TIME ZONE, 
-	last_error TEXT, 
-	acknowledgement JSON, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
+	event_id VARCHAR(160) NOT NULL,
+	parse_run_id UUID NOT NULL,
+	document_id UUID NOT NULL,
+	payload JSON NOT NULL,
+	destination VARCHAR(1000) NOT NULL,
+	state VARCHAR(30) NOT NULL,
+	attempts INTEGER NOT NULL,
+	max_attempts INTEGER NOT NULL,
+	next_attempt_at TIMESTAMP WITHOUT TIME ZONE,
+	last_error TEXT,
+	acknowledgement JSON,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	PRIMARY KEY (event_id)
 );
 
@@ -309,15 +362,15 @@ CREATE INDEX IF NOT EXISTS ix_integration_outbox_parse_run_id ON integration_out
 CREATE INDEX IF NOT EXISTS ix_integration_outbox_state ON integration_outbox (state);
 
 CREATE TABLE IF NOT EXISTS integration_requests (
-	event_id VARCHAR(160) NOT NULL, 
-	document_id UUID NOT NULL, 
-	parse_run_id UUID NOT NULL, 
-	payload_hash VARCHAR(64) NOT NULL, 
-	payload JSON NOT NULL, 
-	state VARCHAR(30) NOT NULL, 
-	actor VARCHAR(200) NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
+	event_id VARCHAR(160) NOT NULL,
+	document_id UUID NOT NULL,
+	parse_run_id UUID NOT NULL,
+	payload_hash VARCHAR(64) NOT NULL,
+	payload JSON NOT NULL,
+	state VARCHAR(30) NOT NULL,
+	actor VARCHAR(200) NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	PRIMARY KEY (event_id)
 );
 
@@ -326,13 +379,13 @@ CREATE INDEX IF NOT EXISTS ix_integration_requests_document_id ON integration_re
 CREATE INDEX IF NOT EXISTS ix_integration_requests_parse_run_id ON integration_requests (parse_run_id);
 
 CREATE TABLE IF NOT EXISTS parse_logs (
-	log_id UUID NOT NULL, 
-	parse_run_id UUID NOT NULL, 
-	level VARCHAR(20) NOT NULL, 
-	stage VARCHAR(50) NOT NULL, 
-	message TEXT NOT NULL, 
-	details JSON, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
+	log_id UUID NOT NULL,
+	parse_run_id UUID NOT NULL,
+	level VARCHAR(20) NOT NULL,
+	stage VARCHAR(50) NOT NULL,
+	message TEXT NOT NULL,
+	details JSON,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	PRIMARY KEY (log_id)
 );
 
@@ -341,31 +394,31 @@ CREATE INDEX IF NOT EXISTS ix_parse_logs_created_at ON parse_logs (created_at);
 CREATE INDEX IF NOT EXISTS ix_parse_logs_parse_run_id ON parse_logs (parse_run_id);
 
 CREATE TABLE IF NOT EXISTS rule_bundles (
-	bundle_id UUID NOT NULL, 
-	checklist_type VARCHAR(100) NOT NULL, 
-	version INTEGER NOT NULL, 
-	base_generation INTEGER NOT NULL, 
-	rules JSON NOT NULL, 
-	content_hash VARCHAR(64) NOT NULL, 
-	knowledge_hash VARCHAR(64) NOT NULL, 
-	note TEXT NOT NULL, 
-	operator VARCHAR(100) NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (bundle_id), 
+	bundle_id UUID NOT NULL,
+	checklist_type VARCHAR(100) NOT NULL,
+	version INTEGER NOT NULL,
+	base_generation INTEGER NOT NULL,
+	rules JSON NOT NULL,
+	content_hash VARCHAR(64) NOT NULL,
+	knowledge_hash VARCHAR(64) NOT NULL,
+	note TEXT NOT NULL,
+	operator VARCHAR(100) NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (bundle_id),
 	CONSTRAINT uq_bundle_version UNIQUE (checklist_type, version)
 );
 
 CREATE INDEX IF NOT EXISTS ix_rule_bundles_checklist_type ON rule_bundles (checklist_type);
 
 CREATE TABLE IF NOT EXISTS rule_change_log (
-	log_id UUID NOT NULL, 
-	rule_id UUID, 
-	checklist_type VARCHAR(100), 
-	action VARCHAR(30) NOT NULL, 
-	before_state JSON, 
-	after_state JSON, 
-	operator VARCHAR(100), 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
+	log_id UUID NOT NULL,
+	rule_id UUID,
+	checklist_type VARCHAR(100),
+	action VARCHAR(30) NOT NULL,
+	before_state JSON,
+	after_state JSON,
+	operator VARCHAR(100),
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	PRIMARY KEY (log_id)
 );
 
@@ -376,26 +429,26 @@ CREATE INDEX IF NOT EXISTS ix_rule_change_log_created_at ON rule_change_log (cre
 CREATE INDEX IF NOT EXISTS ix_rule_change_log_rule_id ON rule_change_log (rule_id);
 
 CREATE TABLE IF NOT EXISTS source_revisions (
-	revision_id UUID NOT NULL, 
-	document_id UUID NOT NULL, 
-	parent_artifact_id UUID NOT NULL, 
-	derived_artifact_id UUID, 
-	parent_revision_id UUID, 
-	revision_type VARCHAR(20) NOT NULL, 
-	page_number INTEGER NOT NULL, 
-	bbox JSON, 
-	start_offset INTEGER, 
-	end_offset INTEGER, 
-	original_text TEXT, 
-	original_text_hash VARCHAR(64), 
-	replacement_text TEXT, 
-	comment TEXT NOT NULL, 
-	affected_fields JSON NOT NULL, 
-	source_review_status VARCHAR(30) NOT NULL, 
-	extraction_run_id UUID, 
-	extraction_task_id VARCHAR(255), 
-	created_by VARCHAR(100) NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
+	revision_id UUID NOT NULL,
+	document_id UUID NOT NULL,
+	parent_artifact_id UUID NOT NULL,
+	derived_artifact_id UUID,
+	parent_revision_id UUID,
+	revision_type VARCHAR(20) NOT NULL,
+	page_number INTEGER NOT NULL,
+	bbox JSON,
+	start_offset INTEGER,
+	end_offset INTEGER,
+	original_text TEXT,
+	original_text_hash VARCHAR(64),
+	replacement_text TEXT,
+	comment TEXT NOT NULL,
+	affected_fields JSON NOT NULL,
+	source_review_status VARCHAR(30) NOT NULL,
+	extraction_run_id UUID,
+	extraction_task_id VARCHAR(255),
+	created_by VARCHAR(100) NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	PRIMARY KEY (revision_id)
 );
 
@@ -411,24 +464,91 @@ CREATE INDEX IF NOT EXISTS ix_source_revisions_parent_artifact_id ON source_revi
 
 CREATE INDEX IF NOT EXISTS ix_source_revisions_parent_revision_id ON source_revisions (parent_revision_id);
 
+CREATE TABLE IF NOT EXISTS attachments (
+	id UUID NOT NULL,
+	source_system VARCHAR(100) NOT NULL,
+	source_id VARCHAR(200) NOT NULL,
+	mine_code VARCHAR(100) NOT NULL,
+	mine_name VARCHAR(200) NOT NULL,
+	file_name_id VARCHAR(200) NOT NULL,
+	file_name VARCHAR(500) NOT NULL,
+	report_time_raw VARCHAR(100) NOT NULL,
+	update_rate INTEGER NOT NULL,
+	cycle VARCHAR(20) NOT NULL,
+	period_type VARCHAR(30) NOT NULL,
+	period_key VARCHAR(100) NOT NULL,
+	normalization_status VARCHAR(40) NOT NULL,
+	attachment_name VARCHAR(500) NOT NULL,
+	source_url TEXT NOT NULL,
+	format VARCHAR(20) NOT NULL,
+	checklist_type VARCHAR(100),
+	document_id UUID,
+	current_revision_id UUID,
+	current_version_id UUID,
+	cas_version INTEGER NOT NULL,
+	version_seq INTEGER NOT NULL,
+	status VARCHAR(40) NOT NULL,
+	download_state VARCHAR(40) NOT NULL,
+	download_attempts INTEGER NOT NULL,
+	download_fence INTEGER NOT NULL,
+	lease_owner VARCHAR(100),
+	lease_until TIMESTAMP WITHOUT TIME ZONE,
+	next_attempt_at TIMESTAMP WITHOUT TIME ZONE,
+	last_error VARCHAR(500),
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_attachment_source UNIQUE (source_system, source_id),
+	UNIQUE (document_id),
+	FOREIGN KEY(document_id) REFERENCES documents (document_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_attachment_scope ON attachments (mine_code, file_name_id, period_type, period_key);
+
+CREATE INDEX IF NOT EXISTS ix_attachments_attachment_name ON attachments (attachment_name);
+
+CREATE INDEX IF NOT EXISTS ix_attachments_checklist_type ON attachments (checklist_type);
+
+CREATE INDEX IF NOT EXISTS ix_attachments_created_at ON attachments (created_at);
+
+CREATE INDEX IF NOT EXISTS ix_attachments_current_version_id ON attachments (current_version_id);
+
+CREATE INDEX IF NOT EXISTS ix_attachments_download_state ON attachments (download_state);
+
+CREATE INDEX IF NOT EXISTS ix_attachments_file_name_id ON attachments (file_name_id);
+
+CREATE INDEX IF NOT EXISTS ix_attachments_format ON attachments (format);
+
+CREATE INDEX IF NOT EXISTS ix_attachments_lease_until ON attachments (lease_until);
+
+CREATE INDEX IF NOT EXISTS ix_attachments_mine_code ON attachments (mine_code);
+
+CREATE INDEX IF NOT EXISTS ix_attachments_next_attempt_at ON attachments (next_attempt_at);
+
+CREATE INDEX IF NOT EXISTS ix_attachments_period_key ON attachments (period_key);
+
+CREATE INDEX IF NOT EXISTS ix_attachments_period_type ON attachments (period_type);
+
+CREATE INDEX IF NOT EXISTS ix_attachments_status ON attachments (status);
+
 CREATE TABLE IF NOT EXISTS batch_items (
-	item_id UUID NOT NULL, 
-	batch_id UUID NOT NULL, 
-	client_key VARCHAR(200) NOT NULL, 
-	file_name VARCHAR(500) NOT NULL, 
-	file_hash VARCHAR(64), 
-	file_size BIGINT, 
-	metadata_json JSON, 
-	document_id UUID, 
-	parse_run_id UUID, 
-	status VARCHAR(30) NOT NULL, 
-	attempts INTEGER NOT NULL, 
-	version INTEGER NOT NULL, 
-	error_message TEXT, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (item_id), 
-	CONSTRAINT uq_batch_item_client_key UNIQUE (batch_id, client_key), 
+	item_id UUID NOT NULL,
+	batch_id UUID NOT NULL,
+	client_key VARCHAR(200) NOT NULL,
+	file_name VARCHAR(500) NOT NULL,
+	file_hash VARCHAR(64),
+	file_size BIGINT,
+	metadata_json JSON,
+	document_id UUID,
+	parse_run_id UUID,
+	status VARCHAR(30) NOT NULL,
+	attempts INTEGER NOT NULL,
+	version INTEGER NOT NULL,
+	error_message TEXT,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (item_id),
+	CONSTRAINT uq_batch_item_client_key UNIQUE (batch_id, client_key),
 	FOREIGN KEY(batch_id) REFERENCES batches (batch_id)
 );
 
@@ -445,23 +565,23 @@ CREATE INDEX IF NOT EXISTS ix_batch_items_parse_run_id ON batch_items (parse_run
 CREATE INDEX IF NOT EXISTS ix_batch_items_status ON batch_items (status);
 
 CREATE TABLE IF NOT EXISTS checklist_release_heads (
-	checklist_type VARCHAR(100) NOT NULL, 
-	bundle_id UUID NOT NULL, 
-	generation INTEGER NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (checklist_type), 
+	checklist_type VARCHAR(100) NOT NULL,
+	bundle_id UUID NOT NULL,
+	generation INTEGER NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (checklist_type),
 	FOREIGN KEY(bundle_id) REFERENCES rule_bundles (bundle_id)
 );
 
 CREATE TABLE IF NOT EXISTS content_invalidations (
-	invalidation_id UUID NOT NULL, 
-	document_id UUID NOT NULL, 
-	invalidation_kind VARCHAR(40) NOT NULL, 
-	scope_selector JSON NOT NULL, 
-	effective_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	reason TEXT NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (invalidation_id), 
+	invalidation_id UUID NOT NULL,
+	document_id UUID NOT NULL,
+	invalidation_kind VARCHAR(40) NOT NULL,
+	scope_selector JSON NOT NULL,
+	effective_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	reason TEXT NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (invalidation_id),
 	FOREIGN KEY(document_id) REFERENCES documents (document_id)
 );
 
@@ -474,26 +594,26 @@ CREATE INDEX IF NOT EXISTS ix_content_invalidations_effective_at ON content_inva
 CREATE INDEX IF NOT EXISTS ix_content_invalidations_invalidation_kind ON content_invalidations (invalidation_kind);
 
 CREATE TABLE IF NOT EXISTS content_revisions (
-	revision_id UUID NOT NULL, 
-	document_id UUID NOT NULL, 
-	artifact_id UUID NOT NULL, 
-	parent_revision_id UUID, 
-	origin_source_revision_id UUID, 
-	origin_event_id VARCHAR(200), 
-	file_hash VARCHAR(64) NOT NULL, 
-	content_digest VARCHAR(64) NOT NULL, 
-	preprocess_manifest JSON NOT NULL, 
-	adapter_version VARCHAR(80) NOT NULL, 
-	source_kind VARCHAR(50) NOT NULL, 
-	change_kind VARCHAR(50) NOT NULL, 
-	coverage_manifest JSON NOT NULL, 
-	coverage_digest VARCHAR(64) NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (revision_id), 
-	CONSTRAINT uq_content_revision_source_origin UNIQUE (origin_source_revision_id), 
-	FOREIGN KEY(document_id) REFERENCES documents (document_id), 
-	FOREIGN KEY(artifact_id) REFERENCES document_artifacts (artifact_id), 
-	FOREIGN KEY(parent_revision_id) REFERENCES content_revisions (revision_id), 
+	revision_id UUID NOT NULL,
+	document_id UUID NOT NULL,
+	artifact_id UUID NOT NULL,
+	parent_revision_id UUID,
+	origin_source_revision_id UUID,
+	origin_event_id VARCHAR(200),
+	file_hash VARCHAR(64) NOT NULL,
+	content_digest VARCHAR(64) NOT NULL,
+	preprocess_manifest JSON NOT NULL,
+	adapter_version VARCHAR(80) NOT NULL,
+	source_kind VARCHAR(50) NOT NULL,
+	change_kind VARCHAR(50) NOT NULL,
+	coverage_manifest JSON NOT NULL,
+	coverage_digest VARCHAR(64) NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (revision_id),
+	CONSTRAINT uq_content_revision_source_origin UNIQUE (origin_source_revision_id),
+	FOREIGN KEY(document_id) REFERENCES documents (document_id),
+	FOREIGN KEY(artifact_id) REFERENCES document_artifacts (artifact_id),
+	FOREIGN KEY(parent_revision_id) REFERENCES content_revisions (revision_id),
 	FOREIGN KEY(origin_source_revision_id) REFERENCES source_revisions (revision_id)
 );
 
@@ -514,18 +634,18 @@ CREATE INDEX IF NOT EXISTS ix_content_revisions_origin_source_revision_id ON con
 CREATE INDEX IF NOT EXISTS ix_content_revisions_parent_revision_id ON content_revisions (parent_revision_id);
 
 CREATE TABLE IF NOT EXISTS rule_release_events (
-	event_id UUID NOT NULL, 
-	checklist_type VARCHAR(100) NOT NULL, 
-	bundle_id UUID NOT NULL, 
-	previous_bundle_id UUID, 
-	action VARCHAR(20) NOT NULL, 
-	generation INTEGER NOT NULL, 
-	operator VARCHAR(100) NOT NULL, 
-	reason TEXT NOT NULL, 
-	sample_runs JSON NOT NULL, 
-	sample_report JSON, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (event_id), 
+	event_id UUID NOT NULL,
+	checklist_type VARCHAR(100) NOT NULL,
+	bundle_id UUID NOT NULL,
+	previous_bundle_id UUID,
+	action VARCHAR(20) NOT NULL,
+	generation INTEGER NOT NULL,
+	operator VARCHAR(100) NOT NULL,
+	reason TEXT NOT NULL,
+	sample_runs JSON NOT NULL,
+	sample_report JSON,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (event_id),
 	FOREIGN KEY(bundle_id) REFERENCES rule_bundles (bundle_id)
 );
 
@@ -535,25 +655,70 @@ CREATE INDEX IF NOT EXISTS ix_rule_release_events_checklist_type ON rule_release
 
 CREATE INDEX IF NOT EXISTS ix_rule_release_events_created_at ON rule_release_events (created_at);
 
+CREATE TABLE IF NOT EXISTS attachment_file_revisions (
+	id UUID NOT NULL,
+	attachment_id UUID NOT NULL,
+	sha256 VARCHAR(64) NOT NULL,
+	size BIGINT NOT NULL,
+	mime_type VARCHAR(100) NOT NULL,
+	object_key TEXT NOT NULL,
+	source_digest VARCHAR(64) NOT NULL,
+	state VARCHAR(40) NOT NULL,
+	metadata_snapshot JSON NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_attachment_revision_hash UNIQUE (attachment_id, sha256),
+	FOREIGN KEY(attachment_id) REFERENCES attachments (id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_attachment_file_revisions_attachment_id ON attachment_file_revisions (attachment_id);
+
+CREATE INDEX IF NOT EXISTS ix_attachment_file_revisions_sha256 ON attachment_file_revisions (sha256);
+
+CREATE TABLE IF NOT EXISTS attachment_import_rows (
+	id UUID NOT NULL,
+	import_id UUID NOT NULL,
+	sheet VARCHAR(200) NOT NULL,
+	row_number INTEGER NOT NULL,
+	raw JSON NOT NULL,
+	normalized JSON NOT NULL,
+	source_url TEXT,
+	state VARCHAR(40) NOT NULL,
+	errors JSON NOT NULL,
+	attachment_id UUID,
+	observation JSON,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_attachment_import_row UNIQUE (import_id, sheet, row_number),
+	FOREIGN KEY(import_id) REFERENCES attachment_imports (id),
+	FOREIGN KEY(attachment_id) REFERENCES attachments (id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_attachment_import_rows_attachment_id ON attachment_import_rows (attachment_id);
+
+CREATE INDEX IF NOT EXISTS ix_attachment_import_rows_import_id ON attachment_import_rows (import_id);
+
+CREATE INDEX IF NOT EXISTS ix_attachment_import_rows_state ON attachment_import_rows (state);
+
 CREATE TABLE IF NOT EXISTS content_build_jobs (
-	build_id UUID NOT NULL, 
-	document_id UUID NOT NULL, 
-	file_hash VARCHAR(64) NOT NULL, 
-	profile JSON NOT NULL, 
-	parent_revision_id UUID, 
-	phase VARCHAR(50) NOT NULL, 
-	checkpoint JSON NOT NULL, 
-	dispatch_state VARCHAR(32) NOT NULL, 
-	attempt INTEGER NOT NULL, 
-	lease_owner VARCHAR(200), 
-	lease_until TIMESTAMP WITHOUT TIME ZONE, 
-	fence_token INTEGER NOT NULL, 
-	last_error TEXT, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (build_id), 
-	CONSTRAINT ck_content_build_counters CHECK (attempt >= 0 AND fence_token >= 0), 
-	FOREIGN KEY(document_id) REFERENCES documents (document_id), 
+	build_id UUID NOT NULL,
+	document_id UUID NOT NULL,
+	file_hash VARCHAR(64) NOT NULL,
+	profile JSON NOT NULL,
+	parent_revision_id UUID,
+	phase VARCHAR(50) NOT NULL,
+	checkpoint JSON NOT NULL,
+	dispatch_state VARCHAR(32) NOT NULL,
+	attempt INTEGER NOT NULL,
+	lease_owner VARCHAR(200),
+	lease_until TIMESTAMP WITHOUT TIME ZONE,
+	fence_token INTEGER NOT NULL,
+	last_error TEXT,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (build_id),
+	CONSTRAINT ck_content_build_counters CHECK (attempt >= 0 AND fence_token >= 0),
+	FOREIGN KEY(document_id) REFERENCES documents (document_id),
 	FOREIGN KEY(parent_revision_id) REFERENCES content_revisions (revision_id)
 );
 
@@ -570,17 +735,17 @@ CREATE INDEX IF NOT EXISTS ix_content_build_jobs_parent_revision_id ON content_b
 CREATE INDEX IF NOT EXISTS ix_content_build_jobs_phase ON content_build_jobs (phase);
 
 CREATE TABLE IF NOT EXISTS content_impacts (
-	impact_id UUID NOT NULL, 
-	from_revision_id UUID NOT NULL, 
-	to_revision_id UUID NOT NULL, 
-	changed_ranges JSON NOT NULL, 
-	dependency_precision VARCHAR(32) NOT NULL, 
-	recompute_policy VARCHAR(32) NOT NULL, 
-	invalidation_scope JSON NOT NULL, 
-	request_id VARCHAR(200), 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (impact_id), 
-	FOREIGN KEY(from_revision_id) REFERENCES content_revisions (revision_id), 
+	impact_id UUID NOT NULL,
+	from_revision_id UUID NOT NULL,
+	to_revision_id UUID NOT NULL,
+	changed_ranges JSON NOT NULL,
+	dependency_precision VARCHAR(32) NOT NULL,
+	recompute_policy VARCHAR(32) NOT NULL,
+	invalidation_scope JSON NOT NULL,
+	request_id VARCHAR(200),
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (impact_id),
+	FOREIGN KEY(from_revision_id) REFERENCES content_revisions (revision_id),
 	FOREIGN KEY(to_revision_id) REFERENCES content_revisions (revision_id)
 );
 
@@ -593,23 +758,23 @@ CREATE INDEX IF NOT EXISTS ix_content_impacts_request_id ON content_impacts (req
 CREATE INDEX IF NOT EXISTS ix_content_impacts_to_revision_id ON content_impacts (to_revision_id);
 
 CREATE TABLE IF NOT EXISTS index_generations (
-	generation_id UUID NOT NULL, 
-	revision_id UUID NOT NULL, 
-	config_hash VARCHAR(64) NOT NULL, 
-	snapshot_hash VARCHAR(64), 
-	build_status VARCHAR(32) NOT NULL, 
-	coverage_status VARCHAR(32) NOT NULL, 
-	serve_status VARCHAR(32) NOT NULL, 
-	serve_version INTEGER NOT NULL, 
-	indexed_block_manifest JSON NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (generation_id), 
-	CONSTRAINT uq_index_generation_revision_config_snapshot UNIQUE (revision_id, config_hash, snapshot_hash), 
-	CONSTRAINT ck_index_generation_serve_status CHECK (serve_status IN ('unavailable','eligible','blocked')), 
-	CONSTRAINT ck_index_generation_build_status CHECK (build_status IN ('queued','building','succeeded','failed')), 
-	CONSTRAINT ck_index_generation_coverage_status CHECK (coverage_status IN ('unknown','partial','full')), 
-	CONSTRAINT ck_index_generation_serve_version CHECK (serve_version >= 0), 
+	generation_id UUID NOT NULL,
+	revision_id UUID NOT NULL,
+	config_hash VARCHAR(64) NOT NULL,
+	snapshot_hash VARCHAR(64),
+	build_status VARCHAR(32) NOT NULL,
+	coverage_status VARCHAR(32) NOT NULL,
+	serve_status VARCHAR(32) NOT NULL,
+	serve_version INTEGER NOT NULL,
+	indexed_block_manifest JSON NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (generation_id),
+	CONSTRAINT uq_index_generation_revision_config_snapshot UNIQUE (revision_id, config_hash, snapshot_hash),
+	CONSTRAINT ck_index_generation_serve_status CHECK (serve_status IN ('unavailable','eligible','blocked')),
+	CONSTRAINT ck_index_generation_build_status CHECK (build_status IN ('queued','building','succeeded','failed')),
+	CONSTRAINT ck_index_generation_coverage_status CHECK (coverage_status IN ('unknown','partial','full')),
+	CONSTRAINT ck_index_generation_serve_version CHECK (serve_version >= 0),
 	FOREIGN KEY(revision_id) REFERENCES content_revisions (revision_id)
 );
 
@@ -624,28 +789,28 @@ CREATE INDEX IF NOT EXISTS ix_index_generations_revision_id ON index_generations
 CREATE INDEX IF NOT EXISTS ix_index_generations_serve_status ON index_generations (serve_status);
 
 CREATE TABLE IF NOT EXISTS parse_runs (
-	parse_run_id UUID NOT NULL, 
-	document_id UUID NOT NULL, 
-	parent_parse_run_id UUID, 
-	artifact_id UUID, 
-	content_revision_id UUID, 
-	contract_version VARCHAR(80), 
-	execution_generation INTEGER DEFAULT '0' NOT NULL, 
-	requested_field_keys JSON, 
-	run_mode VARCHAR(30), 
-	checklist_type VARCHAR(100), 
-	extraction_profile JSON, 
-	status VARCHAR(50) NOT NULL, 
-	cache_status VARCHAR(50), 
-	fields_extracted INTEGER NOT NULL, 
-	mean_confidence FLOAT, 
-	started_at TIMESTAMP WITHOUT TIME ZONE, 
-	completed_at TIMESTAMP WITHOUT TIME ZONE, 
-	duration_seconds FLOAT, 
-	quality_status VARCHAR(30), 
-	error_message TEXT, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (parse_run_id), 
+	parse_run_id UUID NOT NULL,
+	document_id UUID NOT NULL,
+	parent_parse_run_id UUID,
+	artifact_id UUID,
+	content_revision_id UUID,
+	contract_version VARCHAR(80),
+	execution_generation INTEGER DEFAULT '0' NOT NULL,
+	requested_field_keys JSON,
+	run_mode VARCHAR(30),
+	checklist_type VARCHAR(100),
+	extraction_profile JSON,
+	status VARCHAR(50) NOT NULL,
+	cache_status VARCHAR(50),
+	fields_extracted INTEGER NOT NULL,
+	mean_confidence FLOAT,
+	started_at TIMESTAMP WITHOUT TIME ZONE,
+	completed_at TIMESTAMP WITHOUT TIME ZONE,
+	duration_seconds FLOAT,
+	quality_status VARCHAR(30),
+	error_message TEXT,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (parse_run_id),
 	FOREIGN KEY(content_revision_id) REFERENCES content_revisions (revision_id)
 );
 
@@ -663,23 +828,59 @@ CREATE INDEX IF NOT EXISTS ix_parse_runs_parent_parse_run_id ON parse_runs (pare
 
 CREATE INDEX IF NOT EXISTS ix_parse_runs_status ON parse_runs (status);
 
+CREATE TABLE IF NOT EXISTS attachment_versions (
+	id UUID NOT NULL,
+	attachment_id UUID NOT NULL,
+	number INTEGER NOT NULL,
+	request_id VARCHAR(200) NOT NULL,
+	operation VARCHAR(40) NOT NULL,
+	parent_id UUID,
+	expected_cas INTEGER NOT NULL,
+	file_revision_id UUID,
+	run_id UUID,
+	build_id UUID,
+	state VARCHAR(40) NOT NULL,
+	actor VARCHAR(200) NOT NULL,
+	reason VARCHAR(2000) NOT NULL,
+	inherited_fields JSON NOT NULL,
+	snapshot JSON,
+	last_error VARCHAR(500),
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	completed_at TIMESTAMP WITHOUT TIME ZONE,
+	PRIMARY KEY (id),
+	CONSTRAINT uq_attachment_version_number UNIQUE (attachment_id, number),
+	CONSTRAINT uq_attachment_version_request UNIQUE (attachment_id, request_id),
+	FOREIGN KEY(attachment_id) REFERENCES attachments (id),
+	FOREIGN KEY(parent_id) REFERENCES attachment_versions (id),
+	FOREIGN KEY(file_revision_id) REFERENCES attachment_file_revisions (id),
+	UNIQUE (run_id),
+	FOREIGN KEY(run_id) REFERENCES parse_runs (parse_run_id),
+	FOREIGN KEY(build_id) REFERENCES content_build_jobs (build_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_attachment_versions_attachment_id ON attachment_versions (attachment_id);
+
+CREATE INDEX IF NOT EXISTS ix_attachment_versions_created_at ON attachment_versions (created_at);
+
+CREATE INDEX IF NOT EXISTS ix_attachment_versions_state ON attachment_versions (state);
+
 CREATE TABLE IF NOT EXISTS document_cards (
-	card_id UUID NOT NULL, 
-	document_id UUID NOT NULL, 
-	revision_id UUID NOT NULL, 
-	generation_id UUID, 
-	status VARCHAR(32) NOT NULL, 
-	summary TEXT, 
-	outline JSON, 
-	risks JSON, 
-	citations JSON, 
-	error JSON, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (card_id), 
-	CONSTRAINT uq_document_card_revision_generation UNIQUE (revision_id, generation_id), 
-	FOREIGN KEY(document_id) REFERENCES documents (document_id), 
-	FOREIGN KEY(revision_id) REFERENCES content_revisions (revision_id), 
+	card_id UUID NOT NULL,
+	document_id UUID NOT NULL,
+	revision_id UUID NOT NULL,
+	generation_id UUID,
+	status VARCHAR(32) NOT NULL,
+	summary TEXT,
+	outline JSON,
+	risks JSON,
+	citations JSON,
+	error JSON,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (card_id),
+	CONSTRAINT uq_document_card_revision_generation UNIQUE (revision_id, generation_id),
+	FOREIGN KEY(document_id) REFERENCES documents (document_id),
+	FOREIGN KEY(revision_id) REFERENCES content_revisions (revision_id),
 	FOREIGN KEY(generation_id) REFERENCES index_generations (generation_id)
 );
 
@@ -694,18 +895,18 @@ CREATE INDEX IF NOT EXISTS ix_document_cards_revision_id ON document_cards (revi
 CREATE INDEX IF NOT EXISTS ix_document_cards_status ON document_cards (status);
 
 CREATE TABLE IF NOT EXISTS document_processing_heads (
-	document_id UUID NOT NULL, 
-	active_content_revision_id UUID, 
-	current_parse_run_id UUID, 
-	active_index_generation_id UUID, 
-	cas_version INTEGER NOT NULL, 
-	invalidation_watermark BIGINT DEFAULT '0' NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (document_id), 
-	CONSTRAINT ck_processing_head_counters CHECK (cas_version >= 0 AND invalidation_watermark >= 0), 
-	FOREIGN KEY(document_id) REFERENCES documents (document_id), 
-	FOREIGN KEY(active_content_revision_id) REFERENCES content_revisions (revision_id), 
-	FOREIGN KEY(current_parse_run_id) REFERENCES parse_runs (parse_run_id), 
+	document_id UUID NOT NULL,
+	active_content_revision_id UUID,
+	current_parse_run_id UUID,
+	active_index_generation_id UUID,
+	cas_version INTEGER NOT NULL,
+	invalidation_watermark BIGINT DEFAULT '0' NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (document_id),
+	CONSTRAINT ck_processing_head_counters CHECK (cas_version >= 0 AND invalidation_watermark >= 0),
+	FOREIGN KEY(document_id) REFERENCES documents (document_id),
+	FOREIGN KEY(active_content_revision_id) REFERENCES content_revisions (revision_id),
+	FOREIGN KEY(current_parse_run_id) REFERENCES parse_runs (parse_run_id),
 	FOREIGN KEY(active_index_generation_id) REFERENCES index_generations (generation_id)
 );
 
@@ -716,17 +917,17 @@ CREATE INDEX IF NOT EXISTS ix_document_processing_heads_active_index_generation_
 CREATE INDEX IF NOT EXISTS ix_document_processing_heads_current_parse_run_id ON document_processing_heads (current_parse_run_id);
 
 CREATE TABLE IF NOT EXISTS index_chunks (
-	chunk_row_id UUID NOT NULL, 
-	generation_id UUID NOT NULL, 
-	chunk_id VARCHAR(300) NOT NULL, 
-	block_ref JSON, 
-	table_ref JSON, 
-	text TEXT NOT NULL, 
-	embedding JSON, 
-	embedding_config JSON, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (chunk_row_id), 
-	CONSTRAINT uq_index_chunk_generation_key UNIQUE (generation_id, chunk_id), 
+	chunk_row_id UUID NOT NULL,
+	generation_id UUID NOT NULL,
+	chunk_id VARCHAR(300) NOT NULL,
+	block_ref JSON,
+	table_ref JSON,
+	text TEXT NOT NULL,
+	embedding JSON,
+	embedding_config JSON,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (chunk_row_id),
+	CONSTRAINT uq_index_chunk_generation_key UNIQUE (generation_id, chunk_id),
 	FOREIGN KEY(generation_id) REFERENCES index_generations (generation_id)
 );
 
@@ -735,30 +936,30 @@ CREATE INDEX IF NOT EXISTS ix_index_chunks_created_at ON index_chunks (created_a
 CREATE INDEX IF NOT EXISTS ix_index_chunks_generation_id ON index_chunks (generation_id);
 
 CREATE TABLE IF NOT EXISTS parse_field_jobs (
-	job_id UUID NOT NULL, 
-	run_id UUID NOT NULL, 
-	field_key VARCHAR(200) NOT NULL, 
-	rule_hash VARCHAR(64) NOT NULL, 
-	revision_id UUID NOT NULL, 
-	execution_state VARCHAR(32) NOT NULL, 
-	semantic_state VARCHAR(32) NOT NULL, 
-	phase VARCHAR(50) NOT NULL, 
-	checkpoint JSON NOT NULL, 
-	next_attempt_at TIMESTAMP WITHOUT TIME ZONE, 
-	lease_owner VARCHAR(200), 
-	lease_until TIMESTAMP WITHOUT TIME ZONE, 
-	fence_token INTEGER NOT NULL, 
-	progress_seq INTEGER NOT NULL, 
-	last_error TEXT, 
-	attempt INTEGER NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (job_id), 
-	CONSTRAINT uq_parse_field_job_run_field UNIQUE (run_id, field_key), 
-	CONSTRAINT ck_field_job_execution_state CHECK (execution_state IN ('queued','running','yielded','waiting_service','waiting_external_quota','paused','cancelled','done','failed_terminal','superseded')), 
-	CONSTRAINT ck_field_job_semantic_state CHECK (semantic_state IN ('unknown','completed','review_required','partial_candidates','not_found','incomplete')), 
-	CONSTRAINT ck_field_job_counters CHECK (fence_token >= 0 AND progress_seq >= 0 AND attempt >= 0), 
-	FOREIGN KEY(run_id) REFERENCES parse_runs (parse_run_id), 
+	job_id UUID NOT NULL,
+	run_id UUID NOT NULL,
+	field_key VARCHAR(200) NOT NULL,
+	rule_hash VARCHAR(64) NOT NULL,
+	revision_id UUID NOT NULL,
+	execution_state VARCHAR(32) NOT NULL,
+	semantic_state VARCHAR(32) NOT NULL,
+	phase VARCHAR(50) NOT NULL,
+	checkpoint JSON NOT NULL,
+	next_attempt_at TIMESTAMP WITHOUT TIME ZONE,
+	lease_owner VARCHAR(200),
+	lease_until TIMESTAMP WITHOUT TIME ZONE,
+	fence_token INTEGER NOT NULL,
+	progress_seq INTEGER NOT NULL,
+	last_error TEXT,
+	attempt INTEGER NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (job_id),
+	CONSTRAINT uq_parse_field_job_run_field UNIQUE (run_id, field_key),
+	CONSTRAINT ck_field_job_execution_state CHECK (execution_state IN ('queued','running','yielded','waiting_service','waiting_external_quota','paused','cancelled','done','failed_terminal','superseded')),
+	CONSTRAINT ck_field_job_semantic_state CHECK (semantic_state IN ('unknown','completed','review_required','partial_candidates','not_found','incomplete')),
+	CONSTRAINT ck_field_job_counters CHECK (fence_token >= 0 AND progress_seq >= 0 AND attempt >= 0),
+	FOREIGN KEY(run_id) REFERENCES parse_runs (parse_run_id),
 	FOREIGN KEY(revision_id) REFERENCES content_revisions (revision_id)
 );
 
@@ -781,17 +982,17 @@ CREATE INDEX IF NOT EXISTS ix_parse_field_jobs_semantic_state ON parse_field_job
 CREATE INDEX IF NOT EXISTS ix_parse_field_jobs_updated_at ON parse_field_jobs (updated_at);
 
 CREATE TABLE IF NOT EXISTS qa_sessions (
-	session_id UUID NOT NULL, 
-	document_id UUID NOT NULL, 
-	title VARCHAR(300), 
-	active_revision_id UUID NOT NULL, 
-	active_generation_id UUID, 
-	status VARCHAR(32) NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (session_id), 
-	FOREIGN KEY(document_id) REFERENCES documents (document_id), 
-	FOREIGN KEY(active_revision_id) REFERENCES content_revisions (revision_id), 
+	session_id UUID NOT NULL,
+	document_id UUID NOT NULL,
+	title VARCHAR(300),
+	active_revision_id UUID NOT NULL,
+	active_generation_id UUID,
+	status VARCHAR(32) NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (session_id),
+	FOREIGN KEY(document_id) REFERENCES documents (document_id),
+	FOREIGN KEY(active_revision_id) REFERENCES content_revisions (revision_id),
 	FOREIGN KEY(active_generation_id) REFERENCES index_generations (generation_id)
 );
 
@@ -806,34 +1007,34 @@ CREATE INDEX IF NOT EXISTS ix_qa_sessions_document_id ON qa_sessions (document_i
 CREATE INDEX IF NOT EXISTS ix_qa_sessions_status ON qa_sessions (status);
 
 CREATE TABLE IF NOT EXISTS parse_model_calls (
-	call_id UUID NOT NULL, 
-	job_id UUID NOT NULL, 
-	fence INTEGER NOT NULL, 
-	provider_key VARCHAR(200) NOT NULL, 
-	dispatch_key VARCHAR(500) NOT NULL, 
-	checkpoint_key VARCHAR(300) NOT NULL, 
-	retry_seq INTEGER NOT NULL, 
-	retry_of_call_id UUID, 
-	candidate_set_hash VARCHAR(64), 
-	split_path JSON, 
-	state VARCHAR(32) NOT NULL, 
-	charge_state VARCHAR(32) NOT NULL, 
-	reservation JSON, 
-	usage JSON, 
-	usage_revision INTEGER NOT NULL, 
-	unknown_deadline TIMESTAMP WITHOUT TIME ZONE, 
-	usage_quality VARCHAR(32), 
-	finish_reason VARCHAR(64), 
-	provider_request_id VARCHAR(300), 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	sent_at TIMESTAMP WITHOUT TIME ZONE, 
-	completed_at TIMESTAMP WITHOUT TIME ZONE, 
-	PRIMARY KEY (call_id), 
-	CONSTRAINT uq_parse_model_calls_dispatch_key UNIQUE (dispatch_key), 
-	CONSTRAINT ck_model_call_state CHECK (state IN ('queued','sending','started','succeeded','length','invalid','timeout','uncertain')), 
-	CONSTRAINT ck_model_call_charge_state CHECK (charge_state IN ('reserved','actual','uncertain','reconciled')), 
-	CONSTRAINT ck_model_call_counters CHECK (fence >= 0 AND retry_seq >= 0 AND usage_revision >= 0), 
-	FOREIGN KEY(job_id) REFERENCES parse_field_jobs (job_id), 
+	call_id UUID NOT NULL,
+	job_id UUID NOT NULL,
+	fence INTEGER NOT NULL,
+	provider_key VARCHAR(200) NOT NULL,
+	dispatch_key VARCHAR(500) NOT NULL,
+	checkpoint_key VARCHAR(300) NOT NULL,
+	retry_seq INTEGER NOT NULL,
+	retry_of_call_id UUID,
+	candidate_set_hash VARCHAR(64),
+	split_path JSON,
+	state VARCHAR(32) NOT NULL,
+	charge_state VARCHAR(32) NOT NULL,
+	reservation JSON,
+	usage JSON,
+	usage_revision INTEGER NOT NULL,
+	unknown_deadline TIMESTAMP WITHOUT TIME ZONE,
+	usage_quality VARCHAR(32),
+	finish_reason VARCHAR(64),
+	provider_request_id VARCHAR(300),
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	sent_at TIMESTAMP WITHOUT TIME ZONE,
+	completed_at TIMESTAMP WITHOUT TIME ZONE,
+	PRIMARY KEY (call_id),
+	CONSTRAINT uq_parse_model_calls_dispatch_key UNIQUE (dispatch_key),
+	CONSTRAINT ck_model_call_state CHECK (state IN ('queued','sending','started','succeeded','length','invalid','timeout','uncertain')),
+	CONSTRAINT ck_model_call_charge_state CHECK (charge_state IN ('reserved','actual','uncertain','reconciled')),
+	CONSTRAINT ck_model_call_counters CHECK (fence >= 0 AND retry_seq >= 0 AND usage_revision >= 0),
+	FOREIGN KEY(job_id) REFERENCES parse_field_jobs (job_id),
 	FOREIGN KEY(retry_of_call_id) REFERENCES parse_model_calls (call_id)
 );
 
@@ -856,19 +1057,19 @@ CREATE INDEX IF NOT EXISTS ix_parse_model_calls_retry_of_call_id ON parse_model_
 CREATE INDEX IF NOT EXISTS ix_parse_model_calls_state ON parse_model_calls (state);
 
 CREATE TABLE IF NOT EXISTS parse_range_work_items (
-	work_id UUID NOT NULL, 
-	job_id UUID NOT NULL, 
-	strategy_version VARCHAR(80) NOT NULL, 
-	range_key VARCHAR(300) NOT NULL, 
-	cursor JSON, 
-	scan_done BOOLEAN NOT NULL, 
-	state VARCHAR(32) NOT NULL, 
-	quality_blockers JSON NOT NULL, 
-	last_error TEXT, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (work_id), 
-	CONSTRAINT uq_parse_range_strategy UNIQUE (job_id, strategy_version, range_key), 
+	work_id UUID NOT NULL,
+	job_id UUID NOT NULL,
+	strategy_version VARCHAR(80) NOT NULL,
+	range_key VARCHAR(300) NOT NULL,
+	cursor JSON,
+	scan_done BOOLEAN NOT NULL,
+	state VARCHAR(32) NOT NULL,
+	quality_blockers JSON NOT NULL,
+	last_error TEXT,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (work_id),
+	CONSTRAINT uq_parse_range_strategy UNIQUE (job_id, strategy_version, range_key),
 	FOREIGN KEY(job_id) REFERENCES parse_field_jobs (job_id)
 );
 
@@ -883,30 +1084,30 @@ CREATE INDEX IF NOT EXISTS ix_parse_range_work_items_state ON parse_range_work_i
 CREATE INDEX IF NOT EXISTS ix_parse_range_work_items_strategy_version ON parse_range_work_items (strategy_version);
 
 CREATE TABLE IF NOT EXISTS qa_messages (
-	message_id UUID NOT NULL, 
-	session_id UUID NOT NULL, 
-	parent_message_id UUID, 
-	client_message_id VARCHAR(200) NOT NULL, 
-	question TEXT NOT NULL, 
-	mode VARCHAR(50) DEFAULT 'answer' NOT NULL, 
-	revision_id UUID NOT NULL, 
-	generation_id UUID, 
-	scope_snapshot JSON NOT NULL, 
-	execution_state VARCHAR(32) NOT NULL, 
-	answer TEXT, 
-	claims JSON, 
-	citations JSON, 
-	error JSON, 
-	checkpoint JSON NOT NULL, 
-	generation_fence INTEGER NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (message_id), 
-	CONSTRAINT uq_qa_message_client_id UNIQUE (session_id, client_message_id), 
-	CONSTRAINT ck_qa_message_generation_fence CHECK (generation_fence >= 0), 
-	FOREIGN KEY(session_id) REFERENCES qa_sessions (session_id), 
-	FOREIGN KEY(parent_message_id) REFERENCES qa_messages (message_id), 
-	FOREIGN KEY(revision_id) REFERENCES content_revisions (revision_id), 
+	message_id UUID NOT NULL,
+	session_id UUID NOT NULL,
+	parent_message_id UUID,
+	client_message_id VARCHAR(200) NOT NULL,
+	question TEXT NOT NULL,
+	mode VARCHAR(50) DEFAULT 'answer' NOT NULL,
+	revision_id UUID NOT NULL,
+	generation_id UUID,
+	scope_snapshot JSON NOT NULL,
+	execution_state VARCHAR(32) NOT NULL,
+	answer TEXT,
+	claims JSON,
+	citations JSON,
+	error JSON,
+	checkpoint JSON NOT NULL,
+	generation_fence INTEGER NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (message_id),
+	CONSTRAINT uq_qa_message_client_id UNIQUE (session_id, client_message_id),
+	CONSTRAINT ck_qa_message_generation_fence CHECK (generation_fence >= 0),
+	FOREIGN KEY(session_id) REFERENCES qa_sessions (session_id),
+	FOREIGN KEY(parent_message_id) REFERENCES qa_messages (message_id),
+	FOREIGN KEY(revision_id) REFERENCES content_revisions (revision_id),
 	FOREIGN KEY(generation_id) REFERENCES index_generations (generation_id)
 );
 
@@ -923,28 +1124,28 @@ CREATE INDEX IF NOT EXISTS ix_qa_messages_revision_id ON qa_messages (revision_i
 CREATE INDEX IF NOT EXISTS ix_qa_messages_session_id ON qa_messages (session_id);
 
 CREATE TABLE IF NOT EXISTS assistant_feedback_samples (
-	feedback_id UUID NOT NULL, 
-	document_id UUID NOT NULL, 
-	request_id VARCHAR(200) NOT NULL, 
-	qa_message_id UUID, 
-	parse_run_id UUID, 
-	content_revision_id UUID NOT NULL, 
-	generation_id UUID, 
-	sample_type VARCHAR(40) NOT NULL, 
-	adjudication_status VARCHAR(30) DEFAULT 'pending' NOT NULL, 
-	submitted_by VARCHAR(200) NOT NULL, 
-	snapshot JSON NOT NULL, 
-	expected_correction JSON NOT NULL, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (feedback_id), 
-	CONSTRAINT uq_assistant_feedback_document_request UNIQUE (document_id, request_id), 
-	CONSTRAINT ck_assistant_feedback_type CHECK (sample_type IN ('qa','extraction')), 
-	CONSTRAINT ck_assistant_feedback_pending CHECK (adjudication_status = 'pending'), 
-	CONSTRAINT ck_assistant_feedback_origin CHECK (qa_message_id IS NOT NULL OR parse_run_id IS NOT NULL), 
-	FOREIGN KEY(document_id) REFERENCES documents (document_id), 
-	FOREIGN KEY(qa_message_id) REFERENCES qa_messages (message_id), 
-	FOREIGN KEY(parse_run_id) REFERENCES parse_runs (parse_run_id), 
-	FOREIGN KEY(content_revision_id) REFERENCES content_revisions (revision_id), 
+	feedback_id UUID NOT NULL,
+	document_id UUID NOT NULL,
+	request_id VARCHAR(200) NOT NULL,
+	qa_message_id UUID,
+	parse_run_id UUID,
+	content_revision_id UUID NOT NULL,
+	generation_id UUID,
+	sample_type VARCHAR(40) NOT NULL,
+	adjudication_status VARCHAR(30) DEFAULT 'pending' NOT NULL,
+	submitted_by VARCHAR(200) NOT NULL,
+	snapshot JSON NOT NULL,
+	expected_correction JSON NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (feedback_id),
+	CONSTRAINT uq_assistant_feedback_document_request UNIQUE (document_id, request_id),
+	CONSTRAINT ck_assistant_feedback_type CHECK (sample_type IN ('qa','extraction')),
+	CONSTRAINT ck_assistant_feedback_pending CHECK (adjudication_status = 'pending'),
+	CONSTRAINT ck_assistant_feedback_origin CHECK (qa_message_id IS NOT NULL OR parse_run_id IS NOT NULL),
+	FOREIGN KEY(document_id) REFERENCES documents (document_id),
+	FOREIGN KEY(qa_message_id) REFERENCES qa_messages (message_id),
+	FOREIGN KEY(parse_run_id) REFERENCES parse_runs (parse_run_id),
+	FOREIGN KEY(content_revision_id) REFERENCES content_revisions (revision_id),
 	FOREIGN KEY(generation_id) REFERENCES index_generations (generation_id)
 );
 
@@ -961,26 +1162,26 @@ CREATE INDEX IF NOT EXISTS ix_assistant_feedback_samples_parse_run_id ON assista
 CREATE INDEX IF NOT EXISTS ix_assistant_feedback_samples_qa_message_id ON assistant_feedback_samples (qa_message_id);
 
 CREATE TABLE IF NOT EXISTS parse_candidates (
-	candidate_id UUID NOT NULL, 
-	job_id UUID NOT NULL, 
-	stable_key VARCHAR(500) NOT NULL, 
-	block_ref JSON, 
-	region_ref JSON, 
-	span_ref JSON, 
-	"window" TEXT, 
-	context TEXT, 
-	strength VARCHAR(32) NOT NULL, 
-	source VARCHAR(32) NOT NULL, 
-	state VARCHAR(32) NOT NULL, 
-	judgement VARCHAR(32), 
-	evidence JSON, 
-	split_path JSON, 
-	range_work_id UUID, 
-	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
-	PRIMARY KEY (candidate_id), 
-	CONSTRAINT uq_parse_candidate_stable_key UNIQUE (job_id, stable_key), 
-	FOREIGN KEY(job_id) REFERENCES parse_field_jobs (job_id), 
+	candidate_id UUID NOT NULL,
+	job_id UUID NOT NULL,
+	stable_key VARCHAR(500) NOT NULL,
+	block_ref JSON,
+	region_ref JSON,
+	span_ref JSON,
+	"window" TEXT,
+	context TEXT,
+	strength VARCHAR(32) NOT NULL,
+	source VARCHAR(32) NOT NULL,
+	state VARCHAR(32) NOT NULL,
+	judgement VARCHAR(32),
+	evidence JSON,
+	split_path JSON,
+	range_work_id UUID,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	PRIMARY KEY (candidate_id),
+	CONSTRAINT uq_parse_candidate_stable_key UNIQUE (job_id, stable_key),
+	FOREIGN KEY(job_id) REFERENCES parse_field_jobs (job_id),
 	FOREIGN KEY(range_work_id) REFERENCES parse_range_work_items (work_id)
 );
 
@@ -1055,5 +1256,21 @@ WHERE tgname = 'assistant_feedback_samples_immutable_audit' AND tgrelid = 'assis
 CREATE TRIGGER assistant_feedback_samples_immutable_audit BEFORE UPDATE OR DELETE ON assistant_feedback_samples
 FOR EACH ROW EXECUTE FUNCTION reject_platform_audit_mutation();
 END IF; END; $$;
+
+CREATE OR REPLACE FUNCTION protect_attachment_history() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_TABLE_NAME = 'attachment_versions' THEN
+    IF OLD.snapshot IS NULL AND TG_OP = 'UPDATE' THEN RETURN NEW; END IF;
+  END IF;
+  RAISE EXCEPTION 'attachment history is immutable';
+END; $$;
+
+DROP TRIGGER IF EXISTS protect_history ON attachment_versions;
+
+CREATE TRIGGER protect_history BEFORE UPDATE OR DELETE ON attachment_versions FOR EACH ROW EXECUTE FUNCTION protect_attachment_history();
+
+DROP TRIGGER IF EXISTS protect_history ON attachment_file_revisions;
+
+CREATE TRIGGER protect_history BEFORE UPDATE OR DELETE ON attachment_file_revisions FOR EACH ROW EXECUTE FUNCTION protect_attachment_history();
 
 COMMIT;

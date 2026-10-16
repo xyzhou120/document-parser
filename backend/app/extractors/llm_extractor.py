@@ -3,6 +3,8 @@ LLM提取器（兜底）
 使用大语言模型提取字段
 """
 
+from app.services.model_capacity import limited_model_request
+
 import logging
 from typing import Dict, Optional
 
@@ -47,16 +49,17 @@ class LLMExtractor:
 
         try:
             # 调用LLM
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "你是一个专业的文档信息提取助手。"},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.1,
-                max_tokens=200,
-                timeout=self.timeout,
-            )
+            async with limited_model_request(self.client, self.model, timeout=self.timeout):
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "你是一个专业的文档信息提取助手。"},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.1,
+                    max_tokens=200,
+                    timeout=self.timeout,
+                )
 
             # 解析响应
             content = response.choices[0].message.content

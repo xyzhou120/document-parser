@@ -82,6 +82,44 @@ def gateway(responses, *, policy=None, circuit_policy=None, validator=None):
     return ModelGateway(client, ledger, circuit, policy, decision_validator=validator), client, ledger
 
 
+def test_redis_failure_after_provider_success_preserves_paid_result_and_replay():
+    from unittest.mock import AsyncMock
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    async def run():
+        gw, client, ledger = gateway([response([decision("a")])])
+        gw.circuit.success = AsyncMock(side_effect=RedisConnectionError("down"))
+        req = request("a")
+        result = await gw.execute(req)
+        replay = await gw.execute(req)
+        assert result.state == replay.state == "succeeded"
+        assert replay.replayed and result.call_id == replay.call_id
+        assert len(client.calls) == 1
+    asyncio.run(run())
+
+
+def test_redis_failure_during_timeout_accounting_preserves_retry_chain():
+    from unittest.mock import AsyncMock
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    async def run():
+        gw, client, ledger = gateway([TimeoutError("slow")])
+        gw.circuit.failure = AsyncMock(side_effect=RedisConnectionError("down"))
+        req = request("a")
+        result = await gw.execute(req)
+        replay = await gw.execute(req)
+        assert result.wait_state == replay.wait_state == "waiting_service"
+        assert result.call_id and replay.retry_seq == 1
+        assert replay.replayed and len(client.calls) == 1
+    asyncio.run(run())
+
+
+def test_output_token_cap_limits_the_completion_budget():
+    async def run():
+        gw, client, _ledger = gateway([response([decision("a")])])
+        await gw.execute(request("a", output_token_cap=1600))
+        assert client.calls[0]["max_tokens"] == 1600
+    asyncio.run(run())
+
+
 def test_length_discards_all_decisions_and_bisects_with_original_images():
     async def run():
         gw, client, ledger = gateway([response([decision("a")], finish="length")])

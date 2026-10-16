@@ -52,8 +52,53 @@ function evidenceRectangle(evidence: FactEvidence, pdfPage: PDFPageProxy, target
   return { left, top, width: right - left, height: bottom - top }
 }
 
-export default function PdfPreview({ url, evidencePage, evidence = [], selectedEvidenceId }: {
-  url: string; evidencePage?: number; evidence?: FactEvidence[]; selectedEvidenceId?: string
+type TextRectangle = { left: number; top: number; width: number; height: number }
+
+function normalizedText(value: string) {
+  return value.normalize('NFKC').replace(/\s+/g, '')
+}
+
+/** 仅匹配原文引句（忽略空白、全半角），不猜测缺失坐标。 */
+function quoteRectangles(root: HTMLElement, evidence: FactEvidence): TextRectangle[] {
+  const quote = normalizedText(evidence.quote || '')
+  if (quote.length < 4 || quote.length > 320) return []
+  const spans = [...root.querySelectorAll<HTMLElement>('.react-pdf__Page__textContent span')]
+  const pageRect = root.getBoundingClientRect()
+  const entries: Array<{ node: Text; offset: number; end: number; char: string }> = []
+  spans.forEach((span) => {
+    const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT)
+    let node: Node | null
+    while ((node = walker.nextNode())) {
+      const text = node.textContent || ''
+      let offset = 0
+      for (const original of text) {
+        for (const char of normalizedText(original).split('')) {
+          entries.push({ node: node as Text, offset, end: offset + original.length, char })
+        }
+        offset += original.length
+      }
+    }
+  })
+  const haystack = entries.map((entry) => entry.char).join('')
+  const rectangles: TextRectangle[] = []
+  // 同一引句重复出现时显示各个匹配位置，不把第一处误当作唯一位置。
+  for (let start = haystack.indexOf(quote); start >= 0; start = haystack.indexOf(quote, start + quote.length)) {
+    const range = document.createRange()
+    const end = start + quote.length - 1
+    range.setStart(entries[start].node, entries[start].offset)
+    range.setEnd(entries[end].node, entries[end].end)
+    rectangles.push(...[...range.getClientRects()].map((rect) => ({
+      left: rect.left - pageRect.left,
+      top: rect.top - pageRect.top,
+      width: rect.width,
+      height: rect.height,
+    })).filter((rect) => rect.width > 0 && rect.height > 0))
+  }
+  return rectangles
+}
+
+export default function PdfPreview({ url, evidencePage, evidence = [], selectedEvidenceId, selectionRequest }: {
+  url: string; evidencePage?: number; evidence?: FactEvidence[]; selectedEvidenceId?: string; selectionRequest?: number
 }) {
   const container = useRef<HTMLDivElement>(null)
   const scrollContainer = useRef<HTMLDivElement>(null)
@@ -62,46 +107,57 @@ export default function PdfPreview({ url, evidencePage, evidence = [], selectedE
   const [page, setPage] = useState(1)
   const [zoom, setZoom] = useState(1)
   const [pdfPage, setPdfPage] = useState<PDFPageProxy>()
+  const [textLayerKey, setTextLayerKey] = useState('')
+  const pageContainer = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!container.current) return
     const observer = new ResizeObserver(([entry]) => setWidth(Math.max(180, entry.contentRect.width - 24)))
     observer.observe(container.current)
     return () => observer.disconnect()
   }, [])
-  useEffect(() => { setPage(1); setCount(0); setZoom(1); setPdfPage(undefined) }, [url])
+  useEffect(() => { setPage(1); setCount(0); setZoom(1); setPdfPage(undefined); setTextLayerKey('') }, [url])
   useEffect(() => {
     if (evidencePage && Number.isInteger(evidencePage) && evidencePage > 0 && evidencePage <= count) setPage(evidencePage)
-  }, [evidencePage, count, selectedEvidenceId])
-  const pageEvidence = evidence.filter((item) => item.page_number === page)
+  }, [evidencePage, count, selectedEvidenceId, selectionRequest])
+  const pageEvidence = useMemo(() => evidence.filter((item) => item.page_number === page), [evidence, page])
+  const renderKey = `${url}|${page}|${width * zoom}`
   const rectangles = useMemo(() => pdfPage?.pageNumber === page ? evidence.filter((item) => item.page_number === page).flatMap((item, index) => {
     const rectangle = evidenceRectangle(item, pdfPage, width * zoom)
     return rectangle ? [{ evidence: item, index, rectangle }] : []
   }) : [], [evidence, pdfPage, page, width, zoom])
+  const textRectangles = useMemo(() => {
+    if (!pageContainer.current || textLayerKey !== renderKey || pdfPage?.pageNumber !== page) return []
+    return pageEvidence.flatMap((item, index) => {
+      if (pdfPage && evidenceRectangle(item, pdfPage, width * zoom)) return []
+      return quoteRectangles(pageContainer.current!, item).map((rectangle) => ({ evidence: item, index, rectangle }))
+    })
+  }, [pageEvidence, pdfPage, page, width, zoom, textLayerKey, renderKey])
+  const textEvidenceCount = new Set(textRectangles.map((item) => item.index)).size
   useEffect(() => {
     const active = scrollContainer.current?.querySelector<HTMLElement>('[data-selected-evidence="true"]')
     if (active) active.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' })
-  }, [rectangles, selectedEvidenceId])
+  }, [rectangles, textRectangles, selectedEvidenceId, selectionRequest])
   return <div className="pdf-viewer" ref={container}>
     {!!pageEvidence.length && <div style={{ padding: '6px 8px', background: '#f8fbfe', fontSize: 11, color: '#526986' }} aria-live="polite">
-      {pageEvidence.length} 处证据 · {rectangles.length} 个有效区域；区域框不代表字段精确位置
-      {pageEvidence.some((item) => !item.bbox) && ' · 页级/文本证据仅定位到页'}
+      {pageEvidence.length} 处证据 · {rectangles.length} 个取证区域 · {textEvidenceCount} 处引句匹配；区域框不代表字段精确位置
+      {pageEvidence.length > rectangles.length + textEvidenceCount && ' · 未匹配证据仅定位到页'}
       {rectangles.length < pageEvidence.filter((item) => item.bbox).length && ' · 部分坐标无效或缺少坐标规格，未画框'}
     </div>}
     <div className="pdf-canvas-scroll" ref={scrollContainer}><Document file={url}
       onLoadSuccess={({ numPages }) => setCount(numPages)} loading={<div className="pdf-loading"><Spin /><p>加载原文…</p></div>}
       error={<div className="pdf-loading">无法预览此 PDF，<a href={url} target="_blank" rel="noreferrer">打开原文</a>后重试。</div>}
-    ><div style={{ position: 'relative', width: width * zoom, flexShrink: 0 }}>
-      <Page pageNumber={page} width={width * zoom} loading={<Spin />} onLoadSuccess={setPdfPage} />
+    ><div ref={pageContainer} style={{ position: 'relative', width: width * zoom, flexShrink: 0 }}>
+      <Page pageNumber={page} width={width * zoom} loading={<Spin />} onLoadSuccess={setPdfPage} onRenderTextLayerSuccess={() => setTextLayerKey(renderKey)} />
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} aria-label="原文证据高亮">
-        {rectangles.map(({ evidence: item, index, rectangle }) => {
+        {[...rectangles, ...textRectangles].map(({ evidence: item, index, rectangle }, highlightIndex) => {
           const selected = selectedEvidenceId === (item.evidence_id || `evidence-${index}`)
           const color = roleColors[item.role || 'value'] || '#087bff'
-          const precision = item.location_precision || item.location_status || item.scope || 'region'
-          return <div key={`${item.evidence_id || index}-${item.role}`} data-selected-evidence={selected} style={{ position: 'absolute', ...rectangle,
-            border: `${selected ? 3 : 2}px ${precision === 'region' ? 'dashed' : 'solid'} ${color}`, background: `${color}${selected ? '25' : '14'}` }}>
-            <span style={{ position: 'absolute', top: rectangle.top < 20 ? 0 : -18, left: -2, color: '#fff', background: color, fontSize: 10, padding: '1px 3px', whiteSpace: 'nowrap' }}>
-              {roleNames[item.role || 'value'] || item.role} · {precision === 'region' ? '取证区域' : precision === 'page' ? '页级' : '原文区域'}
-            </span>
+          const textMatch = highlightIndex >= rectangles.length
+          return <div key={`${item.evidence_id || index}-${item.role}-${highlightIndex}`} data-selected-evidence={selected} data-highlight-kind={textMatch ? 'quote' : 'region'} style={{ position: 'absolute', ...rectangle, boxSizing: 'border-box',
+            border: `${selected ? 3 : 2}px ${textMatch ? 'solid' : 'dashed'} ${color}`, background: `${color}${selected ? '25' : '14'}` }}>
+            {!textMatch && <span style={{ position: 'absolute', top: rectangle.top < 20 ? 0 : -18, left: -2, color: '#fff', background: color, fontSize: 10, padding: '1px 3px', whiteSpace: 'nowrap' }}>
+              {roleNames[item.role || 'value'] || item.role} · 取证区域
+            </span>}
           </div>
         })}
       </div>

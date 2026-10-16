@@ -14,6 +14,9 @@ export interface ReviewWorkspaceItem {
   field_name: string
   field_value?: string | null
   required: boolean
+  target_type?: string
+  target_status?: string
+  status_reason?: Record<string, unknown>
   validation_status?: string | null
   fact_count: number
   risk_codes: string[]

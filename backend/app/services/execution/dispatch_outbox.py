@@ -42,7 +42,11 @@ class DispatchOutbox:
         last_sent = select(func.max(ExecutionOutbox.updated_at)).where(
             ExecutionOutbox.kind == "field_job_wakeup", ExecutionOutbox.aggregate_id.in_(field_jobs),
             ExecutionOutbox.dispatch_state == "sent").correlate(ParseRun).scalar_subquery()
-        query = select(ParseRun).where(ParseRun.status.in_(ACTIVE_RUN_STATES), pending, ~sending)
+        live_worker = exists(select(ParseFieldJob.job_id).where(
+            ParseFieldJob.run_id == ParseRun.parse_run_id,
+            ParseFieldJob.execution_state == "running", ParseFieldJob.lease_until > now))
+        # yield 事件在现有执行窗口中保持 pending，窗口交还租约后再投递。
+        query = select(ParseRun).where(ParseRun.status.in_(ACTIVE_RUN_STATES), pending, ~sending, ~live_worker)
         if run_id is not None:
             query = query.where(ParseRun.parse_run_id == run_id)
         if run_ids is not None:

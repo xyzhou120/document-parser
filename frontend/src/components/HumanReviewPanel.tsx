@@ -77,7 +77,8 @@ export default function HumanReviewPanel({ result, field, onPage, onEvidence, on
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const path = `/v1/reviews/runs/${result.parse_run_id}/fields/${encodeURIComponent(field.field_key)}`
+  const sourceRunId = field.source_parse_run_id || result.parse_run_id
+  const path = `/v1/reviews/runs/${sourceRunId}/fields/${encodeURIComponent(field.field_key)}`
   const fetchHistory = async () => {
     const value: History = await api.get(path)
     setHistory(value)
@@ -118,9 +119,9 @@ export default function HumanReviewPanel({ result, field, onPage, onEvidence, on
   }
   const exportReviewed = async () => {
     try {
-      const value = await api.get(`/v1/reviews/runs/${result.parse_run_id}/export`)
+      const value = await api.get(`/v1/reviews/runs/${sourceRunId}/export`)
       const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }))
-      const link = document.createElement('a'); link.href = url; link.download = `人工复核-${result.parse_run_id}.json`; link.click(); URL.revokeObjectURL(url)
+      const link = document.createElement('a'); link.href = url; link.download = `人工复核-${sourceRunId}.json`; link.click(); URL.revokeObjectURL(url)
     } catch (failure) { message.error(apiError(failure, '导出人工复核失败')) }
   }
   const dimensionKeys = [...new Set([...Object.keys((result.extraction_profile?.rules || []).find((rule) => rule.field_key === field.field_key)?.dimension_schema || {}), ...facts.flatMap((fact) => Object.keys(fact.dimensions))])]

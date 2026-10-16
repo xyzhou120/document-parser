@@ -119,16 +119,18 @@ class LLMStrategy(Strategy):
         runtime = cfg or getattr(self, "_llm_runtime", {}) or {}
         llm_config = settings.models["text_llm"]
         try:
-            response = await client.chat.completions.create(
-                model=llm_config.model_name,
-                messages=[
-                    {"role": "system", "content": "你是煤矿文档信息提取专家，只输出 JSON。"},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=float(runtime.get("temperature", 0.1)),
-                max_tokens=int(runtime.get("max_tokens", 1500)),
-                timeout=llm_config.timeout,
-            )
+            from app.services.model_capacity import limited_model_request
+            async with limited_model_request(client, llm_config.model_name, timeout=llm_config.timeout):
+                response = await client.chat.completions.create(
+                    model=llm_config.model_name,
+                    messages=[
+                        {"role": "system", "content": "你是煤矿文档信息提取专家，只输出 JSON。"},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=float(runtime.get("temperature", 0.1)),
+                    max_tokens=int(runtime.get("max_tokens", 1500)),
+                    timeout=llm_config.timeout,
+                )
         finally:
             await client.close()
 

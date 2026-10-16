@@ -21,13 +21,23 @@ export interface FactEvidence {
 export interface DownstreamFact {
   fact_id: string
   field_key: string
+  target_key?: string
   field_name: string
+  target_type?: 'fact' | 'statement' | 'table'
+  target_group_key?: string | null
+  target_status?: string
+  status_reason?: Record<string, unknown>
   raw: string
   raw_values: string[]
   normalized: string
   value: string
   unit: string | null
   dimensions: Record<string, unknown>
+  target_payload?: Record<string, unknown>
+  statement?: { text?: string; polarity?: string; quote?: string } | null
+  table_row?: { status?: string; cells?: Record<string, { value?: unknown }> } | null
+  table_row_key?: string | null
+  row_status?: string | null
   value_kind: string
   source_role: string
   evidence: FactEvidence[]
@@ -45,8 +55,9 @@ export interface FactViewResponse {
   contract_version: string
   parse_run_id: string
   document_id: string
-  view: 'automatic' | 'reviewed'
+  view: 'automatic' | 'reviewed' | 'available'
   facts: DownstreamFact[]
+  targets?: Array<{ target_key: string; field_key: string; target_type?: string; status: string; status_reason?: Record<string, unknown> }>
   reviews: Array<{ field_key?: string; review_status?: string; revision?: number; [key: string]: unknown }>
   missing_fields: Array<Record<string, unknown>>
   warnings: string[]
@@ -104,8 +115,12 @@ export interface FieldInstance {
 }
 
 export interface ExtractedField {
+  source_parse_run_id?: string
   field_key: string
   field_name: string
+  target_type?: 'fact' | 'statement' | 'table'
+  target_status?: string
+  status_reason?: Record<string, unknown>
   field_value: string | null
   extraction_method?: string
   confidence?: number | null
@@ -405,7 +420,14 @@ export interface ExtractionRule {
   rule_id: string
   checklist_type: string
   field_key: string
+  target_key?: string
   field_name_cn: string
+  target_type?: 'fact' | 'statement' | 'table'
+  target_group_key?: string | null
+  target_group_name?: string | null
+  output_schema?: Record<string, unknown>
+  source_policy?: Record<string, unknown>
+  evidence_policy?: Record<string, unknown>
   field_description?: string | null
   data_type: string
   unit?: string | null
@@ -432,6 +454,8 @@ export interface DimensionDefinition {
 }
 
 export interface RuleMeta {
+  target_types?: { value: string; label: string }[]
+  target_statuses?: { value: string; label: string }[]
   data_types: { value: string; label: string }[]
   methods: { value: string; label: string }[]
   merge_strategies: { value: string; label: string }[]

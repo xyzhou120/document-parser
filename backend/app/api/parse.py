@@ -104,6 +104,10 @@ async def upload_and_parse(
             raise HTTPException(status_code=422, detail="提取引擎不受支持")
         if selected_engine == "reliable" and not settings.app.reliable_enabled:
             raise HTTPException(status_code=409, detail="可靠提取未启用，请在本地配置 app.reliable_enabled=true 后重启 API 和 worker")
+        from app.services.target_contract import structured_target_rejection
+        rejection = structured_target_rejection(rules, selected_engine, settings.agent.reliable_strategy)
+        if rejection:
+            raise HTTPException(status_code=422, detail=rejection)
         if selected_engine == "rules" and any(getattr(rule, "methods", []) == ["agent_extract"] for rule in rules):
             raise HTTPException(status_code=422, detail="此清单包含智能体专用字段，请选择智能体引擎")
 
@@ -260,6 +264,25 @@ async def get_parse_run(
         select(ExtractedFieldModel).where(ExtractedFieldModel.parse_run_id == parse_run_id)
     )
     fields = result.scalars().all()
+    from app.models.attachments import AttachmentVersion
+    version = await db.scalar(select(AttachmentVersion).where(AttachmentVersion.run_id == parse_run_id))
+    snapshot_stats = {}
+    snapshot_facts = None
+    if version is not None and version.snapshot:
+        from types import SimpleNamespace
+        from app.services.attachment_read_service import snapshot_fact_view
+        fields = []
+        for item in version.snapshot["fields"]:
+            if item.get("field"):
+                field_data = dict(item["field"])
+                field_data["parse_run_id"] = UUID(item["run_id"])
+                field_data["source_parse_run_id"] = UUID(item["run_id"])
+                fields.append(SimpleNamespace(**field_data))
+        snapshot_stats = version.snapshot.get("stats", {})
+        snapshot_facts = (await snapshot_fact_view(db, version, overlay=True)).facts
+    profile_rules = {
+        item.get("field_key"): item for item in (parse_run.extraction_profile or {}).get("rules", [])
+    }
     await write_extracted_field_counts(db, [parse_run], repair_zeros=True)
 
     return ParseRunDetailResponse(
@@ -272,8 +295,8 @@ async def get_parse_run(
         started_at=parse_run.started_at,
         completed_at=parse_run.completed_at,
         duration_seconds=parse_run.duration_seconds,
-        fields_extracted=parse_run.fields_extracted,
-        mean_confidence=parse_run.mean_confidence,
+        fields_extracted=snapshot_stats.get("found", parse_run.fields_extracted),
+        mean_confidence=snapshot_stats.get("mean_confidence", parse_run.mean_confidence),
         error_message=parse_run.error_message,
         quality_status=parse_run.quality_status,
         extraction_profile=parse_run.extraction_profile,
@@ -284,12 +307,18 @@ async def get_parse_run(
         mine_name=document.mine_name if document else None,
         checklist_type=document.checklist_type if document else None,
         reporting_period=document.report_period if document else None,
-        facts=build_run_facts(parse_run, fields),
+        facts=snapshot_facts if snapshot_facts is not None else build_run_facts(parse_run, fields),
         fields=[
             ParseFieldResponse.model_validate(
                 {
+                    "source_parse_run_id": getattr(f, "parse_run_id", parse_run_id),
                     "field_key": f.field_key,
+                    "target_key": f.field_key,
                     "field_name": f.field_name,
+                    "target_type": (profile_rules.get(f.field_key) or {}).get("target_type", getattr(f, "target_type", None) or "fact"),
+                    "target_group_key": (profile_rules.get(f.field_key) or {}).get("target_group_key"),
+                    "target_status": f.target_status or "NOT_RUN",
+                    "status_reason": f.status_reason or {},
                     "field_value": f.field_value,
                     "extraction_method": f.extraction_method,
                     "confidence": f.confidence,
@@ -318,6 +347,12 @@ async def _run_fact_view(parse_run_id: UUID, view: str, db: AsyncSession):
     run = await db.get(ParseRun, parse_run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="解析运行不存在")
+    from app.models.attachments import AttachmentVersion
+    version = await db.scalar(select(AttachmentVersion).where(AttachmentVersion.run_id == parse_run_id))
+    if version is not None and version.snapshot:
+        from app.services.attachment_read_service import snapshot_fact_view
+        # 普通结果/导出沿用同一冻结字段成员，附加实时失效状态；历史接口单独读取原始快照。
+        return await snapshot_fact_view(db, version, view=view, overlay=True)
     result = await db.execute(
         select(ExtractedFieldModel).where(ExtractedFieldModel.parse_run_id == parse_run_id)
         .order_by(ExtractedFieldModel.field_key, ExtractedFieldModel.field_id)
@@ -408,6 +443,9 @@ async def incremental_extract(
     db: AsyncSession = Depends(get_db),
 ):
     """创建不可变的子运行，并复用预处理产物。"""
+    from app.services.attachment_version_service import managed_attachment
+    if await managed_attachment(db, document_id):
+        raise HTTPException(409, "此附件使用结果版本管理，请从附件页发起新增目标补提或全量重提")
     document = await db.get(Document, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="文档不存在")
@@ -448,6 +486,10 @@ async def incremental_extract(
         field_keys = [rule.field_key for rule in rules]
     if extraction_engine == "rules" and any(rule.methods == ["agent_extract"] for rule in rules):
         raise HTTPException(status_code=422, detail="此规则包需要智能体引擎；请选择智能体并按需强制刷新")
+    from app.services.target_contract import structured_target_rejection
+    rejection = structured_target_rejection(rules, extraction_engine, settings.agent.reliable_strategy)
+    if rejection:
+        raise HTTPException(status_code=422, detail=rejection)
     current_profile = rule_snapshot(rules, document.checklist_type, extraction_engine)
     if extraction_engine == "checklist_agent" and any(
         current_profile.get(key) != (parent.extraction_profile or {}).get(key)
@@ -532,17 +574,26 @@ async def get_parse_results(
 
     支持按煤矿ID、清单类型、上报周期筛选
     """
+    from sqlalchemy import inspect
+    from sqlalchemy.orm import defer
+
+    from app.models.attachments import Attachment, AttachmentVersion, AttachmentVersionSummary
     latest = select(
         ParseRun.parse_run_id,
         func.row_number()
         .over(partition_by=ParseRun.document_id, order_by=ParseRun.created_at.desc())
         .label("rank"),
-    ).subquery()
+    ).where(ParseRun.status.in_(["COMPLETED", "COMPLETED_WITH_REVIEW"])).subquery()
     query = (
-        select(Document, ParseRun)
+        select(Document, ParseRun, AttachmentVersion, AttachmentVersionSummary)
         .join(ParseRun, Document.document_id == ParseRun.document_id)
-        .join(latest, latest.c.parse_run_id == ParseRun.parse_run_id)
-        .where(latest.c.rank == 1)
+        .outerjoin(latest, latest.c.parse_run_id == ParseRun.parse_run_id)
+        .outerjoin(Attachment, Attachment.document_id == Document.document_id)
+        .outerjoin(AttachmentVersion, AttachmentVersion.id == Attachment.current_version_id)
+        .outerjoin(AttachmentVersionSummary, AttachmentVersionSummary.version_id == AttachmentVersion.id)
+        .where(((Attachment.id.is_(None)) & (latest.c.rank == 1)) |
+               ((Attachment.id.is_not(None)) & (AttachmentVersion.run_id == ParseRun.parse_run_id)))
+        .options(defer(AttachmentVersion.snapshot))
     )
 
     if mine_id:
@@ -568,12 +619,15 @@ async def get_parse_results(
     result = await db.execute(query)
     documents = result.all()
     await write_extracted_field_counts(
-        db, [parse_run for _, parse_run in documents], repair_zeros=True,
+        db, [parse_run for _, parse_run, _, _ in documents], repair_zeros=True,
     )
 
-    # 查询每个附件的解析结果
+    # 查询每个附件的解析结果。统计来自摘要，不读取完整快照。
     items = []
-    for document, parse_run in documents:
+    for document, parse_run, version, summary in documents:
+        stats = ((summary.summary if summary else None) or {}).get("stats") or {}
+        if not stats and version is not None and "snapshot" not in inspect(version).unloaded:
+            stats = (version.snapshot or {}).get("stats") or {}
         items.append(
             {
                 "document_id": document.document_id,
@@ -584,9 +638,9 @@ async def get_parse_results(
                 "checklist_type": document.checklist_type,
                 "reporting_period": document.report_period,
                 "parse_run_id": parse_run.parse_run_id,
-                "status": parse_run.status,
-                "fields_extracted": parse_run.fields_extracted,
-                "mean_confidence": parse_run.mean_confidence,
+                "status": version.state if version else parse_run.status,
+                "fields_extracted": stats.get("found", parse_run.fields_extracted),
+                "mean_confidence": stats.get("mean_confidence", parse_run.mean_confidence),
                 "duration_seconds": parse_run.duration_seconds,
                 "created_at": document.created_at,
             }

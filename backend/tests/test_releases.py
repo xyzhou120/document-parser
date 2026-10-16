@@ -159,7 +159,7 @@ async def test_preview_diff_validation_and_no_active_rules(db):
 
 
 @pytest.mark.asyncio
-async def test_crud_source_snapshot_and_no_publication_compatibility(db):
+async def test_crud_source_is_active_while_old_snapshot_stays_immutable(db):
     edit = ExtractionRule(rule_id=uuid4(), checklist_type="alpha", field_key="gas_count",
                           field_name_cn="编辑原值", strategy={}, data_type="string",
                           enabled=True, version=1, priority=50, required=False,
@@ -173,7 +173,9 @@ async def test_crud_source_snapshot_and_no_publication_compatibility(db):
     await ReleaseService().activate(db, bundle.bundle_id, command(0))
     edit.field_name_cn = "尚未发布的编辑"
     await db.flush()
-    assert (await repo.get_rules_for_checklist(db, "alpha"))[0].field_name_cn == "编辑原值"
+    # CRUD is the source for new runs; the already-created bundle remains immutable.
+    assert (await repo.get_rules_for_checklist(db, "alpha"))[0].field_name_cn == "尚未发布的编辑"
+    assert bundle_specs(bundle)[0].field_name_cn == "编辑原值"
     assert asdict(bundle_specs(bundle)[0])["rule_id"] == str(edit.rule_id)
 
 

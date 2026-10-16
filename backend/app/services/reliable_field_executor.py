@@ -21,7 +21,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from app.models.database import Document, ExtractedFieldModel, ParseRun
-from app.models.execution import ParseCandidate, ParseFieldJob
+from app.models.execution import ParseCandidate, ParseFieldJob, ParseModelCall
 from app.rules.spec import RuleSpec
 from app.services.candidate_repository import CandidateRepository
 from app.services.candidate_retrieval import Candidate, FieldSpec, normalize
@@ -29,9 +29,9 @@ from app.services.content_publish_service import content_publish_service
 from app.services.content_service import ContentService
 from app.services.evidence_verification import validate_candidate_decision
 from app.services.execution import LeaseToken, QuantumOutcome
-from app.services.field_completion import complete_field
+from app.services.field_completion import complete_field, value_groups
 from app.services.material_provenance import build_material_provenance
-from app.services.model_gateway import CallRequest, CandidateInput, ModelGateway
+from app.services.model_gateway import CallRequest, CandidateInput, GatewayOutcome, ModelGateway
 from app.services.retrieval_plan import (
     CandidateBatchTree,
     RangeShard,
@@ -39,6 +39,7 @@ from app.services.retrieval_plan import (
     plan_rule_ranges,
     scan_candidates,
 )
+from app.services.target_contract import attach_target_payload, normalize_decision, target_status_for_state
 
 
 @dataclass(frozen=True)
@@ -52,13 +53,38 @@ class ReliableFieldExecutorConfig:
     semantic_retry_max: int = 3
     ranges_per_quantum: int = 4
     # 同一份文档同时发出的页请求数。每次请求仍然只带一页。
-    page_parallelism: int = 2
+    page_parallelism: int = 4
 
 
 # 固定修订不可变。在工作进程生命周期内跨执行窗口保留已校验的适配内容，
 # 同时由发布防护继续检查当前来源有效性。
 _REVISION_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _REVISION_CACHE_LIMIT = 4
+
+
+def save_call_wait(cp: dict, request: CallRequest, response: GatewayOutcome, *,
+                   retry_key: str, prior_key: str, quota_key: str) -> None:
+    """等待许可仍是同一次尝试，不能把 queued 调用改成自己的前序调用。"""
+    if cp.get(quota_key) and response.wait_state == "waiting_service" and response.retry_seq is None:
+        # 配额恢复的投递被熔断拦下时，下次仍重放同一个 quota-resume 键。
+        return
+    quota_wait = response.wait_state == "waiting_external_quota"
+    if quota_wait:
+        retry = request.retry_seq
+        prior = response.call_id
+    elif response.retry_seq is not None:
+        # 真实调用失败后，网关返回下一次尝试的谱系。
+        retry = response.retry_seq
+        prior = response.retry_of_call_id
+    else:
+        retry = request.retry_seq
+        prior = str(request.retry_of_call_id) if request.retry_of_call_id else None
+    cp[retry_key] = retry
+    if prior:
+        cp[prior_key] = prior
+    else:
+        cp.pop(prior_key, None)
+    cp[quota_key] = quota_wait
 
 
 def model_candidate_payload(proposal: dict) -> dict:
@@ -349,18 +375,25 @@ class ReliableFieldExecutor:
                                          tuple(proposal.get("units") or ())))
         retry = int(ready["payload"].get("retry_seq", 0))
         prior = ready["payload"].get("prior_call_id")
-        request = CallRequest(job_id=token.job_id, fence=token.fence_token, provider_key=self.config.provider_key,
-            dispatch_key=f"{token.job_id}:{batch_id}:{token.fence_token}:{retry}", checkpoint_key=batch_id,
+        dispatch_key = f"{token.job_id}:{batch_id}:{token.fence_token}:{retry}"
+        async with self.sessions() as db:
+            prior_dispatch = await db.scalar(select(ParseModelCall).where(
+                ParseModelCall.dispatch_key == dispatch_key))
+        request = CallRequest(job_id=token.job_id,
+            fence=prior_dispatch.fence if prior_dispatch else token.fence_token,
+            provider_key=self.config.provider_key,
+            dispatch_key=dispatch_key, checkpoint_key=batch_id,
             candidates=tuple(inputs), model=self.config.model, estimated_input_tokens=0,
-            retry_seq=retry, retry_of_call_id=UUID(prior) if prior and retry else None,
+            retry_seq=retry,
+            retry_of_call_id=(prior_dispatch.retry_of_call_id if prior_dispatch else
+                UUID(prior) if prior and retry else None),
             hard_limit_tokens=profile.get("hard_limit_tokens"),
             split_path=tuple(ready["split_path"]), thinking_enabled=self.config.thinking_enabled,
             messages=({"role": "system", "content":
-                "Extract every matching fact in each candidate under its rule. Return JSON decisions. "
-                "Accepted decisions contain value,unit,value_kind,dimensions,source_role from source_role_hint,evidence_ids "
-                "from candidate payload; multiple facts in one window use facts array. Reject only when no match. "
-                "Quote original wording for kinds and identities; unknown stays unknown. "
-                "The complete_scope strategy requires semantic checking even without a label."},))
+                "按每条候选自己的规则提取全部匹配事实，只返回 JSON decisions。"
+                "accepted 的决定要包含 value、unit、value_kind、dimensions、来自 source_role_hint 的 source_role，"
+                "以及从候选原文复制的 evidence_ids。同一窗口有多条事实时使用 facts 数组。只有完全没有匹配时才 rejected。"
+                "值类型和身份必须引用原文措辞；无法确认就保持未知。不要编造。JSON 键名保持英文。"},))
         if ready["payload"].get("external_quota") and prior:
             response = await self.gateway.requeue_external_quota(request, prior_call_id=prior,
                         dispatch_key=request.dispatch_key + ":quota-resume")
@@ -369,9 +402,8 @@ class ReliableFieldExecutor:
         if response.state in {"service_exhausted", "retry_exhausted"}:
             return QuantumOutcome("failed_terminal", cp, error=response.error or response.state)
         if response.wait_state:
-            ready["payload"].update(prior_call_id=response.call_id,
-                retry_seq=response.retry_seq or retry,
-                external_quota=response.wait_state == "waiting_external_quota")
+            save_call_wait(ready["payload"], request, response, retry_key="retry_seq",
+                           prior_key="prior_call_id", quota_key="external_quota")
             cp["candidate_batches"] = tree.as_dict()
             return QuantumOutcome(response.wait_state, cp, retry_at=parse_time(response.retry_at), error=response.error)
         for decision in response.decisions:
@@ -436,10 +468,10 @@ class ReliableFieldExecutor:
             checkpoint_key=f"image:{proposal['candidate_id']}", candidates=(candidate,), model=self.config.model,
             estimated_input_tokens=0, thinking_enabled=self.config.thinking_enabled,
             hard_limit_tokens=None,
-            messages=({"role": "system", "content": "Read the attached original image. Return one JSON decision "
-                "with candidate_id, judgement accepted, transcription copied exactly, value/unit/value_kind/dimensions "
-                "and source_role from document material wording (report_body/report_sheet/design/approval/statement/ledger). "
-                "Measured/calculated are value_kind, never source_role. Do not output verified receipts."},)))
+            messages=({"role": "system", "content": "请阅读附带的原图，只返回一条 JSON 决定。"
+                "包含 candidate_id、judgement 为 accepted、逐字抄写的 transcription，以及 value、unit、value_kind、dimensions "
+                "和依据文档材料措辞得到的 source_role（report_body、report_sheet、design、approval、statement、ledger）。"
+                "实测和计算属于 value_kind，不能写成 source_role。不要输出核验回执。JSON 键名保持英文。"},)))
         if response.wait_state or not response.decisions:
             return {"status": "unverified", "call_id": response.call_id, "state": response.state,
                     "wait_state": response.wait_state, "retry_at": response.retry_at}
@@ -528,6 +560,7 @@ class ReliableFieldExecutor:
         registry = {**existing_registry, **registry}
         candidate_results = {}
         for decision in decisions:
+            decision = normalize_decision(decision, rule)
             row = await db.get(ParseCandidate, UUID(decision["candidate_id"]))
             if row is None or row.job_id != job.job_id or row.state not in {"pending", "accepted", "unresolved"}:
                 continue
@@ -540,6 +573,7 @@ class ReliableFieldExecutor:
             row.evidence = {"registry": compact_checkpoint_payload(row_registry), "issues": result.get("issues", [])}
             if result.get("fact"):
                 fact = result["fact"]
+                attach_target_payload(fact, decision, rule)
                 identity_digest = hashlib.sha256(json.dumps({key: fact.get(key) for key in (
                     "value", "unit", "value_kind", "dimensions")}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:24]
                 fact["occurrence_id"] = str(fact.get("occurrence_id") or fact["candidate_id"]) + ":fact:" + identity_digest
@@ -581,11 +615,20 @@ class ReliableFieldExecutor:
             run = await db.get(ParseRun, job.run_id)
             field = ExtractedFieldModel(parse_run_id=job.run_id, document_id=run.document_id,
                 field_key=job.field_key, field_name=rule.field_name_cn, extraction_method="reliable_extract",
+                target_type=rule.target_type, target_group_key=rule.target_group_key,
                 data_type=rule.data_type, unit=rule.unit, required=rule.required, rule_version=rule.version)
             db.add(field)
         field.instances = completion["facts"]
         field.field_value = str(completion["facts"][0]["value"]) if completion["facts"] else None
         field.validation_status = completion["semantic_state"]
+        field.target_type = rule.target_type
+        field.target_group_key = rule.target_group_key
+        field.target_status = target_status_for_state(completion["semantic_state"])
+        field.status_reason = {"semantic_state": completion["semantic_state"],
+                               "coverage_complete": completion.get("coverage_complete")}
         field.extraction_detail = {"contract_version": "reliable-extraction-v2", "field_completion": completion,
                                   "semantic_state": completion["semantic_state"], "coverage_complete": completion["coverage_complete"],
-                                  "evidence_registry": registry}
+                                  "evidence_registry": registry,
+                                  "value_groups": value_groups(completion["facts"], list(rule.identity_dimensions or []))}
+        from app.services.quality_inputs import quality_inputs_from_detail
+        field.quality_inputs = quality_inputs_from_detail(field.extraction_detail)

@@ -74,6 +74,10 @@ class ContentPublishService:
                          invalidation_watermark: int = 0, content_cas_version: int = 0) -> ParseRun | None:
         if source_run is None:
             return None
+        if (source_run.extraction_profile or {}).get("attachment_version_id"):
+            # 内容订正使旧快照失效；新业务提取必须显式经过版本门禁，
+            # 不能复制旧 version_id 创建另一个竞争运行。
+            return None
         if source_run.contract_version != "reliable-extraction-v2" or source_run.document_id != document_id:
             raise ContentPublicationError("successor requires a frozen reliable run from this document")
         profile = deepcopy(source_run.extraction_profile or {})

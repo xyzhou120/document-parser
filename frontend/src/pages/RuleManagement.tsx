@@ -69,6 +69,12 @@ interface DraftState {
   checklist_type: string
   field_key: string
   field_name_cn: string
+  target_type: 'fact' | 'statement' | 'table'
+  target_group_key: string
+  target_group_name: string
+  output_schema_json: string
+  source_policy_json: string
+  evidence_policy_json: string
   field_description?: string | null
   data_type: string
   unit?: string | null
@@ -113,6 +119,12 @@ const emptyDraft = (checklistType: string): DraftState => ({
   checklist_type: checklistType,
   field_key: '',
   field_name_cn: '',
+  target_type: 'fact',
+  target_group_key: '',
+  target_group_name: '',
+  output_schema_json: '{}',
+  source_policy_json: '{}',
+  evidence_policy_json: '{}',
   field_description: '',
   data_type: 'string',
   unit: '',
@@ -167,6 +179,12 @@ function toDraft(rule: ExtractionRule): DraftState {
     checklist_type: rule.checklist_type,
     field_key: rule.field_key,
     field_name_cn: rule.field_name_cn,
+    target_type: rule.target_type || 'fact',
+    target_group_key: rule.target_group_key || '',
+    target_group_name: rule.target_group_name || '',
+    output_schema_json: JSON.stringify(rule.output_schema || {}, null, 2),
+    source_policy_json: JSON.stringify(rule.source_policy || {}, null, 2),
+    evidence_policy_json: JSON.stringify(rule.evidence_policy || {}, null, 2),
     field_description: rule.field_description,
     data_type: rule.data_type,
     unit: rule.unit,
@@ -284,6 +302,12 @@ function fromDraft(draft: DraftState, dimensionBindings: RuleStrategy['dimension
     checklist_type: draft.checklist_type,
     field_key: draft.field_key,
     field_name_cn: draft.field_name_cn,
+    target_type: draft.target_type,
+    target_group_key: draft.target_group_key.trim() || null,
+    target_group_name: draft.target_group_name.trim() || null,
+    output_schema: JSON.parse(draft.output_schema_json || '{}'),
+    source_policy: JSON.parse(draft.source_policy_json || '{}'),
+    evidence_policy: JSON.parse(draft.evidence_policy_json || '{}'),
     field_description: draft.field_description?.trim() || null,
     data_type: draft.data_type,
     unit: draft.unit?.trim() || null,
@@ -300,6 +324,23 @@ function fromDraft(draft: DraftState, dimensionBindings: RuleStrategy['dimension
   }
 
   return { payload, strategy }
+}
+
+type OutputSchema = { polarity?: string; columns?: { key: string; header?: string; unit?: string; required?: boolean }[]; row_identity?: string[] }
+
+function outputSchema(draft: DraftState): OutputSchema {
+  try {
+    const value = JSON.parse(draft.output_schema_json || '{}')
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  } catch {
+    return {}
+  }
+}
+
+function tableColumnsText(draft: DraftState): string {
+  return (outputSchema(draft).columns || []).filter((column: { key?: string; header?: string; unit?: string }) => column?.key && column?.header)
+    .map((column: { key?: string; header?: string; unit?: string }) => `${column.key}=${column.header}${column.unit ? `:${column.unit}` : ''}`)
+    .join('; ')
 }
 
 export default function RuleManagement() {
@@ -412,6 +453,20 @@ export default function RuleManagement() {
     } catch {
       message.warning('维度绑定需要有效的 JSON 对象')
       return
+    }
+
+    for (const [label, value] of [
+      ['输出结构', draft.output_schema_json],
+      ['来源准入策略', draft.source_policy_json],
+      ['证据要求', draft.evidence_policy_json],
+    ] as const) {
+      try {
+        const parsed = JSON.parse(value || '{}')
+        if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid')
+      } catch {
+        message.warning(`${label}需要有效的 JSON 对象`)
+        return
+      }
     }
 
     setSaving(true)
@@ -531,6 +586,10 @@ export default function RuleManagement() {
           </div>
           <div className="rule-card-badges">
             {rule.required && <Tag color="red">必填</Tag>}
+            <Tag color={rule.target_type === 'table' ? 'cyan' : rule.target_type === 'statement' ? 'gold' : 'blue'}>
+              {rule.target_type === 'table' ? '表格明细' : rule.target_type === 'statement' ? '原文内容' : '普通事实'}
+            </Tag>
+            {rule.target_group_name || rule.target_group_key ? <Tag>{rule.target_group_name || rule.target_group_key}</Tag> : null}
             <Tag>{typeLabels[rule.data_type] || rule.data_type}</Tag>
             {rule.unit && <Tag color="blue">{rule.unit}</Tag>}
             {rule.multi_instance && <Tag color="purple">多实例</Tag>}
@@ -644,7 +703,7 @@ export default function RuleManagement() {
       <div className="page-title-row">
         <div>
           <h1>规则管理</h1>
-          <p>这里维护编辑源；新任务会固定提交时的规则快照。需要让后续任务使用已发布版本，请到“规则发布”进行试跑、发布或回滚。</p>
+          <p>这里维护清单的提取目标。保存或启停后，后续新任务使用当前启用规则；已启动任务继续使用自己的规则快照。</p>
         </div>
         <div className="page-actions">
           <Button icon={<ReloadOutlined />} loading={loading || ruleLoading} onClick={() => void refreshAll()}>
@@ -780,6 +839,31 @@ export default function RuleManagement() {
                   />
                 </label>
                 <label>
+                  <span>目标类型</span>
+                  <Select
+                    value={draft.target_type}
+                    onChange={(value) => {
+                      const schema = value === 'statement' ? { polarity: 'any' } : value === 'table' ? { row_identity: [], columns: [] } : {}
+                      setDraft({ ...draft, target_type: value, output_schema_json: JSON.stringify(schema, null, 2) })
+                    }}
+                    options={meta?.target_types || [
+                      { value: 'fact', label: '普通事实' },
+                      { value: 'statement', label: '原文内容' },
+                      { value: 'table', label: '表格明细' },
+                    ]}
+                  />
+                </label>
+                <label>
+                  <span>目标组标识</span>
+                  <Input value={draft.target_group_key} placeholder="如 punching_design"
+                    onChange={(e) => setDraft({ ...draft, target_group_key: e.target.value })} />
+                </label>
+                <label>
+                  <span>目标组名称</span>
+                  <Input value={draft.target_group_name} placeholder="如 冲孔措施设计"
+                    onChange={(e) => setDraft({ ...draft, target_group_name: e.target.value })} />
+                </label>
+                <label>
                   <span>数据类型</span>
                   <Select
                     value={draft.data_type}
@@ -833,6 +917,64 @@ export default function RuleManagement() {
                   placeholder="说明这个字段的业务含义与常见表述，供人工核对参考"
                   onChange={(e) => setDraft({ ...draft, field_description: e.target.value })}
                 />
+              </label>
+              {draft.target_type === 'statement' && (
+                <label className="editor-full">
+                  <span>原文陈述类型</span>
+                  <Select value={outputSchema(draft).polarity || 'any'} style={{ width: '100%' }}
+                    options={[{ value: 'any', label: '肯定、否定和不确定都保留' },
+                      { value: 'affirmed', label: '只提取肯定陈述' }, { value: 'negated', label: '只提取否定陈述' },
+                      { value: 'uncertain', label: '只提取不确定陈述' }]}
+                    onChange={(value) => setDraft({ ...draft, output_schema_json: JSON.stringify({ polarity: value }, null, 2) })} />
+                  <small className="editor-hint">平台只返回原文及其语气，业务服务再据此判断。</small>
+                </label>
+              )}
+              {draft.target_type === 'table' && (
+                <>
+                  <label className="editor-full">
+                    <span>表格行身份列 *</span>
+                    <Select mode="multiple" value={(outputSchema(draft).row_identity || []).filter((key: string) => (outputSchema(draft).columns || []).some((column: { key?: string }) => column.key === key))} style={{ width: '100%' }}
+                      placeholder="先填写表格列，再选择其中能唯一标识一行的列"
+                      options={(outputSchema(draft).columns || []).filter((column: { key?: string }) => column.key).map((column: { key: string; header?: string }) => ({ value: column.key, label: column.header ? `${column.key}（${column.header}）` : column.key }))}
+                      onChange={(value) => setDraft({ ...draft, output_schema_json: JSON.stringify({ ...outputSchema(draft), row_identity: value }, null, 2) })} />
+                  </label>
+                  <label className="editor-full">
+                    <span>表格列（标识=表头[:单位]，分号分隔） *</span>
+                    <Input key={`${draft.field_key}-columns`} defaultValue={tableColumnsText(draft)} placeholder="point=测点; pressure=瓦斯压力:MPa; content=瓦斯含量:m³/t"
+                      onBlur={(event) => {
+                        const previous = outputSchema(draft).columns || []
+                        const columns = event.target.value.split(';').map((part) => part.trim()).filter(Boolean).map((part) => {
+                          const [left, ...unitParts] = part.split(':')
+                          const [key, header] = left.split('=').map((item) => item.trim())
+                          const kept: { unit?: string } = previous.find((column: { key?: string; unit?: string }) => column.key === key) || {}
+                          return { ...kept, key, header, ...(unitParts.length ? { unit: unitParts.join(':').trim() } : { unit: kept.unit }) }
+                        }).filter((column) => column.key && column.header)
+                        const identity = (outputSchema(draft).row_identity || []).filter((key: string) => columns.some((column) => column.key === key))
+                        setDraft({ ...draft, output_schema_json: JSON.stringify({ ...outputSchema(draft), columns, row_identity: identity }, null, 2) })
+                      }} />
+                    <small className="editor-hint">列缺失、行身份不清或必填单元格为空时，结果会标记为待复核。</small>
+                  </label>
+                </>
+              )}
+              <label className="editor-full">
+                <span>输出结构 JSON（高级）</span>
+                <Input.TextArea rows={3} value={draft.output_schema_json}
+                  placeholder={draft.target_type === 'table' ? '{"row_identity":["measurement_point"],"columns":[]}' : '{}'}
+                  onChange={(e) => setDraft({ ...draft, output_schema_json: e.target.value })} />
+              </label>
+              <label className="editor-full">
+                <span>来源准入/排除 JSON</span>
+                <Input.TextArea rows={3} value={draft.source_policy_json}
+                  placeholder='{"allowed_roles":[],"excluded_roles":[],"exclude_terms":[],"required_headers":[]}'
+                  onChange={(e) => setDraft({ ...draft, source_policy_json: e.target.value })} />
+                <small className="editor-hint">提取时只认 allowed_roles、excluded_roles、exclude_terms、required_headers。写错键名不会生效。</small>
+              </label>
+              <label className="editor-full">
+                <span>证据要求 JSON（尚未参与提取）</span>
+                <Input.TextArea rows={3} value={draft.evidence_policy_json}
+                  placeholder='{}'
+                  onChange={(e) => setDraft({ ...draft, evidence_policy_json: e.target.value })} />
+                <small className="editor-hint">目前只随规则保存并计入规则 hash，提取时还不会按这里拦截。</small>
               </label>
               <label className="editor-full">
                 <span>关联维度（可自定义，回车添加）</span>

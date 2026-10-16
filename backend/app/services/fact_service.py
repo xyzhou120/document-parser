@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 
 from app.schemas.parse import FactResponse, FactViewResponse
 from app.services.fact_policy_v2 import is_v2, matching_invalidations, project_metadata
+from app.services.target_contract import instance_target_status, result_payload, target_type
 
 CONTRACT_VERSION = "fact-contract-v1"
 RELIABLE_CONTRACT_VERSION = "reliable-extraction-v2"
@@ -120,6 +121,8 @@ def _evidence(item, registry):
 
 def _required_dimensions(rule):
     schema = rule.get("dimension_schema") or {}
+    if any(isinstance(cfg, dict) and "required" in cfg for cfg in schema.values()):
+        return [key for key, cfg in schema.items() if isinstance(cfg, dict) and cfg.get("required") is True]
     identity = ((rule.get("strategy") or {}).get("agent_extract") or {}).get("identity_dimensions")
     return list(
         dict.fromkeys(
@@ -137,7 +140,7 @@ def _required_dimensions(rule):
 
 def _fact(field, item, run, rule, index, *, reviewed=False):
     detail = _get(field, "extraction_detail") or {}
-    value = str(item["value"])
+    value = str(item.get("value") or "")
     normalized, format_ok = _normalize(value, rule.get("data_type") or _get(field, "data_type"))
     dimensions = {
         key: deepcopy(val.get("value") if isinstance(val, dict) else val)
@@ -153,11 +156,17 @@ def _fact(field, item, run, rule, index, *, reviewed=False):
     )
     kind, role = item.get("value_kind") or "unknown", item.get("source_role") or "unknown"
     unit = item.get("unit") or None
+    def _filled(value):
+        return value not in (None, "", "unknown")
+
     identity_known = (
         dims_ok
-        and all(_known(dimensions.get(key)) for key in identity_dims)
-        and all(_known(v) for v in dimensions.values())
-        and _known(kind)
+        and all(
+            _known(dimensions.get(key))
+            for key in identity_dims
+            if key in required_dims or _filled(dimensions.get(key))
+        )
+        and (_known(kind) or target_type(rule) == "statement")
         and _known(role)
         and (not rule.get("unit") or bool(unit))
     )
@@ -194,8 +203,8 @@ def _fact(field, item, run, rule, index, *, reviewed=False):
             else "heuristic_uncalibrated" if score is not None else "unknown"
         )
     )
-    unit_ok = not rule.get("unit") or unit == rule["unit"]
-    kind_ok = not rule.get("value_kind") or kind == rule["value_kind"]
+    unit_ok = target_type(rule) == "statement" or not rule.get("unit") or unit == rule["unit"]
+    kind_ok = target_type(rule) == "statement" or not rule.get("value_kind") or kind == rule["value_kind"]
     status = item.get("validation_status") or (
         None if reviewed else _get(field, "validation_status")
     )
@@ -269,18 +278,29 @@ def _fact(field, item, run, rule, index, *, reviewed=False):
         and not partial
         and status != "blocked"
         and status not in UNAVAILABLE_VALIDATION_STATUSES
+        and item.get("row_status") != "REVIEW_REQUIRED"
         and (not agent or (_known(kind) and _known(role)))
     )
     result = FactResponse(
         fact_id="fact-" + _digest([str(run.document_id), str(run.parse_run_id), content_key]),
         field_key=_get(field, "field_key"),
+        target_key=_get(field, "field_key"),
         field_name=_get(field, "field_name", ""),
+        target_type=rule.get("target_type", "fact") or "fact",
+        target_group_key=rule.get("target_group_key"),
+        target_status=instance_target_status(item, _get(field, "target_status")),
+        status_reason=dict(_get(field, "status_reason") or {}),
         raw=raw_values[0] if raw_values else value,
         raw_values=raw_values,
         normalized=normalized,
         value=value,
         unit=unit,
         dimensions=dimensions,
+        target_payload=deepcopy(item.get("target_payload") or result_payload(target_type(rule), item)),
+        statement=deepcopy(item.get("statement")),
+        table_row=deepcopy(item.get("table_row")),
+        table_row_key=item.get("table_row_key"),
+        row_status=item.get("row_status"),
         value_kind=kind,
         source_role=role,
         evidence=evidence,
@@ -392,7 +412,9 @@ def build_fact_view(run, fields, *, view="automatic", revisions=(), invalidation
                 continue
             field = field_map.get(key) or {"field_key": key, "field_name": key}
             for index, item in enumerate(row.facts or []):
-                if not isinstance(item, dict) or not _present(item.get("value")):
+                if not isinstance(item, dict):
+                    continue
+                if not _present(item.get("value")) and not item.get("table_row") and not item.get("statement"):
                     continue
                 fact = _fact(field, item, run, rules.get(key, {}), index, reviewed=True)
                 fact.fact_id = "fact-" + _digest([fact.fact_id, str(row.review_id), row.revision])
@@ -421,7 +443,9 @@ def build_fact_view(run, fields, *, view="automatic", revisions=(), invalidation
                     }
                 ]
             for index, item in enumerate(items):
-                if not isinstance(item, dict) or not _present(item.get("value")):
+                if not isinstance(item, dict):
+                    continue
+                if not _present(item.get("value")) and not item.get("table_row") and not item.get("statement"):
                     continue
                 # 聚合投影保留所有出现项级别的校验和维度证据。
                 if groups:
@@ -479,6 +503,15 @@ def build_fact_view(run, fields, *, view="automatic", revisions=(), invalidation
         if view == "reviewed":
             fact.human_review_status = "HUMAN_REVIEWED"
     reliable = is_v2(run) or any(f.contract_version == RELIABLE_CONTRACT_VERSION for f in merged)
+    target_rows = []
+    for key, rule in rules.items():
+        field = field_map.get(key)
+        status = str(_get(field, "target_status") or "NOT_RUN")
+        target_rows.append({"target_key": key, "field_key": key,
+                            "target_type": rule.get("target_type", "fact") or "fact",
+                            "target_group_key": rule.get("target_group_key"),
+                            "status": status,
+                            "status_reason": dict(_get(field, "status_reason") or {})})
     if requested_view == "available":
         merged = [fact for fact in merged if fact.available_for_downstream is True]
     return FactViewResponse(
@@ -488,6 +521,7 @@ def build_fact_view(run, fields, *, view="automatic", revisions=(), invalidation
         document_id=run.document_id,
         view=requested_view,
         facts=merged,
+        targets=target_rows,
         reviews=reviews,
         missing_fields=profile.get("missing_fields") or [],
         warnings=profile.get("warnings") or [],

@@ -7,6 +7,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass
@@ -16,6 +19,21 @@ from uuid import UUID
 
 from app.models.database import ParseRun
 from app.models.execution import ParseFieldJob
+
+logger = logging.getLogger(__name__)
+
+
+def _exception_outcome(exc: Exception, checkpoint: dict) -> QuantumOutcome:
+    from app.services.errors import is_retryable_error
+    checkpoint = deepcopy(checkpoint)
+    failures = int(checkpoint.get("infrastructure_failures", 0)) + 1
+    checkpoint["infrastructure_failures"] = failures
+    retryable = is_retryable_error(exc) and failures <= 6
+    return QuantumOutcome(
+        "waiting_service" if retryable else "failed_terminal", checkpoint,
+        retry_at=datetime.utcnow() + timedelta(seconds=min(300, 15 * 2 ** min(failures - 1, 5))) if retryable else None,
+        error=f"quantum_exception:{type(exc).__name__}:attempt:{failures}",
+    )
 
 ACTIVE_RUN_STATES = {
     "PLANNED",
@@ -96,16 +114,71 @@ class FieldSchedulerRunner:
                 return None
             job = await db.get(ParseFieldJob, token.job_id)
             checkpoint = deepcopy(job.checkpoint or {})
-        # 模型或 OCR 请求期间不持有 SQL 事务。
-        outcome = await execute(token, checkpoint)
-        async with self.sessions() as db, db.begin():
-            repository = JobRepository(db)
-            if before_publish is not None:
-                handled = await before_publish(db, token, outcome)
-                if handled:
-                    return token
-            await repository.publish(token, outcome, writer=write_result)
-            await repository.aggregate(token.run_id)
+        # 模型或 OCR 请求期间不持有 SQL 事务，但不能让租约在外部调用期间自然过期。
+        # 心跳使用独立的短事务，避免把长模型调用和数据库锁绑定在一起。
+        async def heartbeat_loop():
+            interval = max(1.0, min(30.0, lease_seconds / 3))
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    async with self.sessions() as heartbeat_db, heartbeat_db.begin():
+                        await JobRepository(heartbeat_db).transition(
+                            token, "heartbeat", lease_seconds=lease_seconds)
+                except StaleLeaseError:
+                    raise
+                except Exception:
+                    # 心跳失败时让发布阶段的 fence/lease 校验做最终裁决；
+                    # 暂时性数据库故障不能在这里覆盖业务结果。
+                    logger.warning("字段续租暂时失败 job_id=%s", token.job_id, exc_info=True)
+
+        started = time.monotonic()
+        heartbeat = asyncio.create_task(heartbeat_loop())
+        execution = asyncio.create_task(execute(token, checkpoint))
+        recovered = False
+        try:
+            done, _ = await asyncio.wait((heartbeat, execution), return_when=asyncio.FIRST_COMPLETED)
+            if execution not in done:
+                await heartbeat  # 已失去所有权：停止旧调用，禁止覆盖接管者或取消状态。
+            outcome = await execution
+            outcome.checkpoint.pop("infrastructure_failures", None)
+        except StaleLeaseError:
+            raise
+        except Exception as exc:
+            # 外部依赖异常必须落成持久化状态，不能只让 Celery 看到一个失败任务。
+            outcome = _exception_outcome(exc, checkpoint)
+            recovered = True
+            logger.exception("字段量子执行失败 run_id=%s job_id=%s", token.run_id, token.job_id)
+        finally:
+            for task in (heartbeat, execution):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(heartbeat, execution, return_exceptions=True)
+        execution_seconds = time.monotonic() - started
+
+        async def persist(writer):
+            async with self.sessions() as db, db.begin():
+                repository = JobRepository(db)
+                if before_publish is not None and not recovered:
+                    handled = await before_publish(db, token, outcome)
+                    if handled:
+                        return
+                await repository.publish(token, outcome, writer=writer, lease_seconds=lease_seconds)
+                await repository.aggregate(token.run_id)
+
+        try:
+            await persist(None if recovered else write_result)
+        except StaleLeaseError:
+            raise
+        except Exception as exc:
+            # 领域 writer 的确定性异常也必须结束；先回滚结果事务，再用原检查点
+            # 保存失败。数据库本身仍不可用时抛给 Celery 重试/租约恢复。
+            logger.exception("字段量子发布失败 run_id=%s job_id=%s", token.run_id, token.job_id)
+            outcome = _exception_outcome(exc, checkpoint)
+            recovered = True
+            await persist(None)
+        logger.info("字段量子完成 run_id=%s job_id=%s fence=%s state=%s execute_seconds=%.3f publish_seconds=%.3f",
+                    token.run_id, token.job_id, token.fence_token, outcome.state, execution_seconds,
+                    time.monotonic() - started - execution_seconds)
         return token
 
 

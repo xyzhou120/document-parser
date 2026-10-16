@@ -107,6 +107,10 @@ class ExtractedFieldResponse(BaseModel):
     field_id: UUID
     field_key: str
     field_name: str
+    target_type: str = "fact"
+    target_group_key: str | None = None
+    target_status: str | None = None
+    status_reason: dict | None = None
     field_value: str | None = None
     extraction_method: str
     confidence: Optional[float] = None

@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from app.services.model_capacity import limited_model_request
+
 import base64
 import json
 import math
@@ -1270,7 +1272,8 @@ class ChecklistAgent:
             # 网关为此模型转发 chat_template_kwargs（方案 B 开关）。
             call_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
         try:
-            response = await client.chat.completions.create(**call_kwargs)
+            async with limited_model_request(client, model, timeout=runtime.get("timeout", 180)):
+                response = await client.chat.completions.create(**call_kwargs)
             content, usage, finish_reason = self._response_content(response)
         except Exception as exc:  # 远程失败必须可见，不能伪造。
             reason = str(exc)

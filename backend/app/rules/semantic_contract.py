@@ -182,6 +182,12 @@ def normalize_rule_semantics(rule: Any) -> dict:
     return {
         "field_key": _get(rule, "field_key"),
         "field_name_cn": _get(rule, "field_name_cn"),
+        "target_type": _get(rule, "target_type", "fact") or "fact",
+        "target_group_key": _get(rule, "target_group_key"),
+        "target_group_name": _get(rule, "target_group_name"),
+        "output_schema": deepcopy(_get(rule, "output_schema") or {}),
+        "source_policy": deepcopy(_get(rule, "source_policy") or {}),
+        "evidence_policy": deepcopy(_get(rule, "evidence_policy") or {}),
         "field_description": _get(rule, "field_description"),
         "data_type": _get(rule, "data_type", "string") or "string",
         "unit": _get(rule, "unit"),

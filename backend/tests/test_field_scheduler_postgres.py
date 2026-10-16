@@ -158,3 +158,24 @@ async def test_no_retry_at_external_wait_is_not_woken_by_scanner(sessions):
     async with sessions() as db, db.begin():
         await JobRepository(db).requeue_due()
         assert (await db.get(ParseFieldJob, ids[0])).execution_state == "waiting_external_quota"
+
+
+@pytest.mark.asyncio
+async def test_consumed_wakeup_without_claim_is_recovered_once(sessions):
+    run_id, _, ids = await seed(sessions, 1)
+    async with sessions() as db, db.begin():
+        before = datetime.utcnow() - timedelta(minutes=10)
+        run = await db.get(ParseRun, run_id)
+        run.created_at = before
+        job = await db.get(ParseFieldJob, ids[0])
+        job.updated_at = before
+    async with sessions() as db, db.begin():
+        await JobRepository(db).recover_idle_runs()
+    async with sessions() as db, db.begin():
+        events_before = await db.scalar(select(func.count()).select_from(ExecutionOutbox).where(
+            ExecutionOutbox.kind == "field_job_wakeup", ExecutionOutbox.aggregate_id.in_(ids)))
+        assert events_before == 1
+        await JobRepository(db).recover_idle_runs()
+        events_after = await db.scalar(select(func.count()).select_from(ExecutionOutbox).where(
+            ExecutionOutbox.kind == "field_job_wakeup", ExecutionOutbox.aggregate_id.in_(ids)))
+        assert events_after == events_before

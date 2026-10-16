@@ -90,7 +90,7 @@ async def list_review_workspace(
                 latest.field_key == ExtractedFieldModel.field_key,
             ),
         )
-        .where(ParseRun.status.in_(["COMPLETED", "FAILED"]))
+        .where(ParseRun.status.in_(["COMPLETED", "COMPLETED_WITH_REVIEW", "FAILED"]))
     )
     if checklist_type:
         base = base.where(func.coalesce(ParseRun.checklist_type, Document.checklist_type) == checklist_type)
@@ -127,6 +127,9 @@ async def list_review_workspace(
             "field_name": field.field_name,
             "field_value": field.field_value,
             "required": bool(field.required),
+            "target_type": field.target_type or "fact",
+            "target_status": field.target_status or "NOT_RUN",
+            "status_reason": field.status_reason or {},
             "validation_status": field.validation_status,
             "fact_count": len(view.facts),
             "risk_codes": risks,

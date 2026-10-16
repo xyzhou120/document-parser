@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import quote
 
 import yaml
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -67,7 +67,7 @@ class ModelSettings(BaseSettings):
     model_version: str = "unknown"
     timeout: int = 60
     max_retries: int = 3
-    # 全平台同时打到 OCR 的请求上限。超额的内容准备会排队，不会终止。
+    # 同一服务的共享请求上限。文本/视觉同部署共池，OCR 使用独立容量池。
     max_concurrency: int = 4
     trust_env: bool = True
     route: str | None = None
@@ -179,7 +179,10 @@ class AgentSettings(BaseSettings):
     # 单页原图估算上限。整页图进入同一次提取，不再被旧的 4000 上限拆开。
     reliable_max_image_tokens: int = 16000
     # 一份文档同时发出的页请求数。每次请求仍然只包含一页。
-    reliable_page_parallelism: int = 2
+    reliable_page_parallelism: int = 4
+    # 单次唤醒的公平性预算；只在量子之间检查，不取消正在完成的页调用。
+    reliable_wakeup_seconds: int = Field(default=120, ge=1, le=1800)
+    reliable_wakeup_quantums: int = Field(default=20, ge=1, le=1000)
     field_token_budget: int = 16000
     max_calls_per_field: int = 3
     candidates_per_call: int = 12
@@ -189,6 +192,39 @@ class AgentSettings(BaseSettings):
     max_image_tokens_per_call: int = 4000
     candidate_window_chars: int = 300
     retrieval_image_policy: str = "auto"
+
+
+class AttachmentImportSettings(BaseSettings):
+    """开发期 Excel 辅助入口；来源策略可选，不配置即可按模板链接下载。"""
+    enabled: bool = True
+    max_upload_bytes: int = 20 * 1024 * 1024
+    max_expanded_bytes: int = 200 * 1024 * 1024
+    max_rows: int = 100000
+    max_download_bytes: int = 100 * 1024 * 1024
+    download_timeout: int = 120
+    download_concurrency: int = 3
+    parse_concurrency: int = 3
+    max_attempts: int = 3
+    lease_seconds: int = 180
+    # 开发期默认不限制来源；如另行需要，才配置 origin/CIDR 与请求头。
+    # {"https://files.example:443": {"networks": ["10.0.0.0/24"], "headers": {...}}}
+    sources: dict[str, dict] = {}
+
+    @field_validator("sources", mode="before")
+    @classmethod
+    def json_sources(cls, value):
+        if isinstance(value, str):
+            import json
+            return json.loads(value)
+        return value
+
+    @field_validator("max_upload_bytes", "max_expanded_bytes", "max_rows", "max_download_bytes",
+                     "download_timeout", "download_concurrency", "parse_concurrency", "max_attempts", "lease_seconds")
+    @classmethod
+    def positive_limits(cls, value):
+        if value <= 0:
+            raise ValueError("attachment import limits must be positive")
+        return value
 
 
 class Settings:
@@ -261,6 +297,7 @@ class Settings:
         self.logging = section("logging", LoggingSettings)
         self.upload = section("upload", UploadSettings)
         self.agent = section("agent", AgentSettings)
+        self.attachment_import = section("attachment_import", AttachmentImportSettings)
         if any(env_value(f"REDIS_{key}") is not None for key in ("HOST", "PORT", "DB", "PASSWORD")):
             if env_value("CELERY_BROKER_URL") is None:
                 self.celery.broker_url = self.redis.url

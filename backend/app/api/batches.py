@@ -329,9 +329,20 @@ async def retry_item(
     check_version(item, payload.version)
     if not item.document_id or not item.parse_run_id:
         raise HTTPException(409, "上传失败请重新选择原文件后上传")
+    from app.services.attachment_version_service import managed_attachment
+    if await managed_attachment(db, item.document_id):
+        raise HTTPException(409, "此附件已纳入版本管理，请在附件页重试原操作")
     previous = await db.get(ParseRun, item.parse_run_id)
     if not previous or previous.status != "FAILED":
         raise HTTPException(409, "仅解析失败的文件允许重试")
+    from app.services.target_contract import structured_target_rejection
+    profile = previous.extraction_profile or {}
+    rejection = structured_target_rejection(
+        profile.get("rules") or [], profile.get("extraction_engine") or "rules",
+        profile.get("extraction_strategy") or settings.agent.reliable_strategy,
+    )
+    if rejection:
+        raise HTTPException(422, rejection)
     parent_id = (
         previous.parent_parse_run_id
         if previous.run_mode == "INCREMENTAL"

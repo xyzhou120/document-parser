@@ -16,6 +16,12 @@ class RuleSpec:
 
     field_key: str
     field_name_cn: str
+    target_type: str = "fact"
+    target_group_key: str | None = None
+    target_group_name: str | None = None
+    output_schema: dict = field(default_factory=dict)
+    source_policy: dict = field(default_factory=dict)
+    evidence_policy: dict = field(default_factory=dict)
     data_type: str = "string"
     unit: str | None = None
     required: bool = False
@@ -38,6 +44,9 @@ class RuleSpec:
         self.strategy = deepcopy(self.strategy)
         self.validation = deepcopy(self.validation)
         self.dimension_schema = deepcopy(self.dimension_schema)
+        self.output_schema = deepcopy(self.output_schema)
+        self.source_policy = deepcopy(self.source_policy)
+        self.evidence_policy = deepcopy(self.evidence_policy)
         self.dimensions = list(self.dimensions)
         if self.dimension_schema:
             self.dimensions = list(self.dimension_schema)
@@ -71,6 +80,12 @@ class RuleSpec:
                 "unit_policy",
                 "retrieval",
                 "evidence_requirements",
+                "target_type",
+                "target_group_key",
+                "target_group_name",
+                "output_schema",
+                "source_policy",
+                "evidence_policy",
             )
         }
 
@@ -120,6 +135,12 @@ class RuleSpec:
         return cls(
             field_key=rule.field_key,
             field_name_cn=rule.field_name_cn,
+            target_type=getattr(rule, "target_type", None) or "fact",
+            target_group_key=getattr(rule, "target_group_key", None),
+            target_group_name=getattr(rule, "target_group_name", None),
+            output_schema=dict(getattr(rule, "output_schema", None) or {}),
+            source_policy=dict(getattr(rule, "source_policy", None) or {}),
+            evidence_policy=dict(getattr(rule, "evidence_policy", None) or {}),
             data_type=rule.data_type or "string",
             unit=rule.unit,
             required=bool(rule.required),
@@ -175,6 +196,12 @@ class RuleSpec:
         return cls(
             field_key=field["field_key"],
             field_name_cn=field.get("field_name") or field["field_key"],
+            target_type=field.get("target_type") or "fact",
+            target_group_key=field.get("target_group_key"),
+            target_group_name=field.get("target_group_name"),
+            output_schema=dict(field.get("output_schema") or {}),
+            source_policy=dict(field.get("source_policy") or {}),
+            evidence_policy=dict(field.get("evidence_policy") or {}),
             data_type=_normalize_type(field.get("field_type")),
             unit=field.get("unit"),
             required=True,

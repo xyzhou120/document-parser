@@ -18,6 +18,7 @@ from app.services.evidence_verification import (
     semantic_contract,
     validate_candidate_decision,
 )
+from app.services.target_contract import target_type
 
 
 def _range_closed(item: Any) -> bool:
@@ -61,6 +62,8 @@ def _value_key(fact: Mapping) -> tuple[str, str, str]:
 
 
 def _fact_supported(fact: Mapping, contract: Mapping, revision: str | None) -> bool:
+    if fact.get("usable") is False or fact.get("row_status") == "REVIEW_REQUIRED":
+        return False
     assertions = fact.get("assertions") or fact.get("attribute_support") or {}
     required = {"value", "unit", "value_kind", "source_role", "table_relation"}
     required.update(f"dimensions.{key}" for key in contract.get("applicable_dimensions", []))
@@ -77,20 +80,43 @@ def _fact_supported(fact: Mapping, contract: Mapping, revision: str | None) -> b
         if assertion.get("status") == "not_applicable":
             permitted = ((key == "unit" and contract.get("unit_policy", {}).get("mode") == "not_applicable")
                          or (key == "table_relation" and assertion.get("basis") == "source.non_table")
+                         or (assertion.get("basis") == "target.statement" and key in {"unit", "value_kind", "table_relation"})
+                         or (key.startswith("dimensions.") and assertion.get("basis") == "rule.dimension_optional")
                          or key in contract.get("not_applicable_attributes", []))
             if not permitted:
                 return False
     return True
 
 
-def _merge_facts(facts: Sequence[Mapping], keys: Sequence[str], cardinality: str) -> list[dict]:
+def _dimension_schema(rule: Any) -> Mapping:
+    schema = get(rule, "dimension_schema") or {}
+    return schema if isinstance(schema, Mapping) else {}
+
+
+def _required_identity_keys(rule: Any, keys: Sequence[str]) -> list[str]:
+    """只把规则标成必填的身份维度当作缺失即未绑定。
+
+    没有 required 标记的旧规则仍要求全部身份键。评价单元等选填维度空着时，
+    事实继续挂在工作面上，不把每一行都收成身份未核验。
+    """
+    schema = _dimension_schema(rule)
+    declares_required = any(isinstance(cfg, Mapping) and "required" in cfg for cfg in schema.values())
+    if not declares_required:
+        return list(keys)
+    return [key for key in keys if isinstance(schema.get(key), Mapping) and schema[key].get("required") is True]
+
+
+def _merge_facts(facts: Sequence[Mapping], keys: Sequence[str], cardinality: str,
+                 required_keys: Sequence[str] | None = None) -> list[dict]:
     merged: dict[tuple, dict] = {}
+    required = list(keys if required_keys is None else required_keys)
     for source in facts:
         fact = deepcopy(dict(source))
         identity = _identity(fact, keys)
-        # 未知身份必须保留为独立的诊断出现项。
+        # 必填身份缺失时保留为独立的诊断出现项。选填维度空着不拆组。
         key: tuple[Any, ...] = (identity, _value_key(fact))
-        if any(not value or value == "unknown" for value in identity) or cardinality == "all_occurrences":
+        required_identity = _identity(fact, required)
+        if any(not value or value == "unknown" for value in required_identity) or cardinality == "all_occurrences":
             key += (str(fact.get("occurrence_id") or fact.get("candidate_id") or len(merged)),)
         if key not in merged:
             fact["candidate_ids"] = [str(fact["candidate_id"])] if fact.get("candidate_id") else []
@@ -183,15 +209,17 @@ def complete_field(rule: Any, ranges: Sequence[Any] | Mapping, candidates: Seque
     if not all(supported):
         risks.append({"code": "FACT_ATTRIBUTES_UNSUPPORTED", "count": supported.count(False)})
     keys = list(contract.get("identity_dimensions") or [])
-    unknown_ids = [f for f in facts_list if any(not v or v == "unknown" for v in _identity(f, keys))]
+    required_keys = _required_identity_keys(rule, keys)
+    unknown_ids = [f for f in facts_list if any(not v or v == "unknown" for v in _identity(f, required_keys))]
     if unknown_ids:
         risks.append({"code": "IDENTITY_UNVERIFIED", "count": len(unknown_ids)})
-    cardinality = contract.get("cardinality", "single")
-    merged = _merge_facts(facts_list, keys, cardinality)
+    kind = target_type(rule)
+    cardinality = "all_occurrences" if kind in {"statement", "table"} else contract.get("cardinality", "single")
+    merged = _merge_facts(facts_list, keys, cardinality, required_keys)
     grouped: dict[tuple, list[dict]] = {}
     for fact in merged:
         grouped.setdefault(_identity(fact, keys), []).append(fact)
-    conflicts = [values for identity, values in grouped.items() if not any(not v for v in identity)
+    conflicts = [values for identity, values in grouped.items() if kind == "fact" and not any(not v for v in identity)
                  and len({_value_key(v) for v in values}) > 1]
     if conflicts:
         risks.append({"code": "SAME_IDENTITY_CONFLICT", "count": len(conflicts)})
@@ -211,8 +239,14 @@ def complete_field(rule: Any, ranges: Sequence[Any] | Mapping, candidates: Seque
         elif facts_list or unresolved:
             risks.append({"code": "NOT_APPLICABLE_CONFLICT"})
     execution_closed = range_closed and not pending and not unresolved
+    row_review = kind == "table" and any(
+        fact.get("usable") is False or fact.get("row_status") == "REVIEW_REQUIRED" for fact in facts_list
+    )
+    if kind == "table" and row_review:
+        # 某一行待复核不代表整次检索没有闭合，也不把该诊断复制成字段级失败。
+        risks = [risk for risk in risks if risk.get("code") != "FACT_ATTRIBUTES_UNSUPPORTED"]
     if facts_list:
-        state = "partial_candidates" if not execution_closed else ("review_required" if risks else "completed")
+        state = "partial_candidates" if not execution_closed else ("review_required" if risks or row_review else "completed")
     else:
         state = "not_found" if execution_closed and not risks else "incomplete"
     proof = None
@@ -228,7 +262,44 @@ def complete_field(rule: Any, ranges: Sequence[Any] | Mapping, candidates: Seque
                  "candidate_dispositions": [{"candidate_id": _cid(c), "state": _state(c)} for c in candidate_list],
                  "failures": [], "source_validity": "valid", "valid": True}
         proof["scope_digest"] = hashlib.sha256(json.dumps(proof, sort_keys=True, default=str).encode()).hexdigest()
+    search_closed = state in {"completed", "not_found"} or (kind == "table" and execution_closed and bool(facts_list))
     return {"semantic_state": state, "facts": merged, "risks": risks,
-            "absence_search_proof": proof, "coverage_complete": state in {"completed", "not_found"},
+            "absence_search_proof": proof, "coverage_complete": search_closed,
             "range_closed": range_closed, "candidate_counts": counts,
             "candidate_disposition_complete": not pending and not unresolved}
+
+
+def value_groups(facts: Sequence[Mapping], identity_keys: Sequence[str]) -> list[dict]:
+    """把已闭合事实投影成结果页使用的值组，保留非空身份。"""
+    groups = []
+    for fact in facts:
+        if not isinstance(fact, Mapping):
+            continue
+        dims = fact.get("dimensions") or {}
+        identity = {}
+        for key in identity_keys:
+            raw = dims.get(key)
+            value = raw.get("value") if isinstance(raw, Mapping) else raw
+            if value not in (None, "", "unknown"):
+                identity[key] = value
+        evidence = []
+        if fact.get("page_num") or fact.get("bbox") or fact.get("quote"):
+            evidence.append({
+                "page_number": fact.get("page_num"),
+                "bbox": fact.get("bbox"),
+                "coordinate_system": fact.get("coordinate_system"),
+                "coordinate_origin": fact.get("coordinate_origin"),
+                "quote": fact.get("quote"),
+                "location_status": "region" if fact.get("bbox") else "page",
+            })
+        groups.append({
+            "value": fact.get("value"),
+            "unit": fact.get("unit"),
+            "identity": identity,
+            "dimensions": identity,
+            "evidence_ids": list(fact.get("evidence_ids") or []),
+            "evidence_refs": evidence,
+            "occurrence_ids": [fact["occurrence_id"]] if fact.get("occurrence_id") else [],
+            "raw_values": [fact.get("value")] if fact.get("value") is not None else [],
+        })
+    return groups

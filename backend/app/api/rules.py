@@ -51,6 +51,18 @@ async def get_meta():
             {"value": "array", "label": "数组/明细"},
             {"value": "json", "label": "JSON"},
         ],
+        "target_types": [
+            {"value": "fact", "label": "普通事实"},
+            {"value": "statement", "label": "原文内容"},
+            {"value": "table", "label": "表格明细"},
+        ],
+        "target_statuses": [
+            {"value": value, "label": label} for value, label in (
+                ("NOT_RUN", "未运行"), ("RUNNING", "提取中"), ("FAILED", "执行失败"),
+                ("NOT_FOUND_AFTER_COMPLETE_SEARCH", "完成检索未找到"), ("PARTIAL", "部分完成"),
+                ("REVIEW_REQUIRED", "需要复核"), ("DELIVERABLE", "可交付"),
+            )
+        ],
         "methods": available_methods(),
         "merge_strategies": [
             {"value": "value_consistent", "label": "历史配置（执行时保留全部实例）"},
@@ -228,6 +240,14 @@ async def delete_rule(rule_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
 async def toggle_rule(
     rule_id: uuid.UUID, payload: RuleTogglePayload, db: AsyncSession = Depends(get_db)
 ):
+    current = await rule_repository.get_rule(db, rule_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="规则不存在")
+    if payload.enabled:
+        try:
+            RulePayload.model_validate({**rule_repository.rule_to_dict(current), "enabled": True})
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=f"目标配置不完整，不能启用: {exc}") from exc
     rule = await rule_repository.toggle_rule(db, rule_id, payload.enabled)
     if rule is None:
         raise HTTPException(status_code=404, detail="规则不存在")

@@ -60,6 +60,7 @@ COLUMN_MIGRATIONS: list[tuple[str, str, str]] = [
     ("extracted_fields", "rule_version", "INTEGER"),
     ("extracted_fields", "validation_status", "VARCHAR(30)"),
     ("extracted_fields", "extraction_detail", "JSON"),
+    ("extracted_fields", "quality_inputs", "JSON"),
     ("parse_runs", "checklist_type", "VARCHAR(100)"),
     ("parse_runs", "extraction_profile", "JSON"),
     ("parse_runs", "quality_status", "VARCHAR(30)"),
@@ -93,6 +94,7 @@ async def _apply_column_migrations(conn) -> None:
 
 async def init_db():
     """初始化数据库（建表 + 补列）"""
+    from app.models import attachments as attachment_models  # noqa: F401
     from app.models import batches as batch_models  # noqa: F401
     from app.models import database as database_models  # noqa: F401  确保模型已注册
     from app.models import document_context as document_context_models  # noqa: F401
@@ -117,6 +119,9 @@ async def init_db():
             from app.models.releases import APPEND_ONLY_DDL
             for ddl in APPEND_ONLY_DDL:
                 await conn.execute(text(ddl))
+            from app.models.attachments import APPEND_ONLY_DDL as ATTACHMENT_HISTORY_DDL
+            for ddl in ATTACHMENT_HISTORY_DDL:
+                await conn.execute(text(ddl))
             for table in ("source_revisions", "document_contexts", "document_context_audits", "document_relation_audits"):
                 await conn.execute(text(f"""
                     DO $$ BEGIN
@@ -133,6 +138,44 @@ async def init_db():
                     ON field_review_revisions FOR EACH ROW EXECUTE FUNCTION reject_field_review_mutation();
                   END IF;
                 END; $$
+            """))
+            # 已定版的 snapshot 不能再改。摘要写到旁表，列表查询就不用把十几 MB 的快照拉回来。
+            await conn.execute(text("""
+                INSERT INTO attachment_version_summaries (version_id, summary)
+                SELECT v.id, json_build_object(
+                    'stats', v.snapshot->'stats',
+                    'duration_seconds', v.snapshot->'duration_seconds',
+                    'cumulative_duration_seconds', v.snapshot->'cumulative_duration_seconds',
+                    'content_revision_id', v.snapshot->'content_revision_id',
+                    'invalidation_watermark', v.snapshot->'invalidation_watermark'
+                )
+                FROM attachment_versions v
+                WHERE v.snapshot IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM attachment_version_summaries s WHERE s.version_id = v.id
+                  )
+            """))
+            await conn.execute(text("""
+                UPDATE extracted_fields
+                SET quality_inputs = json_strip_nulls(json_build_object(
+                    'contract_version', extraction_detail->'contract_version',
+                    'semantic_state', extraction_detail->'semantic_state',
+                    'coverage_complete', extraction_detail->'coverage_complete',
+                    'confidence', extraction_detail->'confidence',
+                    'coverage', extraction_detail->'coverage',
+                    'failures', extraction_detail->'failures',
+                    'value_groups', extraction_detail->'value_groups',
+                    'instances', extraction_detail->'instances',
+                    'field_completion', CASE WHEN extraction_detail->'field_completion' IS NULL THEN NULL
+                        ELSE json_build_object(
+                          'semantic_state', extraction_detail->'field_completion'->'semantic_state',
+                          'coverage_complete', extraction_detail->'field_completion'->'coverage_complete') END,
+                    'completion', CASE WHEN extraction_detail->'completion' IS NULL THEN NULL
+                        ELSE json_build_object(
+                          'semantic_state', extraction_detail->'completion'->'semantic_state',
+                          'coverage_complete', extraction_detail->'completion'->'coverage_complete') END
+                ))
+                WHERE quality_inputs IS NULL AND extraction_detail IS NOT NULL
             """))
 
     logger.info("数据库初始化完成")

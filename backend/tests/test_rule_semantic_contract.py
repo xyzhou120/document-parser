@@ -150,6 +150,32 @@ def test_publishing_metadata_does_not_change_semantic_identity():
     )
 
 
+def test_target_structure_and_source_policy_are_frozen_into_hash():
+    base = _rule()
+    changed = _rule(source_policy={"allowed_roles": ["design"]},
+                    target_group_key="drilling_design")
+    assert base.rule_semantic_hash != changed.rule_semantic_hash
+    snapshot = changed.semantic_snapshot()
+    assert snapshot["source_policy"]["allowed_roles"] == ["design"]
+    changed.source_policy["allowed_roles"].append("report_body")
+    assert snapshot["source_policy"]["allowed_roles"] == ["design"]
+
+
+def test_table_target_requires_explicit_row_and_column_contract():
+    with pytest.raises(ValidationError, match="row_identity"):
+        RulePayload(checklist_type="gas", field_key="measurement_table",
+                    field_name_cn="测点表", target_type="table", strategy={})
+    draft = RulePayload(checklist_type="gas", field_key="measurement_table",
+                        field_name_cn="测点表", target_type="table", enabled=False, strategy={})
+    assert draft.target_type == "table"
+    active = RulePayload(checklist_type="gas", field_key="measurement_table",
+                         field_name_cn="测点表", target_type="table", strategy={},
+                         output_schema={"row_identity": ["point"], "columns": [
+                             {"key": "point", "header": "测点"},
+                             {"key": "pressure", "header": "瓦斯压力", "data_type": "float", "unit": "MPa"}]})
+    assert active.output_schema["columns"][1]["key"] == "pressure"
+
+
 def test_config_adapter_preserves_explicit_v2_and_old_multi_instance():
     old = RuleSpec.from_config({"field_key": "gas", "field_name": "含量", "multi_instance": True})
     assert old.cardinality == "multi_identity"

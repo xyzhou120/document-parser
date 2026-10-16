@@ -1,0 +1,702 @@
+#!/bin/bash
+# 本地一次启动：前端、API、Celery worker、一个 beat。
+# beat 同时调度 reliable-execution-recovery 与 assistant-message-recovery。
+# 用法：./scripts/dev start|stop|status|logs|restart
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BACKEND="$ROOT/backend"
+FRONTEND="$ROOT/frontend"
+PYTHON="$BACKEND/.venv/bin/python"
+RUN_DIR="$ROOT/output/dev"
+LOG_DIR="$RUN_DIR/logs"
+PID_DIR="$RUN_DIR/pids"
+LOCK_DIR="$RUN_DIR/lock"
+BEAT_PIDFILE="$RUN_DIR/celerybeat.pid"
+BEAT_SCHEDULE="$RUN_DIR/celerybeat-schedule"
+
+PARSE_WORKERS="worker-parse-1 worker-parse-2 worker-parse-3 worker-parse-4 worker-parse-5"
+SERVICES="api worker-default worker-control $PARSE_WORKERS worker-assistant beat web"
+STOP_ORDER="beat worker-control worker-default $PARSE_WORKERS worker-assistant api web"
+WORKER_CONCURRENCY=2
+
+LAUNCHER='import os, sys
+os.chdir(sys.argv[1])
+os.setsid()
+os.execvp(sys.argv[2], sys.argv[2:])'
+
+usage() {
+  cat <<EOF
+用法: ./scripts/dev <command>
+
+  start      启动前端、API、普通任务 worker、5 个解析 worker（每个并发 2）、调度 worker、助手 worker、1 个 beat
+  stop       停止脚本管理的进程（含识别后接管的本项目遗留服务）
+  restart    先停止再启动
+  status     查看进程状态
+  logs [名称] 跟踪日志；不写名称则跟踪全部
+  start --dry-run
+             只打印将要执行的命令
+
+服务名称: $SERVICES
+日志目录: output/dev/logs
+EOF
+}
+
+require_tools() {
+  if [[ ! -x "$PYTHON" ]]; then
+    echo "未找到 $PYTHON。请先在 backend 目录执行 poetry install。" >&2
+    exit 1
+  fi
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "未找到 npm。" >&2
+    exit 1
+  fi
+  if [[ ! -x "$FRONTEND/node_modules/vite/bin/vite.js" && ! -f "$FRONTEND/node_modules/vite/bin/vite.js" ]]; then
+    echo "未找到 frontend/node_modules。请先在 frontend 目录执行 npm ci。" >&2
+    exit 1
+  fi
+  if [[ ! -f "$ROOT/config/local.yaml" ]]; then
+    echo "未找到 config/local.yaml。可从 config/local.yaml.example 复制后再启动。" >&2
+    exit 1
+  fi
+}
+
+load_config() {
+  local raw
+  raw="$(cd "$BACKEND" && "$PYTHON" -c 'import json; from app.config import settings; print(json.dumps({"queue": settings.celery.task_default_queue, "reliable": bool(settings.app.reliable_enabled), "assistant": bool(settings.app.assistant_enabled), "capacity": __import__("app.services.model_capacity", fromlist=["configured_limit"]).configured_limit(settings.models["vision_llm"].base_url, settings.models["vision_llm"].model_name), "timeout": settings.models["vision_llm"].timeout, "pages": settings.agent.reliable_page_parallelism, "attachments": settings.attachment_import.parse_concurrency}))')"
+  QUEUE="$(printf '%s' "$raw" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["queue"])')"
+  RELIABLE="$(printf '%s' "$raw" | "$PYTHON" -c 'import json,sys; print("true" if json.load(sys.stdin)["reliable"] else "false")')"
+  ASSISTANT="$(printf '%s' "$raw" | "$PYTHON" -c 'import json,sys; print("true" if json.load(sys.stdin)["assistant"] else "false")')"
+  MODEL_CAPACITY="$(printf '%s' "$raw" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["capacity"])')"
+  MODEL_TIMEOUT="$(printf '%s' "$raw" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["timeout"])')"
+  PAGE_PARALLELISM="$(printf '%s' "$raw" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["pages"])')"
+  ATTACHMENT_CONCURRENCY="$(printf '%s' "$raw" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["attachments"])')"
+  if [[ -z "$QUEUE" ]]; then
+    echo "未能读取 Celery 默认队列。" >&2
+    exit 1
+  fi
+}
+
+acquire_lock() {
+  mkdir -p "$RUN_DIR"
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    echo $$ >"$LOCK_DIR/pid"
+    return 0
+  fi
+  local holder=""
+  if [[ -f "$LOCK_DIR/pid" ]]; then
+    holder="$(tr -d '[:space:]' <"$LOCK_DIR/pid")"
+  fi
+  if [[ -n "$holder" ]] && ! kill -0 "$holder" 2>/dev/null; then
+    rm -rf "$LOCK_DIR"
+    mkdir "$LOCK_DIR"
+    echo $$ >"$LOCK_DIR/pid"
+    return 0
+  fi
+  echo "另一个 ./scripts/dev 正在执行${holder:+ (pid $holder)}。" >&2
+  exit 1
+}
+
+release_lock() {
+  if [[ -f "$LOCK_DIR/pid" ]] && [[ "$(tr -d '[:space:]' <"$LOCK_DIR/pid")" == "$$" ]]; then
+    rm -rf "$LOCK_DIR"
+  fi
+}
+
+pid_of() {
+  local name="$1"
+  local file="$PID_DIR/$name.pid"
+  if [[ ! -f "$file" ]]; then
+    return 1
+  fi
+  tr -d '[:space:]' <"$file"
+}
+
+marker_for() {
+  case "$1" in
+    api) printf '%s\n' 'app.main:app' ;;
+    worker-default) printf '%s\n' 'default-local@' ;;
+    worker-control) printf '%s\n' 'reliable-control-local@' ;;
+    worker-parse-*) printf '%s\n' "parse-${1#worker-parse-}-local@" ;;
+    worker-assistant) printf '%s\n' 'assistant-local@' ;;
+    beat) printf '%s\n' "$BEAT_PIDFILE" ;;
+    web) printf '%s\n' '--strictPort' ;;
+    *) return 1 ;;
+  esac
+}
+
+process_started() {
+  ps -o lstart= -p "$1" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+matches_service() {
+  local name="$1" pid="$2" args marker workdir
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  args="$(ps -ww -p "$pid" -o args= 2>/dev/null)" || return 1
+  marker="$(marker_for "$name")" || return 1
+  [[ "$args" == *"$marker"* ]] || return 1
+  # 同名 worker/端口参数不足以证明归属，必须同时核对本 checkout 的工作目录。
+  workdir="$(workdir_for "$name")"
+  lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | grep -F -x -q -- "n$workdir" || return 1
+  case "$name" in
+    worker-*|beat) [[ "$args" == *'celery -A app.celery_app'* ]] ;;
+    api) [[ "$args" == *'uvicorn app.main:app'* ]] ;;
+    web) [[ "$args" == npm\ * || "$args" == *'/vite '* ]] ;;
+  esac
+}
+
+is_ours() {
+  local name="$1"
+  local pid="$2"
+  local started recorded
+  matches_service "$name" "$pid" || return 1
+  [[ -f "$PID_DIR/$name.lstart" ]] || return 1
+  started="$(process_started "$pid")"
+  recorded="$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <"$PID_DIR/$name.lstart")"
+  [[ -n "$started" && "$started" == "$recorded" ]]
+}
+
+# 兼容 PID 登记丢失/旧版启动器：只接管本项目、独立进程组的服务主进程。
+# Celery 子进程继承主进程命令，不能把它们当成多个 worker。
+adopt_existing_services() {
+  local name pid pgid args marker candidates started recorded candidate_count
+  local -a candidate_pids
+  for name in $SERVICES; do
+    service_running "$name" && continue
+    recorded="$(pid_of "$name" 2>/dev/null || true)"
+    if [[ "$recorded" =~ ^[0-9]+$ ]] && kill -0 "$recorded" 2>/dev/null; then
+      echo "$name 的登记 PID $recorded 仍存活但身份无法核实，保留登记；未发送信号。" >&2
+      return 1
+    fi
+    candidates=""
+    marker="$(marker_for "$name")"
+    while read -r pid pgid args; do
+      [[ "$pid" == "$pgid" ]] || continue
+      [[ "$args" == *"$marker"* ]] || continue
+      if matches_service "$name" "$pid"; then
+        candidates="$candidates $pid"
+      fi
+    done < <(ps -ww -axo pid=,pgid=,args=)
+    # 有重复主进程时不随意选一个接管。
+    candidate_pids=()
+    read -r -a candidate_pids <<<"$candidates"
+    candidate_count="${#candidate_pids[@]}"
+    if [[ "$candidate_count" -gt 1 ]]; then
+      echo "$name 有多个本项目主进程:$candidates；请先排查重复启动。" >&2
+      return 1
+    fi
+    [[ "$candidate_count" -eq 1 ]] || continue
+    pid="${candidate_pids[0]}"
+    started="$(process_started "$pid")"
+    [[ -n "$started" ]] || return 1
+    printf '%s\n' "$pid" >"$PID_DIR/$name.pid"
+    printf '%s\n' "$started" >"$PID_DIR/$name.lstart"
+    echo "已接管遗留 $name (pid $pid)"
+  done
+}
+
+group_running() {
+  ps -axo pgid=,stat= | awk -v group="$1" '$1 == group && $2 !~ /^Z/ {found=1} END {exit !found}'
+}
+
+service_running() {
+  local name="$1"
+  local pid
+  pid="$(pid_of "$name" 2>/dev/null || true)"
+  [[ -n "$pid" ]] && is_ours "$name" "$pid"
+}
+
+port_pids() {
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null || true
+}
+
+pid_belongs_to() {
+  local pid="$1"
+  local ancestor="$2"
+  local guard=0
+  while [[ "$guard" -lt 8 ]]; do
+    [[ "$pid" == "$ancestor" ]] && return 0
+    pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+    [[ -z "$pid" || "$pid" == "0" || "$pid" == "1" ]] && return 1
+    guard=$((guard + 1))
+  done
+  return 1
+}
+
+port_owned_by_service() {
+  local port="$1"
+  local name="$2"
+  local owner pid
+  owner="$(pid_of "$name" 2>/dev/null || true)"
+  [[ -n "$owner" ]] || return 1
+  for pid in $(port_pids "$port"); do
+    if pid_belongs_to "$pid" "$owner"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+foreign_celery_pids() {
+  local pid managed name owner candidate ours
+  managed=""
+  for name in $SERVICES; do
+    if service_running "$name"; then
+      owner="$(pid_of "$name")"
+      managed="$managed $owner"
+    fi
+  done
+  # [c] keeps pgrep from matching its own command line.
+  pgrep -f '[c]elery -A app.celery_app' 2>/dev/null | while read -r pid; do
+    ours=false
+    for candidate in $managed; do
+      if pid_belongs_to "$pid" "$candidate"; then
+        ours=true
+        break
+      fi
+    done
+    if [[ "$ours" != "true" ]]; then
+      printf '%s\n' "$pid"
+    fi
+  done || true
+}
+
+refuse_foreign_celery() {
+  local foreign
+  foreign="$(foreign_celery_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  if [[ -n "$foreign" ]]; then
+    echo "已有未由 ./scripts/dev 管理的 Celery 进程: $foreign" >&2
+    echo "先在那些终端结束进程，再执行 ./scripts/dev start。这样可以避免启动第二个 beat。" >&2
+    exit 1
+  fi
+  if [[ -f "$BEAT_PIDFILE" ]]; then
+    local beat_pid
+    beat_pid="$(tr -d '[:space:]' <"$BEAT_PIDFILE")"
+    if [[ "$beat_pid" =~ ^[0-9]+$ ]] && kill -0 "$beat_pid" 2>/dev/null; then
+      if ! service_running beat; then
+        echo "Beat PID 文件指向仍在运行的进程 $beat_pid：$BEAT_PIDFILE" >&2
+        exit 1
+      fi
+    else
+      rm -f "$BEAT_PIDFILE"
+    fi
+  fi
+}
+
+ensure_port_available() {
+  local port="$1"
+  local name="$2"
+  local pid
+  if service_running "$name" && port_owned_by_service "$port" "$name"; then
+    return 0
+  fi
+  for pid in $(port_pids "$port"); do
+    echo "端口 $port 已被 PID $pid 占用，无法启动 $name。" >&2
+    exit 1
+  done
+}
+
+worker_command() {
+  local queues="$1"
+  local hostname="$2"
+  local concurrency="${3:-$WORKER_CONCURRENCY}"
+  # macOS 上当前 billiard 默认用 spawn 起子进程，Celery 5.6 的任务追踪只在 fork 里可用。
+  # Linux 容器本来就是 fork，这里只改本机启动命令。
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    printf '%s\0' env OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES "$PYTHON" -c \
+      'from billiard.context import _force_start_method
+_force_start_method("fork")
+import sys
+sys.argv = sys.argv[1:]
+from celery.__main__ import main
+main()' \
+      celery -A app.celery_app:celery_app worker \
+      --pool=prefork --concurrency="$concurrency" \
+      --queues="$queues" --hostname="$hostname" --loglevel=INFO
+    return 0
+  fi
+  printf '%s\0' "$PYTHON" -m celery -A app.celery_app:celery_app worker \
+    --pool=prefork --concurrency="$concurrency" \
+    --queues="$queues" --hostname="$hostname" --loglevel=INFO
+}
+
+command_for() {
+  local name="$1"
+  case "$name" in
+    api)
+      printf '%s\0' "$PYTHON" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      ;;
+    worker-default)
+      worker_command "$QUEUE" 'default-local@%h' 2
+      ;;
+    worker-control)
+      worker_command reliable-control 'reliable-control-local@%h' 1
+      ;;
+    worker-parse-*)
+      worker_command reliable-execution "parse-${name#worker-parse-}-local@%h"
+      ;;
+    worker-assistant)
+      worker_command assistant 'assistant-local@%h' 1
+      ;;
+    beat)
+      printf '%s\0' "$PYTHON" -m celery -A app.celery_app:celery_app beat \
+        --schedule="$BEAT_SCHEDULE" --pidfile="$BEAT_PIDFILE" --loglevel=INFO
+      ;;
+    web)
+      printf '%s\0' npm run dev -- --host 0.0.0.0 --port 3000 --strictPort
+      ;;
+    *)
+      echo "未知服务 $name" >&2
+      return 1
+      ;;
+  esac
+}
+
+workdir_for() {
+  case "$1" in
+    web) printf '%s\n' "$FRONTEND" ;;
+    *) printf '%s\n' "$BACKEND" ;;
+  esac
+}
+
+print_command() {
+  local name="$1"
+  local workdir args
+  workdir="$(workdir_for "$name")"
+  args="$(command_for "$name" | tr '\0' ' ')"
+  printf '%s\t%s\t%s\n' "$name" "$workdir" "$args"
+}
+
+launch_service() {
+  local name="$1"
+  if service_running "$name"; then
+    echo "$name 已在运行 (pid $(pid_of "$name"))"
+    return 0
+  fi
+  rm -f "$PID_DIR/$name.pid" "$PID_DIR/$name.lstart"
+  : >"$LOG_DIR/$name.log"
+  local workdir pid
+  workdir="$(workdir_for "$name")"
+  local args=()
+  local arg
+  while IFS= read -r -d '' arg; do
+    args+=("$arg")
+  done < <(command_for "$name")
+  DOCUMENT_PARSER_DEV_SERVICE="$name" PYTHONUNBUFFERED=1 \
+    "$PYTHON" -c "$LAUNCHER" "$workdir" "${args[@]}" \
+    </dev/null >>"$LOG_DIR/$name.log" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  printf '%s\n' "$pid" >"$PID_DIR/$name.pid"
+  STARTED="$STARTED $name"
+  # npm 刚启动时 ps 只显示 "npm"，参数要等它改写命令行后才出现。
+  local deadline=$((SECONDS + 8))
+  local started
+  while true; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "$name 启动后立即退出。日志: output/dev/logs/$name.log" >&2
+      return 1
+    fi
+    started="$(ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)"
+    if [[ -n "$started" ]]; then
+      printf '%s\n' "$started" >"$PID_DIR/$name.lstart"
+    fi
+    if is_ours "$name" "$pid"; then
+      break
+    fi
+    if [[ "$SECONDS" -ge "$deadline" ]]; then
+      echo "$name 已启动，但无法确认进程身份 (pid $pid)。" >&2
+      ps -ww -p "$pid" -o args= >&2 || true
+      return 1
+    fi
+    sleep 0.2
+  done
+  echo "已拉起 $name (pid $pid)"
+}
+
+stop_service() {
+  local name="$1"
+  local pidfile="$PID_DIR/$name.pid"
+  [[ -f "$pidfile" ]] || return 0
+  local pid
+  pid="$(tr -d '[:space:]' <"$pidfile")"
+  if is_ours "$name" "$pid"; then
+    # Celery 只向主进程发 TERM，让正在执行的任务完成并由主进程回收池。
+    # API/npm 则停止独立进程组，包括 reload/vite 子进程。
+    local pgid
+    pgid="$(ps -o pgid= -p "$pid" | tr -d '[:space:]')"
+    if [[ "$pgid" != "$pid" ]]; then
+      echo "$name 不在独立进程组内，保留登记，未停止 (pid $pid)。" >&2
+      return 1
+    fi
+    case "$name" in
+      worker-*) kill -TERM "$pid" 2>/dev/null || true ;;
+      *) kill -TERM -"$pid" 2>/dev/null || true ;;
+    esac
+    local i=0
+    while [[ "$i" -lt 120 ]]; do
+      group_running "$pid" || break
+      sleep 0.25
+      i=$((i + 1))
+    done
+    if group_running "$pid"; then
+      echo "$name 仍在退出/等待任务完成 (pid $pid)，保留登记；稍后再次执行 stop。日志: output/dev/logs/$name.log" >&2
+      return 1
+    fi
+    echo "已停止 $name (pid $pid)"
+  elif [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    echo "$name 的 PID $pid 仍存活但身份无法核实，保留登记；未发送信号。" >&2
+    return 1
+  elif [[ "$pid" =~ ^[0-9]+$ ]] && group_running "$pid"; then
+    echo "$name 主进程已退出但进程组 $pid 尚未退出，保留登记。" >&2
+    return 1
+  fi
+  rm -f "$pidfile" "$PID_DIR/$name.lstart"
+  if [[ "$name" == "beat" && -f "$BEAT_PIDFILE" ]]; then
+    local beat_pid
+    beat_pid="$(tr -d '[:space:]' <"$BEAT_PIDFILE" || true)"
+    if [[ -z "$beat_pid" ]] || ! kill -0 "$beat_pid" 2>/dev/null; then
+      rm -f "$BEAT_PIDFILE"
+    fi
+  fi
+}
+
+show_log_tail() {
+  local name="$1"
+  echo "----- $name 日志末尾 -----"
+  tail -n 40 "$LOG_DIR/$name.log" 2>/dev/null || true
+}
+
+wait_ready() {
+  local name="$1"
+  local timeout="$2"
+  local pattern="$3"
+  local pid deadline
+  pid="$(pid_of "$name")"
+  deadline=$((SECONDS + timeout))
+  while [[ "$SECONDS" -lt "$deadline" ]]; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "$name 已退出。" >&2
+      show_log_tail "$name"
+      return 1
+    fi
+    if grep -E -q "$pattern" "$LOG_DIR/$name.log" 2>/dev/null; then
+      echo "$name 就绪"
+      return 0
+    fi
+    sleep 0.3
+  done
+  echo "$name 在 ${timeout}s 内未就绪。" >&2
+  show_log_tail "$name"
+  return 1
+}
+
+wait_http() {
+  local name="$1"
+  local url="$2"
+  local timeout="$3"
+  local pid deadline
+  pid="$(pid_of "$name")"
+  deadline=$((SECONDS + timeout))
+  while [[ "$SECONDS" -lt "$deadline" ]]; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "$name 已退出。" >&2
+      show_log_tail "$name"
+      return 1
+    fi
+    if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+      echo "$name 就绪"
+      return 0
+    fi
+    sleep 0.4
+  done
+  echo "$name 在 ${timeout}s 内未响应 $url。" >&2
+  show_log_tail "$name"
+  return 1
+}
+
+rollback_started() {
+  local name
+  for name in $STARTED; do
+    stop_service "$name" || true
+  done
+}
+
+cmd_stop() {
+  local name failed=0
+  adopt_existing_services || return 1
+  for name in $STOP_ORDER; do
+    stop_service "$name" || failed=1
+  done
+  return "$failed"
+}
+
+cmd_status() {
+  local name pid state
+  printf '%-28s %-10s %-8s %s\n' "服务" "状态" "PID" "日志"
+  for name in $SERVICES; do
+    if service_running "$name"; then
+      pid="$(pid_of "$name")"
+      state="运行中"
+    else
+      pid="$(pid_of "$name" 2>/dev/null || true)"
+      state="已停止"
+      if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+        state="身份待核实"
+      elif [[ "$pid" =~ ^[0-9]+$ ]] && group_running "$pid"; then
+        state="退出中"
+      else
+        pid="-"
+      fi
+    fi
+    printf '%-28s %-10s %-8s %s\n' "$name" "$state" "$pid" "output/dev/logs/$name.log"
+  done
+}
+
+cmd_logs() {
+  local name="${1:-}"
+  if [[ -n "$name" ]]; then
+    if [[ ! -f "$LOG_DIR/$name.log" ]]; then
+      echo "没有日志 output/dev/logs/$name.log" >&2
+      exit 1
+    fi
+    tail -n 80 -f "$LOG_DIR/$name.log"
+    return 0
+  fi
+  local files=()
+  local service
+  for service in $SERVICES; do
+    if [[ -f "$LOG_DIR/$service.log" ]]; then
+      files+=("$LOG_DIR/$service.log")
+    fi
+  done
+  if [[ "${#files[@]}" -eq 0 ]]; then
+    echo "还没有日志。先执行 ./scripts/dev start。" >&2
+    exit 1
+  fi
+  tail -n 20 -f "${files[@]}"
+}
+
+cmd_start() {
+  local dry_run="${1:-}"
+  require_tools
+  load_config
+  echo "默认队列=$QUEUE  reliable_enabled=$RELIABLE  assistant_enabled=$ASSISTANT"
+  if [[ "$RELIABLE" != "true" || "$ASSISTANT" != "true" ]]; then
+    echo "配置里 reliable 或 assistant 未启用。worker 仍会启动，对应任务不会被调度。" >&2
+  fi
+  echo "解析并发: ${PARSE_WORKERS} 都消费 reliable-execution，每个并发 ${WORKER_CONCURRENCY}，共 $((5 * WORKER_CONCURRENCY)) 个解析执行槽位。"
+  echo "模型请求: 同模型跨进程上限 ${MODEL_CAPACITY}，单文档页并行 ${PAGE_PARALLELISM}，附件入口活动文档上限 ${ATTACHMENT_CONCURRENCY}，模型请求超时 ${MODEL_TIMEOUT}s。"
+  echo "另有 worker-default（普通队列 ${QUEUE}：Excel 预览/下载）、worker-control（可靠提取恢复）和 worker-assistant（助手）。"
+  echo "beat 每 30 秒调度 reliable-execution-recovery，每 20 秒调度 assistant-message-recovery。"
+  if [[ "$dry_run" == "--dry-run" ]]; then
+    local name
+    for name in $SERVICES; do
+      print_command "$name"
+    done
+    echo "dry-run 结束，没有启动进程。"
+    return 0
+  fi
+  acquire_lock
+  trap release_lock EXIT
+  mkdir -p "$LOG_DIR" "$PID_DIR"
+  adopt_existing_services
+  refuse_foreign_celery
+  ensure_port_available 8000 api
+  ensure_port_available 3000 web
+  STARTED=""
+  local name
+  for name in $SERVICES; do
+    if ! launch_service "$name"; then
+      rollback_started
+      exit 1
+    fi
+  done
+  require_ready() {
+    if ! "$@"; then
+      echo "有服务未就绪，正在收回本次启动的进程。" >&2
+      rollback_started
+      exit 1
+    fi
+  }
+  require_ready wait_http api "http://127.0.0.1:8000/health" 90
+  require_ready wait_ready worker-default 45 ' ready\.'
+  require_ready wait_ready worker-control 45 ' ready\.'
+  for name in $PARSE_WORKERS; do
+    require_ready wait_ready "$name" 45 ' ready\.'
+  done
+  require_ready wait_ready worker-assistant 45 ' ready\.'
+  require_ready wait_ready beat 30 'celery beat v.* is starting\.'
+  require_ready wait_http web "http://127.0.0.1:3000/" 45
+  cat <<EOF
+
+本地服务已启动。
+  前端  http://localhost:3000
+  API   http://localhost:8000/docs
+  健康检查 http://localhost:8000/health
+  解析  5 个 worker × 并发 ${WORKER_CONCURRENCY}，队列 reliable-execution，共 $((5 * WORKER_CONCURRENCY)) 个执行槽位
+  模型  同模型请求上限 ${MODEL_CAPACITY}，超时 ${MODEL_TIMEOUT}s；单文档页并行 ${PAGE_PARALLELISM}
+  普通  worker-default，并发 2，队列 ${QUEUE}（Excel 预览/下载等）
+  调度  worker-control，并发 1，只恢复丢失任务
+  助手  worker-assistant，并发 1
+日志    output/dev/logs
+状态    ./scripts/dev status
+停止    ./scripts/dev stop
+跟踪    ./scripts/dev logs
+EOF
+}
+
+main() {
+  local action="${1:-}"
+  # 无法读取进程时不能把“无法核实”当成“已停止”，更不能清除 PID 登记。
+  case "$action" in
+    start|stop|restart|status)
+      if [[ "$action" != "start" || "${2:-}" != "--dry-run" ]]; then
+        if ! ps -p "$$" -o pid= >/dev/null 2>&1; then
+          echo "无法读取进程信息，请在允许访问本机进程的终端运行；未修改服务及 PID 登记。" >&2
+          exit 1
+        fi
+      fi
+      ;;
+  esac
+  case "$action" in
+    ""|-h|--help|help)
+      usage
+      ;;
+    start)
+      cmd_start "${2:-}"
+      ;;
+    stop)
+      acquire_lock
+      trap release_lock EXIT
+      mkdir -p "$PID_DIR"
+      cmd_stop
+      ;;
+    restart)
+      acquire_lock
+      trap release_lock EXIT
+      mkdir -p "$PID_DIR" "$LOG_DIR"
+      cmd_stop || return 1
+      release_lock
+      trap - EXIT
+      cmd_start
+      ;;
+    status)
+      mkdir -p "$PID_DIR"
+      cmd_status
+      ;;
+    logs)
+      cmd_logs "${2:-}"
+      ;;
+    *)
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

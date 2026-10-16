@@ -128,6 +128,8 @@ def _required_scope(path: str, method: str) -> str:
         path.startswith("/api/v1/parse")
         or path.startswith("/api/v1/batches")
         or path.startswith("/api/v1/documents")
+        or path.startswith("/api/v1/imports")
+        or path.startswith("/api/v1/attachments")
     ):
         return "parse" if method not in {"GET", "HEAD", "OPTIONS"} else "read"
     return "read" if method in {"GET", "HEAD", "OPTIONS"} else "admin"

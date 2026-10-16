@@ -50,14 +50,16 @@ models:
     base_url: "http://172.26.1.84:4000/v1"
     api_key: sk-xR8FJFpvRSHRrZV6AeMGGw
     model_name: "qwen38-flash"
-    timeout: 120
+    timeout: 180
+    max_concurrency: 12
     max_retries: 3
 
   vision_llm:
     base_url: "http://172.26.1.84:4000/v1"
     api_key: sk-xR8FJFpvRSHRrZV6AeMGGw
     model_name: "qwen36-27b"
-    timeout: 120
+    timeout: 180
+    max_concurrency: 12
     max_retries: 3
 
 
@@ -107,7 +109,10 @@ agent:
   # 可靠按页提取。模型窗口约 26 万，平台使用其中 13 万；单页原图允许进入同一次调用。
   reliable_context_tokens: 131072
   reliable_max_image_tokens: 16000
-  reliable_page_parallelism: 2
+  reliable_page_parallelism: 4
+  # 持久化后交还 worker，避免大文件长时间占用整个解析队列。
+  reliable_wakeup_seconds: 120
+  reliable_wakeup_quantums: 20
   # 一页正文的预切上限。普通报告页保持整页一次调用。
   page_batch_chars: 100000
   candidate_window_chars: 300

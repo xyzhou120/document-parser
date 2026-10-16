@@ -71,18 +71,28 @@ def _json_tables(text: str, tables: list[dict]) -> list[list[list[str]]]:
             continue
         if isinstance(item, dict):
             records.append(item)
+    def header_columns(value: Any) -> list[Any] | None:
+        if isinstance(value, dict):
+            value = value.get("columns") or value.get("names")
+        return cast(list[Any], value) if isinstance(value, list) else None
+
     if records:
-        header_value = next((item.get("header") for item in records if isinstance(item.get("header"), list)), None)
-        header = cast(list[Any], header_value) if isinstance(header_value, list) else None
+        header = next((columns for item in records
+                       if (columns := header_columns(item.get("header"))) is not None), None)
+        if header is None:
+            header = next((columns for item in tables if isinstance(item, dict)
+                           if (columns := header_columns(item.get("header"))) is not None), None)
         json_rows: list[tuple[Any, Any]] = [(item["row_index"], item.get("row")) for item in records
                 if isinstance(item.get("row_index"), int) and isinstance(item.get("row"), list)]
-        if header is not None and json_rows and sorted(index for index, _ in json_rows) == list(range(len(json_rows))):
+        if header is not None and json_rows and len({index for index, _ in json_rows}) == len(json_rows):
+            by_index = dict(json_rows)
             result.append([[_cell(v) for v in header],
-                           *[[_cell(v) for v in row] for _, row in sorted(json_rows)]])
+                           *[[_cell(v) for v in by_index.get(index, [])]
+                             for index in range(max(by_index) + 1)]])
     for metadata in tables:
         if not isinstance(metadata, dict):
             continue
-        header_value = metadata.get("header")
+        header_value = header_columns(metadata.get("header"))
         metadata_rows = metadata.get("rows")
         header = cast(list[Any], header_value) if isinstance(header_value, list) else None
         if isinstance(header, list) and isinstance(metadata_rows, list):
@@ -117,7 +127,14 @@ def _matrices(unit: dict) -> list[list[list[str]]]:
                 rows.append(row)
         if rows and len({len(row) for row in rows}) == 1:
             matrices.append(rows)
-    return matrices
+    unique = []
+    seen = set()
+    for matrix in matrices:
+        key = json.dumps(matrix, ensure_ascii=False, sort_keys=True)
+        if key not in seen:
+            seen.add(key)
+            unique.append(matrix)
+    return unique
 
 
 def _relation(decision: dict) -> dict:
@@ -201,4 +218,61 @@ def table_fact_support(unit: dict, decision: dict, rule: Any) -> dict:
                 issues.append(f"TABLE_DIMENSION_UNBOUND:{key}")
     return {"usable": not issues, "attributes": attrs, "issues": issues,
             "row": row, "header": header, "cell": cell}
+
+
+def table_row_support(unit: dict, decision: dict, rule: Any) -> dict:
+    """从同一已定位原文行绑定全部配置列，不接受模型自报的其他单元格。"""
+    config = rule.get("output_schema", {}) if isinstance(rule, dict) else getattr(rule, "output_schema", {})
+    relation = _relation(decision)
+    columns = list((config or {}).get("columns") or [])
+    identity_keys = list((config or {}).get("row_identity") or [])
+    try:
+        row_index, column_index = relation["row_index"], relation["column_index"]
+        if any(isinstance(index, bool) or not isinstance(index, int) for index in (row_index, column_index)):
+            raise ValueError
+    except (KeyError, ValueError, TypeError):
+        return {"usable": False, "issues": ["TABLE_COORDINATES_INVALID"]}
+    matches = []
+    for matrix in _matrices(unit):
+        if not matrix or not 0 < row_index < len(matrix):
+            continue
+        header, row = matrix[0], matrix[row_index]
+        if column_index >= len(header) or column_index >= len(row) or column_index < 0:
+            continue
+        if normalize(relation.get("column_header") or "") != normalize(header[column_index]):
+            continue
+        if normalize(relation.get("row_quote") or "") != normalize(" ".join(row)):
+            continue
+        if not value_in_text(decision.get("value"), row[column_index], False):
+            continue
+        matches.append((header, row))
+    if len(matches) != 1:
+        return {"usable": False, "issues": ["TABLE_ROW_UNBOUND" if not matches else "TABLE_ROW_AMBIGUOUS"]}
+    header, row = matches[0]
+    issues = []
+    cells = {}
+    for column in columns:
+        key = column.get("key")
+        labels = [column.get("header"), *(column.get("aliases") or [])]
+        positions = [index for index, heading in enumerate(header)
+                     if any(normalize(label) == normalize(heading) for label in labels if label)]
+        if len(positions) != 1 or positions[0] >= len(row):
+            issues.append(f"TABLE_COLUMN_UNBOUND:{key}")
+            continue
+        index = positions[0]
+        value = row[index]
+        if not value and column.get("required", True):
+            issues.append(f"TABLE_CELL_BLANK:{key}")
+        cells[key] = {"value": value or None, "unit": column.get("unit"),
+                      "column_header": header[index], "table_relation": {
+                          "row_index": row_index, "column_index": index,
+                          "column_header": header[index], "row_quote": " ".join(row)}}
+    identity = {key: (cells.get(key) or {}).get("value") for key in identity_keys}
+    if not identity_keys or any(not value for value in identity.values()):
+        issues.append("TABLE_ROW_IDENTITY_UNBOUND")
+    return {"usable": not issues, "issues": issues, "row": {
+        "row_key": "|".join(f"{key}={value}" for key, value in identity.items() if value),
+        "identity": identity, "cells": cells,
+        "status": "DELIVERABLE" if not issues else "REVIEW_REQUIRED",
+        "row_index": row_index, "row_quote": " ".join(row)}}
 

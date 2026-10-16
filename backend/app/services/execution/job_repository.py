@@ -6,13 +6,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.models.database import ExtractedFieldModel, ParseRun
 from app.models.execution import ExecutionOutbox, ParseFieldJob
@@ -72,7 +73,7 @@ async def write_extracted_field_counts(
     rows = (await db.execute(
         select(ExtractedFieldModel).where(
             ExtractedFieldModel.parse_run_id.in_([run.parse_run_id for run in chosen])
-        )
+        ).options(defer(ExtractedFieldModel.extraction_detail), defer(ExtractedFieldModel.evidence))
     )).scalars().all()
     grouped: dict[Any, list[Any]] = {}
     for row in rows:
@@ -208,15 +209,69 @@ class JobRepository:
             job.lease_until = None
             job.updated_at = now
             await self.enqueue_outbox(kind="field_job_wakeup", aggregate_id=job.job_id,
-                                      dedupe_key=wakeup_dedupe_key(job.job_id, job.progress_seq),
+                                      dedupe_key=f"lease-expired:{job.job_id}:{job.fence_token}",
                                       payload={"job_id": str(job.job_id), "run_id": str(run.parse_run_id)})
             count += 1
         return count
 
-    async def publish(self, token: LeaseToken, outcome: QuantumOutcome, *, writer: Any = None) -> None:
+    async def recover_idle_runs(self, *, now: datetime | None = None, limit: int = 100) -> int:
+        """补偿已消费唤醒、但在领取字段前崩溃的窗口。租约扫描无法发现这类 queued 工作。"""
+        now = now or datetime.utcnow()
+        ready = select(ParseFieldJob.job_id).where(
+            ParseFieldJob.run_id == ParseRun.parse_run_id,
+            ParseFieldJob.execution_state.in_(["queued", "yielded"]),
+            or_(ParseFieldJob.next_attempt_at.is_(None), ParseFieldJob.next_attempt_at <= now),
+            or_(ParseRun.extraction_profile["extraction_strategy"].as_string().is_(None),
+                ParseRun.extraction_profile["extraction_strategy"].as_string() != "page_batch_v1",
+                ParseFieldJob.field_key == ParseRun.extraction_profile["coordinator_field_key"].as_string()),
+        ).exists()
+        # ParseRun 只有 created_at；空闲时间应按执行账本的最后活动计算。
+        # 包括最近消费的唤醒，避免旧运行刚收到消息就被恢复器再次唤醒。
+        last_job_activity = select(func.max(ParseFieldJob.updated_at)).where(
+            ParseFieldJob.run_id == ParseRun.parse_run_id,
+        ).correlate(ParseRun).scalar_subquery()
+        run_jobs = select(ParseFieldJob.job_id).where(
+            ParseFieldJob.run_id == ParseRun.parse_run_id,
+        ).correlate(ParseRun)
+        last_wakeup_activity = select(func.max(ExecutionOutbox.updated_at)).where(
+            ExecutionOutbox.kind == "field_job_wakeup", ExecutionOutbox.aggregate_id.in_(run_jobs),
+        ).correlate(ParseRun).scalar_subquery()
+        idle_before = now - timedelta(minutes=5)
+        runs = (await self.db.scalars(select(ParseRun).where(
+            ParseRun.status.in_(ACTIVE_RUN_STATES), ParseRun.created_at <= idle_before, ready,
+            func.coalesce(last_job_activity, ParseRun.created_at) <= idle_before,
+            func.coalesce(last_wakeup_activity, ParseRun.created_at) <= idle_before,
+        ).order_by(ParseRun.created_at, ParseRun.parse_run_id).limit(limit)
+            .with_for_update(skip_locked=True))).all()
+        count = 0
+        for run in runs:
+            jobs = select(ParseFieldJob.job_id).where(ParseFieldJob.run_id == run.parse_run_id)
+            outstanding = await self.db.scalar(select(ExecutionOutbox.event_id).where(
+                ExecutionOutbox.kind == "field_job_wakeup", ExecutionOutbox.aggregate_id.in_(jobs),
+                or_(ExecutionOutbox.dispatch_state.in_(["pending", "failed", "sending"]),
+                    (ExecutionOutbox.dispatch_state == "sent") &
+                    ExecutionOutbox.payload["dispatch_outstanding"].as_boolean().is_(True)),
+            ).limit(1))
+            if outstanding is not None:
+                continue
+            live = await self.db.scalar(select(ParseFieldJob.job_id).where(
+                ParseFieldJob.run_id == run.parse_run_id, ParseFieldJob.execution_state == "running",
+                ParseFieldJob.lease_until > now).limit(1))
+            if live is not None:
+                continue
+            job_id = await self.db.scalar(jobs.limit(1))
+            if job_id is not None:
+                await self.enqueue_outbox(kind="field_job_wakeup", aggregate_id=job_id,
+                    dedupe_key=f"idle-run:{run.parse_run_id}:{run.execution_generation}:{int(now.timestamp()) // 300}",
+                    payload={"run_id": str(run.parse_run_id), "execution_generation": run.execution_generation})
+                count += 1
+        return count
+
+    async def publish(self, token: LeaseToken, outcome: QuantumOutcome, *, writer: Any = None,
+                      lease_seconds: int = 90) -> None:
         """原子保护并持久化领域结果、检查点和投递事件。"""
         job, run = await self._locked(token.job_id)
-        require_lease(job, run, token)
+        Scheduler.heartbeat(job, run, token, lease_seconds=lease_seconds)
         if writer is not None:
             await writer(self.db, job, outcome)
         state = getattr(outcome, "state", None)
@@ -237,6 +292,20 @@ class JobRepository:
             # retry must resume that checkpoint rather than repeat paid calls.
             await self.transition(token, "checkpoint", checkpoint=outcome.checkpoint, phase="failed")
             await self.transition(token, "fail", reason=outcome.error or "quantum failed")
+            # 按页策略只有协调字段可领取。协调器终止时必须收敛其余字段，
+            # 否则这些 queued 字段永远不可领取，运行却一直显示 RUNNING。
+            if (run.extraction_profile or {}).get("extraction_strategy") == "page_batch_v1":
+                siblings = (await self.db.scalars(select(ParseFieldJob).where(
+                    ParseFieldJob.run_id == run.parse_run_id).with_for_update())).all()
+                for sibling in siblings:
+                    if sibling.job_id != job.job_id and sibling.execution_state in ACTIVE_FIELD_STATES:
+                        sibling.execution_state = "failed_terminal"
+                        sibling.semantic_state = "incomplete"
+                        sibling.phase = "failed"
+                        sibling.last_error = outcome.error or "page_coordinator_failed"
+                        sibling.lease_owner = sibling.lease_until = None
+                        sibling.next_attempt_at = None
+                        sibling.progress_seq = (sibling.progress_seq or 0) + 1
         else:
             raise ValueError(f"unsupported quantum outcome: {state}")
 
@@ -339,6 +408,9 @@ class JobRepository:
                         checkpoint["page_retry"] = 0
                     job.checkpoint = checkpoint
             if action == "resume" and job.execution_state == "queued":
+                checkpoint = dict(job.checkpoint or {})
+                checkpoint.pop("infrastructure_failures", None)
+                job.checkpoint = checkpoint
                 await self.enqueue_outbox(kind="field_job_wakeup", aggregate_id=job.job_id,
                                           dedupe_key=f"{job.job_id}:resume:{run.execution_generation}",
                                           payload={"job_id": str(job.job_id), "run_id": str(run_id)})
@@ -379,7 +451,9 @@ class JobRepository:
             return False
         event.payload = {**dict(event.payload), "dispatch_outstanding": False,
                          "received_at": datetime.utcnow().isoformat(), "received_task_id": task_id}
-        if event.dispatch_state == "failed":
+        # worker 可能比 sender 的 mark_sent 更快。消费即结束本次投递，避免
+        # 仍处于 sending 的已消费事件挡住续投；sender 的状态/attempt CAS 会拒绝迟到确认。
+        if event.dispatch_state in {"sending", "failed"}:
             event.dispatch_state = "sent"
         event.next_attempt_at = None
         event.updated_at = datetime.utcnow()
@@ -393,3 +467,57 @@ class JobRepository:
                                     ExecutionOutbox.dedupe_key == dedupe_key))
         assert event is not None
         return event
+
+    async def ensure_run_continuation_wakeup(self, run_id: UUID, jobs: list[ParseFieldJob],
+                                             *, execution_generation: int) -> ExecutionOutbox:
+        """确保运行仍有一个可投递的继续唤醒。
+
+        续投键按进度保持稳定，便于审计和去重；但稳定键也意味着一个已经被
+        worker 消费、且没有后续可运行任务时仍处于 ``sent`` 的事件不能直接
+        再次插入。调用方已经持有运行行锁，因此可以安全地把这条已消费事件
+        复活为 ``pending``，避免 ``consume -> SKIP LOCKED -> ON CONFLICT``
+        窗口让运行只等 5 分钟 idle recovery。
+        """
+        aggregate_ids = [job.job_id for job in jobs]
+        active = await self.db.scalar(select(ExecutionOutbox).where(
+            ExecutionOutbox.kind == "field_job_wakeup", ExecutionOutbox.aggregate_id.in_(aggregate_ids),
+            or_(ExecutionOutbox.dispatch_state.in_(["pending", "failed", "sending"]),
+                (ExecutionOutbox.dispatch_state == "sent") &
+                ExecutionOutbox.payload["dispatch_outstanding"].as_boolean().is_(True)),
+        ).limit(1).with_for_update())
+        if active is not None:
+            return active
+        prefix = f"run:{run_id}:continue:{execution_generation}:"
+        candidates = (await self.db.execute(
+            select(ExecutionOutbox).where(
+                ExecutionOutbox.kind == "field_job_wakeup",
+                ExecutionOutbox.aggregate_id.in_(aggregate_ids),
+                ExecutionOutbox.dedupe_key.like(prefix + "%"),
+            ).order_by(ExecutionOutbox.created_at.desc(), ExecutionOutbox.event_id.desc())
+            .with_for_update()
+        )).scalars().all()
+        for event in candidates:
+            payload = dict(event.payload or {})
+            if event.dispatch_state in {"sent", "failed", "coalesced"} and not payload.get("dispatch_outstanding"):
+                event.dispatch_state = "pending"
+                event.next_attempt_at = None
+                event.last_error = None
+                event.updated_at = datetime.utcnow()
+                event.payload = {
+                    **payload,
+                    "run_id": str(run_id),
+                    "execution_generation": execution_generation,
+                    "dispatch_outstanding": False,
+                }
+                return event
+            if event.dispatch_state in {"pending", "sending"} or payload.get("dispatch_outstanding"):
+                return event
+        dedupe_key = (
+            f"{prefix}{sum(job.attempt for job in jobs)}:"
+            f"{sum(job.progress_seq for job in jobs)}"
+        )
+        return await self.enqueue_outbox(
+            kind="field_job_wakeup", aggregate_id=jobs[0].job_id,
+            dedupe_key=dedupe_key,
+            payload={"run_id": str(run_id), "execution_generation": execution_generation},
+        )

@@ -3,14 +3,16 @@
 工作台与数据分析页面的数据来源，全部来自真实解析记录。
 """
 
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from types import SimpleNamespace
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import Document, ExtractedFieldModel, ParseRun
@@ -135,6 +137,39 @@ def _field_inventory(field: Any, rule: dict[str, Any], *, run=None, invalidation
         "risk_count": int(bool(risk)),
         "review_needed": int(bool(risk)),
     }
+
+
+def _json_value(value):
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
+async def _load_quality_fields(db: AsyncSession, checklist_type: str | None):
+    # 证据注册表约 200MB，且没有 page_number，不参与这页的统计。
+    # 只取统计实际读取的键，避免把整份 extraction_detail 传回应用。
+    sql = """
+        SELECT f.parse_run_id, f.document_id, f.field_key, f.field_name, f.validation_status,
+               f.confidence, f.extraction_method, f.field_value, f.unit, f.required, f.instances,
+               f.quality_inputs AS extraction_detail
+        FROM extracted_fields f
+        JOIN parse_runs r ON r.parse_run_id = f.parse_run_id
+        WHERE (r.status = 'COMPLETED'
+               OR (r.contract_version = :version
+                   AND r.status IN ('COMPLETED_WITH_REVIEW', 'PARTIAL', 'INCOMPLETE')))
+    """
+    params: dict[str, Any] = {"version": VERSION}
+    if checklist_type:
+        sql += " AND r.checklist_type = :checklist"
+        params["checklist"] = checklist_type
+    rows = (await db.execute(text(sql), params)).mappings().all()
+    fields = []
+    for row in rows:
+        data = dict(row)
+        data["instances"] = _json_value(data["instances"])
+        data["extraction_detail"] = _json_value(data["extraction_detail"]) or {}
+        fields.append(SimpleNamespace(**data))
+    return fields
 
 
 def _start_of_today() -> datetime:
@@ -372,14 +407,20 @@ async def field_quality(
     if checklist_type:
         runs_query = runs_query.where(ParseRun.checklist_type == checklist_type)
     completed_runs = (await db.execute(runs_query)).scalars().all()
-    fields_query = (
-        select(ExtractedFieldModel)
-        .join(ParseRun, ParseRun.parse_run_id == ExtractedFieldModel.parse_run_id)
-        .where(observed)
-    )
-    if checklist_type:
-        fields_query = fields_query.where(ParseRun.checklist_type == checklist_type)
-    fields = (await db.execute(fields_query)).scalars().all()
+    dialect = getattr(getattr(getattr(db, "bind", None), "dialect", None), "name", None)
+    if dialect == "postgresql":
+        # 证据原文和完成证明占了字段 JSON 的绝大部分，质量统计用不到。
+        # 在数据库里裁掉后再传，避免每次打开页面搬运上百 MB。
+        fields = await _load_quality_fields(db, checklist_type)
+    else:
+        fields_query = (
+            select(ExtractedFieldModel)
+            .join(ParseRun, ParseRun.parse_run_id == ExtractedFieldModel.parse_run_id)
+            .where(observed)
+        )
+        if checklist_type:
+            fields_query = fields_query.where(ParseRun.checklist_type == checklist_type)
+        fields = (await db.execute(fields_query)).scalars().all()
     fields_by_run = {(field.parse_run_id, field.field_key): field for field in fields}
     grouped: dict[tuple[str, str], dict] = {}
     invalidations_by_document: dict[str, list[Any]] = {}

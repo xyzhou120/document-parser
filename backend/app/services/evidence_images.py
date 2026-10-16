@@ -12,6 +12,29 @@ from app.config import settings
 from app.storage import minio_client
 
 
+class InvalidEvidenceRegion(ValueError):
+    """来源页面或区域坐标无法用于裁图；不代表原文件或存储服务损坏。"""
+
+
+def clip_page_bbox(page: dict, bbox: list | None) -> list[float] | None:
+    """将有限、正向且与页面相交的框裁到边界；完全越界或倒置的框拒绝使用。"""
+    if bbox is None:
+        return None
+    try:
+        width, height = float(page["width"]), float(page["height"])
+        if len(bbox) != 4 or any(isinstance(x, bool) for x in bbox):
+            raise ValueError
+        x0, y0, x1, y1 = map(float, bbox)
+        if not all(math.isfinite(x) for x in (width, height, x0, y0, x1, y1)):
+            raise ValueError
+        clipped = [max(0.0, x0), max(0.0, y0), min(width, x1), min(height, y1)]
+        if not (width > 0 and height > 0 and clipped[0] < clipped[2] and clipped[1] < clipped[3]):
+            raise ValueError
+        return clipped
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
+        raise InvalidEvidenceRegion("来源裁图坐标无效或与页面无交集") from exc
+
+
 class EvidenceImages:
     def __init__(self, document, pages: list[dict], workspace: Path,
                  pdf_path: Path | None = None, dpi: int | None = None,

@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -29,6 +30,21 @@ def _digest(value: bytes | str) -> str:
 
 def _normalise(value: Any) -> str:
     return " ".join(str(value or "").replace("\u3000", " ").split())
+
+
+def _jsonable(value: Any) -> Any:
+    """检查点只保存 JSON。OCR 块是 TextBlock，不能原样写入。"""
+    if hasattr(value, "model_dump"):
+        return _jsonable(value.model_dump(mode="json"))
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Mapping):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 def image_hash(image: bytes | bytearray | memoryview) -> str:
@@ -199,10 +215,11 @@ class ContentBuildService:
 
     async def _save(self, db, job, checkpoint, fence, worker_id, *, state="running", phase="regions", error=None):
         current = await db.get(ContentBuildJob, job.build_id, with_for_update=True, populate_existing=True)
-        if current is None or current.fence_token != fence or current.lease_owner != worker_id:
+        if (current is None or current.fence_token != fence or current.lease_owner != worker_id
+                or current.lease_until is None or current.lease_until <= datetime.utcnow()):
             await db.rollback()
             raise ContentBuildError("stale content build worker cannot submit")
-        current.checkpoint = deepcopy(checkpoint)
+        current.checkpoint = _jsonable(checkpoint)
         current.dispatch_state = state
         current.phase = phase
         current.last_error = error
@@ -233,6 +250,7 @@ class ContentBuildService:
         worker_id: str = "content-builder",
         expected_page_count: int | None = None,
         max_regions: int = 20,
+        max_seconds: float | None = None,
     ) -> dict[str, Any]:
         current = await db.get(ContentBuildJob, job.build_id, with_for_update=True, populate_existing=True)
         if current is None:
@@ -256,6 +274,11 @@ class ContentBuildService:
             raise ValueError("positive page count and region quantum required")
         checkpoint["expected_page_count"] = expected_count
         work = 0
+        native_since_save = 0
+        # 原生页没有外部计费调用，允许小批量落库，避免每页都序列化整份累计 JSON。
+        # OCR/视觉结果仍在返回后立即保存，防止付费结果只存在内存中。
+        native_checkpoint_batch = 4
+        started = time.monotonic()
         checkpoint.setdefault("prefetched_ocr", {})
         self._ocr_images = {}
         for page_index, page in enumerate(pages):
@@ -279,7 +302,7 @@ class ContentBuildService:
                 native_key = region_key(job.file_hash, number, rid, _digest(str(page.get("text") or "")), job.profile or {})
                 if region.get("kind") == "native" and (checkpoint["regions"].get(checkpoint_key) or {}).get("cache_key") == native_key:
                     continue
-                if work >= max_regions:
+                if work >= max_regions or (work and max_seconds is not None and time.monotonic() - started >= max_seconds):
                     checkpoint["coverage_manifest"] = self._manifest(checkpoint, expected_count)
                     await self._save(db, job, checkpoint, fence, worker_id, state="yielded")
                     return checkpoint
@@ -288,7 +311,10 @@ class ContentBuildService:
                     result = OCRRegionResult(rid, number, "processed", raw_ocr=str(page.get("text", "") or ""), normalized_ocr=_normalise(page.get("text", "") or ""))
                     checkpoint["regions"][checkpoint_key] = result.as_dict() | {"cache_key": native_key, "source": "native"}
                     work += 1
-                    await self._save(db, job, checkpoint, fence, worker_id)
+                    native_since_save += 1
+                    if native_since_save >= native_checkpoint_batch:
+                        await self._save(db, job, checkpoint, fence, worker_id)
+                        native_since_save = 0
                     continue
                 prepared = self._ocr_images.pop(checkpoint_key, None)
                 image = self._page_image(page, region)
@@ -408,6 +434,7 @@ class ContentBuildService:
                         await self._save(db, job, checkpoint, fence, worker_id, state="waiting_service", error=type(exc).__name__)
                         raise ServiceUnavailable("OCR request failed; retry is scheduled") from exc
                 await self._save(db, job, checkpoint, fence, worker_id)
+                native_since_save = 0
             states = [checkpoint["regions"].get(f"p{number}:{rid}", {}).get("state", "unknown") for rid in page_cp["regions"]]
             page_cp["state"] = "processed" if all(s in {"processed", "blank"} for s in states) else "failed" if any(s == "failed" for s in states) else "unknown"
         checkpoint["coverage_manifest"] = self._manifest(checkpoint, expected_count)

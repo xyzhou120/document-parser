@@ -5,6 +5,7 @@ import axios from 'axios'
 import { useNavigate } from 'react-router-dom'
 import type { ExecutionJob, ExecutionResponse, ExtractedField } from '@/types/api'
 import { apiError } from '@/services/api'
+import { createRequestId } from '@/utils/requestId'
 import { controlExecution, executionStateNames, executionStatusNames, getContentBuildStatus, getExecution, getFieldJobs, resumeContentBuild, semanticStateNames, startReliableExtraction } from '@/services/execution'
 
 const autoStates = new Set(['PLANNED', 'PENDING', 'QUEUED', 'RUNNING', 'YIELDED', 'PARTIAL', 'PROCESSING', 'RETRYING', 'WAITING_SERVICE', 'WAITING_QUOTA', 'WAITING_EXTERNAL_QUOTA'])
@@ -132,7 +133,7 @@ export default function ExecutionPanel({ runId, fields, onChange }: {
   const start = async () => {
     if (!data?.legacy || !data.document_id) return
     const signature = JSON.stringify({ document_id: data.document_id, parent_run_id: runId })
-    if (startRequest.current?.signature !== signature) startRequest.current = { signature, requestId: crypto.randomUUID() }
+    if (startRequest.current?.signature !== signature) startRequest.current = { signature, requestId: createRequestId() }
     setBusy('start'); setError('')
     try {
       const response = await startReliableExtraction(data.document_id, runId, startRequest.current.requestId)

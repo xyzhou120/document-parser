@@ -25,6 +25,8 @@ from app.api import (
 from app.api.assistant_auxiliary import router as assistant_auxiliary_router
 from app.api.reliable_execution import router as reliable_execution_router
 from app.api.reliable_execution import start_router as reliable_start_router
+from app.api.attachment_imports import router as attachment_imports_router
+from app.api.attachments import router as attachments_router
 from app.config import settings
 from app.security import AccessControlMiddleware
 from app.storage import close_db, init_db, seed_default_rules
@@ -84,6 +86,8 @@ async def health_check():
 
 # 注册路由
 app.include_router(parse_router)
+app.include_router(attachment_imports_router)
+app.include_router(attachments_router)
 app.include_router(artifacts_router)
 app.include_router(batches_router)
 app.include_router(documents_router)

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Button, Empty, Input, Select, Table, Tag } from 'antd'
+import { Alert, Button, Empty, Input, Select, Table, Tag, Tabs } from 'antd'
 import { EyeOutlined, ReloadOutlined, SearchOutlined, ExportOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import type { ColumnsType } from 'antd/es/table'
@@ -9,6 +9,7 @@ import { getChecklistTypes } from '@/services/rules'
 import { apiError } from '@/services/api'
 import type { ChecklistType, ParseRun } from '@/types/api'
 import { executionStatusNames } from '@/services/execution'
+import AttachmentList from './AttachmentList'
 
 export const statusLabels: Record<string, string> = {
   ...executionStatusNames,
@@ -60,7 +61,7 @@ interface Props {
   subtitle: string
 }
 
-export default function DocumentList({ title, subtitle }: Props) {
+function LegacyDocumentList({ title, subtitle }: Props) {
   const navigate = useNavigate()
   const [rows, setRows] = useState<ParseRun[]>([])
   const [types, setTypes] = useState<ChecklistType[]>([])
@@ -280,4 +281,11 @@ export default function DocumentList({ title, subtitle }: Props) {
       </div>
     </div>
   )
+}
+
+export default function DocumentList(props: Props) {
+  return <Tabs defaultActiveKey="attachments" items={[
+    { key: 'attachments', label: '附件与当前结果', children: <AttachmentList /> },
+    { key: 'legacy', label: '旧版解析记录', children: <LegacyDocumentList {...props} /> },
+  ]} />
 }
