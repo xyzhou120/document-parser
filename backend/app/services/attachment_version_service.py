@@ -19,7 +19,7 @@ from app.models.reviews import FieldReviewRevision
 from app.services.attachment_import_service import public_metadata
 from app.services.attachment_read_service import summary_from_snapshot
 
-ACTIVE_VERSION_STATES = {'QUEUED', 'PREPARING_CONTENT', 'RUNNING', 'PAUSED'}
+ACTIVE_VERSION_STATES = {'QUEUED', 'PREPARING_CONTENT', 'RUNNING', 'PAUSED', 'WAITING_REUSE'}
 
 
 class VersionError(ValueError):
@@ -182,7 +182,7 @@ async def start_operation(db, attachment_id, *, operation, request_id, actor, re
     try:
         run = await reliable_extraction_service.start(db, document.document_id, rules=rules,
             parent_run_id=parent.run_id if parent else None, request_id=f'attachment:{v.id}', attachment_version_id=v.id)
-        v.run_id, v.state = run.parse_run_id, 'RUNNING'
+        v.run_id, v.state = run.parse_run_id, ('WAITING_REUSE' if run.status == 'WAITING_REUSE' else 'RUNNING')
         run.run_mode = 'INCREMENTAL' if operation == 'INCREMENTAL_EXTRACT' else 'FULL'
     except ContentPreparationRequired as exc:
         if operation == 'FULL_REEXTRACT' and parent:
@@ -195,7 +195,7 @@ async def start_operation(db, attachment_id, *, operation, request_id, actor, re
 def flow_state(run, jobs):
     from app.services.execution.field_scheduler import aggregate_run_status
 
-    if run.status in {'CANCELLED', 'SUPERSEDED', 'PAUSED'}:
+    if run.status in {'CANCELLED', 'SUPERSEDED', 'PAUSED', 'WAITING_REUSE'}:
         return run.status
     if run.status == 'FAILED':
         return 'FAILED'

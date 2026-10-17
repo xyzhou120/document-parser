@@ -255,6 +255,7 @@ CREATE TABLE IF NOT EXISTS extracted_fields (
 	rule_version INTEGER,
 	validation_status VARCHAR(30),
 	extraction_detail JSON,
+	quality_inputs JSON,
 	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
 	PRIMARY KEY (field_id)
 );
@@ -706,6 +707,7 @@ CREATE TABLE IF NOT EXISTS content_build_jobs (
 	file_hash VARCHAR(64) NOT NULL,
 	profile JSON NOT NULL,
 	parent_revision_id UUID,
+	source_pages JSON,
 	phase VARCHAR(50) NOT NULL,
 	checkpoint JSON NOT NULL,
 	dispatch_state VARCHAR(32) NOT NULL,
@@ -864,6 +866,15 @@ CREATE INDEX IF NOT EXISTS ix_attachment_versions_created_at ON attachment_versi
 
 CREATE INDEX IF NOT EXISTS ix_attachment_versions_state ON attachment_versions (state);
 
+CREATE TABLE IF NOT EXISTS content_build_entries (
+	build_id UUID NOT NULL,
+	kind VARCHAR(32) NOT NULL,
+	entry_key VARCHAR(500) NOT NULL,
+	payload JSON NOT NULL,
+	PRIMARY KEY (build_id, kind, entry_key),
+	FOREIGN KEY(build_id) REFERENCES content_build_jobs (build_id)
+);
+
 CREATE TABLE IF NOT EXISTS document_cards (
 	card_id UUID NOT NULL,
 	document_id UUID NOT NULL,
@@ -1006,6 +1017,13 @@ CREATE INDEX IF NOT EXISTS ix_qa_sessions_document_id ON qa_sessions (document_i
 
 CREATE INDEX IF NOT EXISTS ix_qa_sessions_status ON qa_sessions (status);
 
+CREATE TABLE IF NOT EXISTS attachment_version_summaries (
+	version_id UUID NOT NULL,
+	summary JSON NOT NULL,
+	PRIMARY KEY (version_id),
+	FOREIGN KEY(version_id) REFERENCES attachment_versions (id)
+);
+
 CREATE TABLE IF NOT EXISTS parse_model_calls (
 	call_id UUID NOT NULL,
 	job_id UUID NOT NULL,
@@ -1123,6 +1141,40 @@ CREATE INDEX IF NOT EXISTS ix_qa_messages_revision_id ON qa_messages (revision_i
 
 CREATE INDEX IF NOT EXISTS ix_qa_messages_session_id ON qa_messages (session_id);
 
+CREATE TABLE IF NOT EXISTS shared_executions (
+	shared_execution_id UUID NOT NULL,
+	identity_hash VARCHAR(64) NOT NULL,
+	file_hash VARCHAR(64) NOT NULL,
+	content_digest VARCHAR(64),
+	coverage_digest VARCHAR(64),
+	preprocess_version VARCHAR(120) NOT NULL,
+	contract_hash VARCHAR(64) NOT NULL,
+	model_signature VARCHAR(64) NOT NULL,
+	source_run_id UUID,
+	source_version_id UUID,
+	state VARCHAR(32) NOT NULL,
+	execution_generation INTEGER NOT NULL,
+	fence_token INTEGER NOT NULL,
+	manifest JSON NOT NULL,
+	failure_code VARCHAR(200),
+	lease_owner VARCHAR(200),
+	lease_until TIMESTAMP WITHOUT TIME ZONE,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	completed_at TIMESTAMP WITHOUT TIME ZONE,
+	PRIMARY KEY (shared_execution_id),
+	CONSTRAINT uq_shared_execution_identity UNIQUE (identity_hash),
+	FOREIGN KEY(source_run_id) REFERENCES parse_runs (parse_run_id),
+	FOREIGN KEY(source_version_id) REFERENCES attachment_versions (id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_shared_executions_created_at ON shared_executions (created_at);
+
+CREATE INDEX IF NOT EXISTS ix_shared_executions_source_run_id ON shared_executions (source_run_id);
+
+CREATE INDEX IF NOT EXISTS ix_shared_executions_source_version_id ON shared_executions (source_version_id);
+
+CREATE INDEX IF NOT EXISTS ix_shared_executions_state ON shared_executions (state);
+
 CREATE TABLE IF NOT EXISTS assistant_feedback_samples (
 	feedback_id UUID NOT NULL,
 	document_id UUID NOT NULL,
@@ -1196,6 +1248,45 @@ CREATE INDEX IF NOT EXISTS ix_parse_candidates_source ON parse_candidates (sourc
 CREATE INDEX IF NOT EXISTS ix_parse_candidates_state ON parse_candidates (state);
 
 CREATE INDEX IF NOT EXISTS ix_parse_candidates_strength ON parse_candidates (strength);
+
+CREATE TABLE IF NOT EXISTS shared_execution_subscribers (
+	subscriber_id UUID NOT NULL,
+	shared_execution_id UUID NOT NULL,
+	target_attachment_id UUID NOT NULL,
+	target_document_id UUID NOT NULL,
+	target_version_id UUID NOT NULL,
+	parse_run_id UUID NOT NULL,
+	expected_cas INTEGER NOT NULL,
+	expected_invalidation_watermark INTEGER,
+	requested_contract_hash VARCHAR(64) NOT NULL,
+	state VARCHAR(32) NOT NULL,
+	source_generation INTEGER NOT NULL,
+	failure_code VARCHAR(200),
+	provenance JSON NOT NULL,
+	created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+	attached_at TIMESTAMP WITHOUT TIME ZONE,
+	completed_at TIMESTAMP WITHOUT TIME ZONE,
+	PRIMARY KEY (subscriber_id),
+	CONSTRAINT uq_shared_subscriber_run UNIQUE (shared_execution_id, parse_run_id),
+	CONSTRAINT uq_shared_subscriber_version UNIQUE (target_version_id),
+	FOREIGN KEY(shared_execution_id) REFERENCES shared_executions (shared_execution_id),
+	FOREIGN KEY(target_attachment_id) REFERENCES attachments (id),
+	FOREIGN KEY(target_document_id) REFERENCES documents (document_id),
+	FOREIGN KEY(target_version_id) REFERENCES attachment_versions (id),
+	FOREIGN KEY(parse_run_id) REFERENCES parse_runs (parse_run_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_shared_execution_subscribers_created_at ON shared_execution_subscribers (created_at);
+
+CREATE INDEX IF NOT EXISTS ix_shared_execution_subscribers_parse_run_id ON shared_execution_subscribers (parse_run_id);
+
+CREATE INDEX IF NOT EXISTS ix_shared_execution_subscribers_shared_execution_id ON shared_execution_subscribers (shared_execution_id);
+
+CREATE INDEX IF NOT EXISTS ix_shared_execution_subscribers_state ON shared_execution_subscribers (state);
+
+CREATE INDEX IF NOT EXISTS ix_shared_execution_subscribers_target_attachment_id ON shared_execution_subscribers (target_attachment_id);
+
+CREATE INDEX IF NOT EXISTS ix_shared_execution_subscribers_target_document_id ON shared_execution_subscribers (target_document_id);
 
 CREATE OR REPLACE FUNCTION reject_platform_audit_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN

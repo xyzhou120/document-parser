@@ -158,7 +158,7 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
             async with sessions() as db:
                 run = await reliable_extraction_service._run(db, run_id)
                 reliable_extraction_service.ensure_contract(run)
-                if run.status in {"CANCELLED", "SUPERSEDED", "PAUSED", "COMPLETED", "COMPLETED_WITH_REVIEW", "FAILED"}:
+                if run.status in {"CANCELLED", "SUPERSEDED", "PAUSED", "COMPLETED", "COMPLETED_WITH_REVIEW", "FAILED", "WAITING_REUSE"}:
                     return {"status": run.status, "run_id": parse_run_id}
                 profile = run.extraction_profile or {}
                 model = profile.get("model_config") or {}
@@ -211,17 +211,15 @@ def reliable_execution_wakeup_task(self, parse_run_id: str, dispatch_event_id: s
                 # 结束窗口只移交持久化进度，不限制整篇文档页数或 token。
                 page_batch = profile.get("extraction_strategy") == "page_batch_v1"
                 quantums = settings.agent.reliable_wakeup_quantums if page_batch else 3
+                if profile.get("quantum_queue_enabled"):
+                    quantums = 1
                 result = await reliable_extraction_service.process_run(sessions, run_id, executor=executor,
                     writer=executor.write_result, before_publish=executor.before_publish,
                     owner=f"celery:{self.request.id}", max_quantums=quantums,
                     lease_seconds=600 if page_batch else 300,
                     max_seconds=settings.agent.reliable_wakeup_seconds if page_batch else None)
-                if result.get("remaining_runnable"):
-                    try:
-                        await asyncio.to_thread(reliable_execution_dispatch_task.delay)
-                    except Exception:
-                        # 持久化唤醒和定时任务仍可从消息代理停机中恢复。
-                        logger.warning("Reliable continuation waits for beat recovery")
+                # publish 已持久化后续 outbox。由 Beat 统一调度，避免每个量子
+                # （包括空唤醒）再投递全局恢复任务，淹没控制队列。
                 return result
         finally:
             if client is not None:
@@ -290,24 +288,50 @@ def reliable_execution_dispatch_task():
         sessions = async_sessionmaker(engine, expire_on_commit=False)
         try:
             async def sender(kind, payload):
+                if kind == "shared_execution.materialize":
+                    await asyncio.to_thread(shared_execution_materialize_task.delay, payload["shared_execution_id"])
+                    return
                 if kind == "content.build.execute":
-                    await asyncio.to_thread(reliable_content_build_task.delay, payload["build_id"])
+                    await asyncio.to_thread(reliable_content_build_task.delay, payload["build_id"],
+                        payload.get("dispatch_event_id"), payload.get("dispatch_attempt"))
                     return
                 if kind != "field_job_wakeup":
                     raise ValueError("unsupported execution event")
                 await asyncio.to_thread(reliable_execution_wakeup_task.delay, payload["run_id"],
                     payload.get("dispatch_event_id"), payload.get("dispatch_attempt"))
-            sent = await reliable_extraction_service.dispatch_events(sessions, sender,
-                                        kinds=["field_job_wakeup", "content.build.execute"])
-            return {"events_sent": sent}
+            from app.services.control_task_lock import control_task_lock
+            async with control_task_lock(engine, 753101510) as acquired:
+                if not acquired:
+                    return {"status": "coalesced", "events_sent": 0}
+                sent = await reliable_extraction_service.dispatch_events(sessions, sender,
+                                            kinds=["field_job_wakeup", "content.build.execute", "shared_execution.materialize"])
+                if settings.agent.shared_execution_enabled:
+                    from app.services.shared_execution_service import recover_shared
+                    await recover_shared(sessions)
+                return {"events_sent": sent}
         finally:
             await engine.dispose()
     return asyncio.run(dispatch())
 
 
+@celery_app.task(name="shared_execution_materialize", acks_late=True, reject_on_worker_lost=True)
+def shared_execution_materialize_task(shared_execution_id: str):
+    import asyncio
+    from app.services.shared_execution_service import materialize_execution
+    async def materialize():
+        engine = create_async_engine(settings.database.url, poolclass=NullPool)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            return await materialize_execution(sessions, UUID(shared_execution_id))
+        finally:
+            await engine.dispose()
+    return asyncio.run(materialize())
+
+
 @celery_app.task(name="reliable_content_build", bind=True, max_retries=3,
                  acks_late=True, reject_on_worker_lost=True, soft_time_limit=3300)
-def reliable_content_build_task(self, build_id: str):
+def reliable_content_build_task(self, build_id: str, dispatch_event_id: str | None = None,
+                               dispatch_attempt: int | None = None):
     import asyncio
     if not settings.app.reliable_enabled:
         return {"status": "disabled"}
@@ -323,6 +347,13 @@ def reliable_content_build_task(self, build_id: str):
         initial_fence = None
         initial_file_hash = None
         try:
+            if dispatch_event_id is not None:
+                from app.services.execution import JobRepository
+                async with sessions() as db, db.begin():
+                    consumed = await JobRepository(db).consume_content_wakeup(UUID(build_id), UUID(dispatch_event_id),
+                        dispatch_attempt=dispatch_attempt, task_id=self.request.id)
+                if not consumed:
+                    return {"status": "duplicate_or_stale_wakeup", "build_id": build_id}
             async with sessions() as db:
                 current = await db.get(ContentBuildJob, UUID(build_id))
                 initial_fence = current.fence_token if current else None
@@ -333,6 +364,9 @@ def reliable_content_build_task(self, build_id: str):
                 await asyncio.to_thread(reliable_execution_wakeup_task.delay, result["run_id"])
             return result
         except Exception as exc:
+            from app.services.content_build_service import ContentBuildError
+            if isinstance(exc, ContentBuildError) and "already leased" in str(exc):
+                return {"status": "already_running", "build_id": build_id}
             from app.models.content import ContentBuildJob
             from app.models.database import Document
             async with sessions() as db, db.begin():
@@ -500,8 +534,12 @@ def attachment_download_task(attachment_id: str):
     return asyncio.run(execute())
 
 
-@celery_app.task(name='attachment_import_recovery', max_retries=0)
-def attachment_import_recovery_task():
+@celery_app.task(name='attachment_import_recovery', bind=True, max_retries=0)
+def attachment_import_recovery_task(self):
+    # 升级前的周期消息可能没有 expires；不要让历史恢复请求在解析控制
+    # 队列继续执行慢扫描。新 Beat 会在 attachment-control 核对持久化状态。
+    if (self.request.delivery_info or {}).get('routing_key') == 'reliable-control':
+        return {'status': 'obsolete_queue'}
     import asyncio
     from app.services.attachment_runtime import recover_imports
     async def execute():
@@ -511,7 +549,11 @@ def attachment_import_recovery_task():
             async def sender(kind, item_id):
                 task = attachment_import_preview_task if kind == 'preview' else attachment_download_task
                 await asyncio.to_thread(task.delay, item_id)
-            return await recover_imports(sessions, sender)
+            from app.services.control_task_lock import control_task_lock
+            async with control_task_lock(engine, 753101511) as acquired:
+                if not acquired:
+                    return {"status": "coalesced"}
+                return await recover_imports(sessions, sender)
         finally:
             await engine.dispose()
     return asyncio.run(execute())

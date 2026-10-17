@@ -49,10 +49,30 @@ function evidenceRectangle(evidence: FactEvidence, pdfPage: PDFPageProxy, target
   const right = Math.max(rx0, rx1), bottom = Math.max(ry0, ry1)
   // Reject out-of-page and degenerate boxes rather than inventing/clamping a location.
   if ([left, top, right, bottom].some((v) => !Number.isFinite(v)) || left < -.1 || top < -.1 || right > viewport.width + .1 || bottom > viewport.height + .1) return null
+  // Native receipts can use a large page/window as the candidate scope. It is
+  // valid evidence coverage, but it is not a value location. Do not render
+  // several translucent scope boxes on top of each other; quote matching below
+  // will locate a concrete value when the PDF text layer contains it.
+  const coverageWidth = (right - left) / viewport.width
+  const coverageHeight = (bottom - top) / viewport.height
+  if (coverageWidth >= 0.6 && coverageHeight >= 0.7) return null
   return { left, top, width: right - left, height: bottom - top }
 }
 
 type TextRectangle = { left: number; top: number; width: number; height: number }
+
+type Highlight = { evidence: FactEvidence; index: number; rectangle: TextRectangle }
+
+function uniqueHighlights(items: Highlight[], selectedEvidenceId?: string) {
+  const byGeometry = new Map<string, Highlight>()
+  items.forEach((item) => {
+    const { left, top, width, height } = item.rectangle
+    const key = [left, top, width, height].map((value) => Math.round(value * 10) / 10).join(':')
+    const previous = byGeometry.get(key)
+    if (!previous || item.evidence.evidence_id === selectedEvidenceId) byGeometry.set(key, item)
+  })
+  return [...byGeometry.values()]
+}
 
 function normalizedText(value: string) {
   return value.normalize('NFKC').replace(/\s+/g, '')
@@ -61,7 +81,8 @@ function normalizedText(value: string) {
 /** 仅匹配原文引句（忽略空白、全半角），不猜测缺失坐标。 */
 function quoteRectangles(root: HTMLElement, evidence: FactEvidence): TextRectangle[] {
   const quote = normalizedText(evidence.quote || '')
-  if (quote.length < 4 || quote.length > 320) return []
+  const numeric = /^[-+]?\d+(?:[.,]\d+)?(?:[a-zA-Z%‰]+)?$/.test(quote)
+  if (!quote || quote.length > 320 || (!numeric && quote.length < 4)) return []
   const spans = [...root.querySelectorAll<HTMLElement>('.react-pdf__Page__textContent span')]
   const pageRect = root.getBoundingClientRect()
   const entries: Array<{ node: Text; offset: number; end: number; char: string }> = []
@@ -83,6 +104,14 @@ function quoteRectangles(root: HTMLElement, evidence: FactEvidence): TextRectang
   const rectangles: TextRectangle[] = []
   // 同一引句重复出现时显示各个匹配位置，不把第一处误当作唯一位置。
   for (let start = haystack.indexOf(quote); start >= 0; start = haystack.indexOf(quote, start + quote.length)) {
+    const first = entries[start], last = entries[start + quote.length - 1]
+    if (numeric) {
+      const before = (first.node.textContent || '').slice(0, first.offset).slice(-1)
+      const after = (last.node.textContent || '').slice(last.end, last.end + 1)
+      if (/[\d.]/.test(before) || /[\d.]/.test(after)) continue
+      // Do not combine adjacent table cells into a value that never existed.
+      if (first.node !== last.node && /^[-+]?\d+(?:[.,]\d+)?$/.test(quote)) continue
+    }
     const range = document.createRange()
     const end = start + quote.length - 1
     range.setStart(entries[start].node, entries[start].offset)
@@ -121,16 +150,16 @@ export default function PdfPreview({ url, evidencePage, evidence = [], selectedE
   }, [evidencePage, count, selectedEvidenceId, selectionRequest])
   const pageEvidence = useMemo(() => evidence.filter((item) => item.page_number === page), [evidence, page])
   const renderKey = `${url}|${page}|${width * zoom}`
-  const rectangles = useMemo(() => pdfPage?.pageNumber === page ? evidence.filter((item) => item.page_number === page).flatMap((item, index) => {
+  const rectangles = useMemo<Highlight[]>(() => pdfPage?.pageNumber === page ? uniqueHighlights(evidence.filter((item) => item.page_number === page).flatMap((item, index) => {
     const rectangle = evidenceRectangle(item, pdfPage, width * zoom)
     return rectangle ? [{ evidence: item, index, rectangle }] : []
-  }) : [], [evidence, pdfPage, page, width, zoom])
+  }), selectedEvidenceId) : [], [evidence, pdfPage, page, width, zoom, selectedEvidenceId])
   const textRectangles = useMemo(() => {
     if (!pageContainer.current || textLayerKey !== renderKey || pdfPage?.pageNumber !== page) return []
-    return pageEvidence.flatMap((item, index) => {
+    return uniqueHighlights(pageEvidence.flatMap((item, index) => {
       if (pdfPage && evidenceRectangle(item, pdfPage, width * zoom)) return []
       return quoteRectangles(pageContainer.current!, item).map((rectangle) => ({ evidence: item, index, rectangle }))
-    })
+    }), selectedEvidenceId)
   }, [pageEvidence, pdfPage, page, width, zoom, textLayerKey, renderKey])
   const textEvidenceCount = new Set(textRectangles.map((item) => item.index)).size
   useEffect(() => {

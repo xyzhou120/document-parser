@@ -154,7 +154,7 @@ async def reconcile_versions(sessions, limit=100):
     from app.services.attachment_version_service import finalize_version
     async with sessions() as db:
         ids = list((await db.scalars(select(AttachmentVersion.id).where(
-            AttachmentVersion.state.in_(['QUEUED', 'RUNNING', 'PREPARING_CONTENT', 'PAUSED']))
+            AttachmentVersion.state.in_(['QUEUED', 'RUNNING', 'PREPARING_CONTENT', 'PAUSED', 'WAITING_REUSE']))
             .order_by(AttachmentVersion.created_at).limit(limit))).all())
     for version_id in ids:
         async with sessions() as db, db.begin():
@@ -186,9 +186,14 @@ async def start_ready(sessions, limit=20):
     for attachment_id in ids:
         async with sessions() as db, db.begin():
             await db.execute(text('SELECT pg_advisory_xact_lock(753101502)'))
+            states = ['QUEUED', 'PREPARING_CONTENT', 'RUNNING', 'PAUSED']
+            if settings.agent.reliable_quantum_queue_enabled:
+                states.append('WAITING_REUSE')
             count = await db.scalar(select(func.count()).select_from(AttachmentVersion).where(
-                AttachmentVersion.state.in_(['QUEUED', 'PREPARING_CONTENT', 'RUNNING', 'PAUSED'])))
-            if count >= settings.attachment_import.parse_concurrency:
+                AttachmentVersion.state.in_(states)))
+            admission_limit = (settings.agent.reliable_inflight_documents
+                if settings.agent.reliable_quantum_queue_enabled else settings.attachment_import.parse_concurrency)
+            if count >= admission_limit:
                 return
             try:
                 async with db.begin_nested():

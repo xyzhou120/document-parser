@@ -103,3 +103,69 @@ async def test_saved_gateway_result_replays_after_expired_worker_without_provide
         max_quantums=5, lease_seconds=300)
     assert result["status"] == "COMPLETED"
     assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_v2_four_native_pages_survive_loss_of_entire_checkpoint(sessions, monkeypatch):
+    from app.config import settings
+    from app.models.execution import ParseModelCall
+    from sqlalchemy import func
+    from dataclasses import replace
+    monkeypatch.setattr(settings.agent, 'reliable_ledger_prefetch_enabled', True)
+    monkeypatch.setattr(settings.agent, 'reliable_page_parallelism', 4)
+    run_id = await make_run(sessions, 1, page_count=4, extraction_strategy='page_batch_v1',
+        text_override='报告正文 瓦斯压力 1.23MPa 实测。' * 140)
+    provider = SharedProvider()
+    instance = executor(sessions, provider)
+    instance.config = replace(instance.config, page_parallelism=4)
+    async with sessions() as db, db.begin():
+        token = await JobRepository(db).claim_next(run_id=run_id, owner='crashed-partners', lease_seconds=300)
+        job = await db.get(ParseFieldJob, token.job_id)
+        checkpoint = dict(job.checkpoint)
+    lost = await instance(token, checkpoint)
+    assert provider.calls == 4
+    assert len(lost.checkpoint['prefetched_calls']) == 3
+    # 故障注入：模型账本已保存，writer 与 checkpoint 尚未提交。
+    from datetime import datetime, timedelta
+    async with sessions() as db, db.begin():
+        job = await db.get(ParseFieldJob, token.job_id, with_for_update=True)
+        job.lease_until = datetime.utcnow() - timedelta(seconds=1)
+        await JobRepository(db).requeue_due()
+    resumed = executor(sessions, provider)
+    resumed.config = replace(resumed.config, page_parallelism=4)
+    result = await ReliableExtractionService().process_run(sessions, run_id, executor=resumed,
+        writer=resumed.write_result, before_publish=resumed.before_publish,
+        owner='recovered-partners', max_quantums=10, lease_seconds=300)
+    assert result['status'] == 'COMPLETED'
+    assert provider.calls == 4
+    async with sessions() as db:
+        assert await db.scalar(select(func.count()).select_from(ParseModelCall).where(
+            ParseModelCall.job_id == token.job_id)) == 4
+        job = await db.get(ParseFieldJob, token.job_id)
+        assert not job.checkpoint['prefetched_calls']
+
+
+@pytest.mark.asyncio
+async def test_global_quantum_slots_cap_actual_workers_and_release_on_yield(sessions, monkeypatch):
+    from app.config import settings
+    from app.services.execution import QuantumOutcome
+    monkeypatch.setattr(settings.agent, 'reliable_quantum_queue_enabled', True)
+    monkeypatch.setattr(settings.attachment_import, 'parse_concurrency', 1)
+    # 独立库可能保留之前故障注入的活动租约，只统计本轮通过唯一 owner 领取的记录。
+    from sqlalchemy import update
+    from datetime import datetime, timedelta
+    async with sessions() as db, db.begin():
+        await db.execute(update(ParseFieldJob).where(ParseFieldJob.execution_state == 'running')
+            .values(lease_until=datetime.utcnow() - timedelta(seconds=1)))
+        await JobRepository(db).requeue_due(limit=1000)
+    one, two = [await make_run(sessions, 1, extraction_strategy='page_batch_v1') for _ in range(2)]
+    async def claim(identity):
+        async with sessions() as db, db.begin():
+            return await JobRepository(db).claim_next(run_id=identity, owner='global-quantum', lease_seconds=300)
+    tokens = await asyncio.gather(claim(one), claim(two))
+    assert sum(t is not None for t in tokens) == 1
+    held = next(t for t in tokens if t)
+    other = two if held.run_id == one else one
+    async with sessions() as db, db.begin():
+        await JobRepository(db).transition(held, 'yield', checkpoint={'cursor': 1})
+    assert await claim(other) is not None

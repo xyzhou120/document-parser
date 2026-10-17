@@ -38,6 +38,7 @@ class PageProgress(BaseModel):
     total_pages: int = 0
     failed_units: int = 0
     strategy: str = "page_batch_v1"
+    summary_pending: bool = False
 
 
 class ExecutionResponse(BaseModel):

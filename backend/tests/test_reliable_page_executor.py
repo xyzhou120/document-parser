@@ -55,8 +55,22 @@ class MemoryRows:
         return rows
 
     async def execute(self, statement):
+        if getattr(statement, "is_insert", False):
+            for values in statement._multi_values[0]:
+                values = {getattr(key, "key", key): value for key, value in values.items()}
+                row = next((r for r in self.rows if isinstance(r, ParseCandidate)
+                            and r.job_id == values["job_id"] and r.stable_key == values["stable_key"]), None)
+                if row is None:
+                    self.rows.append(ParseCandidate(**values))
+                else:
+                    for key, value in values.items():
+                        setattr(row, key, value)
+            return SimpleNamespace()
         rows = self._query(statement)
         return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows))
+
+    def expunge(self, row):
+        pass
 
     async def scalar(self, statement):
         rows = self._query(statement)
@@ -96,7 +110,7 @@ class PageProvider:
             "usage": {"prompt_tokens": 40, "completion_tokens": 20, "total_tokens": 60}}
 
 
-def setup_executor(count=12, page_count=2, mode="facts", scopes=None, source="native"):
+def setup_executor(count=12, page_count=2, mode="facts", scopes=None, source="native", schema_v2=False):
     document_id, run_id, revision = uuid4(), uuid4(), uuid4()
     rules = [RuleSpec(field_key=f"f{i:02}", field_name_cn="瓦斯压力", data_type="float", unit="MPa",
         value_kind="measured", strategy={"semantic_contract": {"scope": scopes}} if scopes else {})
@@ -108,6 +122,8 @@ def setup_executor(count=12, page_count=2, mode="facts", scopes=None, source="na
     run = ParseRun(parse_run_id=run_id, document_id=document_id, content_revision_id=revision,
         extraction_profile={"extraction_strategy": "page_batch_v1", "coordinator_field_key": "f00",
             "hard_limit_tokens": 400000, "max_run_seconds": 300})
+    if schema_v2:
+        run.extraction_profile.update(page_checkpoint_schema_version="page-checkpoint-v2")
     rows = MemoryRows([run, *jobs, Document(document_id=document_id)])
     provider = PageProvider(mode)
     gateway = ModelGateway(provider, MemoryCallLedger(), ServiceCircuit(MemoryCircuitStore()))
@@ -121,12 +137,196 @@ def setup_executor(count=12, page_count=2, mode="facts", scopes=None, source="na
     return executor, rows, jobs, provider, token
 
 
+async def test_v2_checkpoint_is_compact_and_replays_ledger_result():
+    executor, rows, jobs, provider, token = setup_executor(count=1, page_count=1, schema_v2=True)
+    first = await executor(token, jobs[0].checkpoint)
+    assert first.state == "yielded"
+    assert first.result_data is not None
+    encoded = json.dumps(first.checkpoint, ensure_ascii=False)
+    assert "报告正文" not in encoded
+    assert "response" not in encoded
+    assert "prefetched_responses" not in first.checkpoint
+    assert first.checkpoint["schema_version"] == "page-checkpoint-v2"
+    assert first.checkpoint["page_results"][0]["call_id"]
+
+    resumed = await executor(replace(token, fence_token=2), first.checkpoint)
+    assert resumed.state == "done"
+    assert provider.calls == 1
+
+
+async def test_v2_split_and_model_call_share_the_same_quantum():
+    executor, _rows, jobs, provider, token = setup_executor(count=12, page_count=1, schema_v2=True)
+    executor._revision_content.return_value["pages"][0]["text_blocks"][0]["text"] = (
+        "报告正文 瓦斯压力 1.23MPa 实测。\n" * 80)
+    first = await executor(token, jobs[0].checkpoint)
+    assert first.state == "yielded"
+    assert provider.calls == 1
+    assert first.checkpoint["split_history"]
+    assert first.checkpoint["page_results"]
+    assert first.checkpoint["page_results"][0]["call_id"]
+
+
+async def test_v2_writer_recovery_uses_compact_checkpoint_and_closes_summary():
+    executor, rows, jobs, provider, token = setup_executor(count=1, page_count=1, schema_v2=True)
+    first = await executor(token, jobs[0].checkpoint)
+    await executor.write_result(rows, jobs[0], first)
+    compact = first.checkpoint
+    assert compact["page_write_sync"]["results"]
+    restarted = ReliablePageExecutor(lambda: rows, executor.gateway, executor.config)
+    restarted._revision_content = executor._revision_content
+    finished = await restarted(replace(token, fence_token=2), compact)
+    assert finished.state == "done"
+    await restarted.write_result(rows, jobs[0], finished)
+    assert provider.calls == 1
+    field = next(row for row in rows.rows if isinstance(row, ExtractedFieldModel))
+    assert field.validation_status in {"completed", "review_required", "not_found"}
+
+
+async def test_v2_image_receipt_is_durable_and_replayed_from_ledger():
+    executor, _rows, jobs, provider, token = setup_executor(
+        count=1, page_count=1, source="ocr", schema_v2=True)
+    executor._revision_content.return_value["pages"][0]["text_blocks"][0]["label"] = "table"
+    image_calls = 0
+
+    async def image_provider(document, pages, candidate):
+        nonlocal image_calls
+        image_calls += 1
+        return b"page-image", {"image_hash": "image-digest", "bbox": [0, 0, 10, 10]}
+
+    executor.image_provider = image_provider
+    first = await executor(token, jobs[0].checkpoint)
+    row = first.checkpoint["page_results"][0]
+    assert row["image_call_id"]
+    assert row["image_verification"]["image_hash"] == "image-digest"
+    resumed = await executor(replace(token, fence_token=2), first.checkpoint)
+    assert resumed.state == "done"
+    assert image_calls == 1
+    assert provider.calls == 2
+
+
+@pytest.mark.parametrize("source,table", [("native", False), ("ocr", False), ("ocr", True)])
+async def test_v2_and_legacy_publish_identical_facts_and_evidence(source, table):
+    executor, rows, jobs, provider, token = setup_executor(count=2, page_count=2,
+                                                         source=source, schema_v2=True)
+    if table:
+        for page in executor._revision_content.return_value["pages"]:
+            page["text_blocks"][0]["label"] = "table"
+        executor.image_provider = AsyncMock(return_value=(b"image", {"image_hash": "digest"}))
+    baseline = MemoryRows(deepcopy(rows.rows))
+    baseline.ledger = rows.ledger
+    baseline_run = next(row for row in baseline.rows if isinstance(row, ParseRun))
+    baseline_run.extraction_profile.pop("page_checkpoint_schema_version")
+    baseline_jobs = [next(row for row in baseline.rows if isinstance(row, ParseFieldJob)
+                          and row.job_id == job.job_id) for job in jobs]
+    legacy = ReliablePageExecutor(lambda: baseline, executor.gateway, executor.config,
+                                  image_provider=executor.image_provider)
+    legacy._revision_content = executor._revision_content
+    await process(executor, rows, jobs, token)
+    paid_calls = provider.calls
+    await process(legacy, baseline, baseline_jobs, token)
+    assert provider.calls == paid_calls
+    def fields(memory):
+        return {row.field_key: (row.instances, row.validation_status, row.extraction_detail)
+                for row in memory.rows if isinstance(row, ExtractedFieldModel)}
+    assert fields(rows) == fields(baseline)
+
+
+async def test_v2_each_page_queries_only_changed_stable_keys_and_never_summarizes_early():
+    executor, rows, jobs, provider, token = setup_executor(count=2, page_count=6, schema_v2=True)
+    for index, page in enumerate(executor._revision_content.return_value["pages"]):
+        page["text_blocks"][0]["source"] = f"source-{index}"
+    cp = jobs[0].checkpoint
+    queries = []
+    original = rows.execute
+    async def track(statement):
+        queries.append(statement)
+        return await original(statement)
+    rows.execute = track
+    for _ in range(6):
+        outcome = await executor(token, cp)
+        assert outcome.state == "yielded"
+        queries.clear()
+        await executor.write_result(rows, jobs[0], outcome)
+        candidates = [q for q in queries if getattr(q, "is_select", False)
+                      and q.column_descriptions[0]["entity"] is ParseCandidate]
+        assert len(candidates) == 1 and "stable_key IN" in str(candidates[0])
+        assert not any(getattr(q, "is_select", False)
+                       and q.column_descriptions[0]["entity"] is ExtractedFieldModel for q in queries)
+        assert not any(isinstance(row, ExtractedFieldModel) for row in rows.rows)
+        assert outcome.checkpoint["page_progress"]["summary_pending"] is True
+        cp = outcome.checkpoint
+    finished = await executor(token, cp)
+    assert finished.state == "done"
+    # Writer recovery receives only the compact durable checkpoint.
+    finished.result_data = None
+    await executor.write_result(rows, jobs[0], finished)
+    assert finished.checkpoint["page_progress"]["summary_pending"] is False
+    assert finished.checkpoint["finalize_phase"] == "done"
+    assert len([row for row in rows.rows if isinstance(row, ExtractedFieldModel)]) == 2
+    assert provider.calls == 6
+
+
+async def test_v2_paid_parent_split_replays_after_lost_publish_and_excludes_parent_candidates():
+    executor, rows, jobs, provider, token = setup_executor(count=2, page_count=1, schema_v2=True)
+    original = provider.create
+    async def truncate_first(**kwargs):
+        response = await original(**kwargs)
+        if provider.calls == 1:
+            response["choices"][0]["finish_reason"] = "length"
+        return response
+    provider.chat.completions.create = truncate_first
+    split = await executor(token, jobs[0].checkpoint)
+    history = split.checkpoint["split_history"][0]
+    assert history["call_id"] and history["reason"] == "length"
+    # The model ledger committed but the page transaction did not.
+    replay = await executor(replace(token, fence_token=2), jobs[0].checkpoint)
+    assert provider.calls == 1
+    assert replay.checkpoint["split_history"] == split.checkpoint["split_history"]
+    await executor.write_result(rows, jobs[0], replay)
+    result = await process(executor, rows, jobs, token, replay.checkpoint)
+    assert result.state == "done"
+    assert provider.calls == 3
+    assert all(row.stable_key != "page_batch:" + history["parent"]
+               for row in rows.rows if isinstance(row, ParseCandidate))
+
+
+@pytest.mark.parametrize("schema_v2", [False, True])
+async def test_explicit_failed_retry_removes_failed_result_and_replaces_candidate(schema_v2):
+    from app.services.execution.job_repository import JobRepository
+    executor, rows, jobs, provider, token = setup_executor(count=1, page_count=1,
+                                                         mode="invalid", schema_v2=schema_v2)
+    cp = jobs[0].checkpoint
+    for _ in range(2):
+        outcome = await executor(token, cp)
+        await executor.write_result(rows, jobs[0], outcome)
+        cp = outcome.checkpoint
+    assert cp["failed_units"]
+    failed_id = cp["failed_units"][0]
+    jobs[0].checkpoint = cp
+    jobs[0].execution_state = "failed_terminal"
+    jobs[0].fence_token = 1
+    run = next(row for row in rows.rows if isinstance(row, ParseRun))
+    run.status, run.execution_generation = "FAILED", 0
+    repo = JobRepository(rows)
+    repo.enqueue_outbox = AsyncMock()
+    await repo.control_run(run.parse_run_id, "resume", retry_failed=True)
+    assert jobs[0].checkpoint["page_results"] == []
+    assert jobs[0].checkpoint["page_index"] == 0
+    assert jobs[0].checkpoint["unit_retry_generations"][failed_id] == 1
+    provider.mode = "facts"
+    result = await process(executor, rows, jobs, replace(token, fence_token=3))
+    assert result.state == "done"
+    candidates = [row for row in rows.rows if isinstance(row, ParseCandidate)]
+    assert len(candidates) == 1 and candidates[0].state == "accepted"
+    assert candidates[0].evidence["validated_facts"]
+
+
 @pytest.mark.parametrize("stage", ["page", "image"])
 @pytest.mark.parametrize("after_timeout", [False, True])
-@pytest.mark.parametrize("old_checkpoint", [False, True])
-async def test_circuit_wait_replays_same_attempt_and_preserves_paid_results(stage, after_timeout, old_checkpoint):
+@pytest.mark.parametrize("old_checkpoint,schema_v2", [(False, False), (True, False), (False, True)])
+async def test_circuit_wait_replays_same_attempt_and_preserves_paid_results(stage, after_timeout, old_checkpoint, schema_v2):
     executor, rows, jobs, provider, token = setup_executor(
-        count=1, page_count=1, source="ocr" if stage == "image" else "native")
+        count=1, page_count=1, source="ocr" if stage == "image" else "native", schema_v2=schema_v2)
     if stage == "image":
         executor._revision_content.return_value["pages"][0]["text_blocks"][0]["label"] = "table"
         executor.image_provider = AsyncMock(return_value=(b"page-image", {"image_hash": "abc"}))
@@ -793,3 +993,45 @@ async def test_split_depth_limit_fails_boundedly_instead_of_expanding_forever():
     assert outcome.semantic_state == "review_required"
     assert executor.gateway.execute.await_count == 1
     assert outcome.checkpoint["failed_units"]
+
+
+async def test_v2_four_partner_calls_replay_after_crash_before_checkpoint_commit():
+    executor, rows, jobs, provider, token = setup_executor(count=1, page_count=4, schema_v2=True)
+    executor.config = replace(executor.config, page_parallelism=4)
+    run = next(row for row in rows.rows if isinstance(row, ParseRun))
+    run.extraction_profile['ledger_prefetch_enabled'] = True
+    for index, page in enumerate(executor._revision_content.return_value['pages']):
+        page['text_blocks'][0]['source'] = f'native-{index}'
+    original = deepcopy(jobs[0].checkpoint)
+    lost = await executor(token, original)
+    assert provider.calls == 4
+    assert len(lost.checkpoint['prefetched_calls']) == 3
+    assert 'prefetched_responses' not in lost.checkpoint
+    # 此时只保留模型账本，丢弃整个尚未提交的页 outcome。
+    replayed = await executor(replace(token, fence_token=2), original)
+    assert provider.calls == 4
+    await executor.write_result(rows, jobs[0], replayed)
+    checkpoint = replayed.checkpoint
+    for _ in range(6):
+        outcome = await executor(replace(token, fence_token=3), checkpoint)
+        await executor.write_result(rows, jobs[0], outcome)
+        checkpoint = outcome.checkpoint
+        if outcome.state == 'done':
+            break
+    assert outcome.state == 'done' and provider.calls == 4
+    assert not checkpoint['prefetched_calls']
+
+
+async def test_v2_preflight_minimum_unit_overflow_never_calls_provider():
+    from app.services.model_gateway import GatewayPolicy
+    executor, rows, jobs, provider, token = setup_executor(count=1, page_count=1, schema_v2=True)
+    executor.gateway.policy = GatewayPolicy(context_capacity=2800)
+    for _ in range(6):
+        outcome = await executor(token, jobs[0].checkpoint)
+        await executor.write_result(rows, jobs[0], outcome)
+        jobs[0].checkpoint = outcome.checkpoint
+        if outcome.state == 'done':
+            break
+    assert provider.calls == 0
+    assert outcome.state == 'done'
+    assert outcome.checkpoint['failed_units']

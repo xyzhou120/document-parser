@@ -173,13 +173,20 @@ class AgentSettings(BaseSettings):
     reliable_max_seconds: int | None = None
     reliable_token_limit: int | None = None
     # 提取按整页发送。只有单页正文超过这个长度才预切；模型回答过长时再拆这一页。
-    page_batch_chars: int = 100000
+    page_batch_chars: int = 24000
     # 可靠按页提取的上下文预算，对应模型约 26 万窗口中的 13 万。
     reliable_context_tokens: int = 131072
     # 单页原图估算上限。整页图进入同一次提取，不再被旧的 4000 上限拆开。
     reliable_max_image_tokens: int = 16000
     # 一份文档同时发出的页请求数。每次请求仍然只包含一页。
     reliable_page_parallelism: int = 4
+    # B 阶段仅在共享执行物化验收通过后开启；默认关闭避免跨附件误复用。
+    shared_execution_enabled: bool = False
+    # 账本恢复验收前保持页预取关闭；开启后 profile 才冻结 2-4 个伙伴请求。
+    reliable_ledger_prefetch_enabled: bool = False
+    # B 阶段将活动文档与实际页执行槽分开；待执行文档数量仍有界。
+    reliable_quantum_queue_enabled: bool = False
+    reliable_inflight_documents: int = Field(default=32, ge=1, le=1000)
     # 单次唤醒的公平性预算；只在量子之间检查，不取消正在完成的页调用。
     reliable_wakeup_seconds: int = Field(default=120, ge=1, le=1800)
     reliable_wakeup_quantums: int = Field(default=20, ge=1, le=1000)

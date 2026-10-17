@@ -14,7 +14,34 @@ async def control_attachment(db, a, action, *, actor, reason):
     v = await db.scalar(select(AttachmentVersion).where(AttachmentVersion.attachment_id == a.id)
         .order_by(AttachmentVersion.number.desc()).with_for_update().limit(1))
     if v and not v.snapshot:
+        shared_waiting = None
         if v.run_id:
+            from app.models.database import ParseRun
+            shared_run = await db.get(ParseRun, v.run_id)
+            if (shared_run.extraction_profile or {}).get('shared_execution_id'):
+                from app.models.shared_execution import SharedExecutionSubscriber
+                shared_waiting = await db.scalar(select(SharedExecutionSubscriber).where(
+                    SharedExecutionSubscriber.target_version_id == v.id,
+                    SharedExecutionSubscriber.state.in_(['WAITING', 'CANCELLED'])).with_for_update())
+        if shared_waiting:
+            from app.models.database import ParseRun
+            from app.models.execution import ParseFieldJob
+            run = await db.get(ParseRun, v.run_id, with_for_update=True)
+            if shared_waiting.state == 'CANCELLED' and action != 'cancel':
+                raise VersionError('SHARED_TARGET_CANCELLED：请创建新的提取操作')
+            if action == 'cancel':
+                shared_waiting.state = 'CANCELLED'
+                run.status = v.state = 'CANCELLED'
+                run.execution_generation += 1
+                for job in (await db.scalars(select(ParseFieldJob).where(
+                        ParseFieldJob.run_id == run.parse_run_id).with_for_update())).all():
+                    job.execution_state, job.phase = 'cancelled', 'cancelled'
+                    job.fence_token += 1
+            elif action == 'pause':
+                run.status = v.state = 'PAUSED'
+            elif action in {'resume', 'retry'}:
+                run.status = v.state = 'WAITING_REUSE'
+        elif v.run_id:
             await reliable_extraction_service.control(db, v.run_id, 'resume' if action == 'retry' else action,
                                                        retry_failed=action == 'retry')
             v.state = {'pause': 'PAUSED', 'resume': 'RUNNING', 'retry': 'RUNNING', 'cancel': 'CANCELLED'}[action]

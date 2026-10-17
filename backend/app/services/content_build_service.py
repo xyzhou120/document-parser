@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
@@ -19,9 +20,21 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select, text
 
 from app.models.content import ContentBuildJob
+from app.services.content_build_storage import ContentCheckpoint, load_checkpoint, prepare_storage, store_checkpoint
 from app.services.service_circuit import CircuitPermit, ServiceCircuit
+
+
+logger = logging.getLogger(__name__)
+
+
+def _prepare_checkpoint(checkpoint):
+    started = time.monotonic()
+    value = _jsonable(checkpoint)
+    size = len(json.dumps(value).encode("utf-8"))
+    return value, size, time.monotonic() - started
 
 
 def _digest(value: bytes | str) -> str:
@@ -214,18 +227,43 @@ class ContentBuildService:
         checkpoint["coverage_manifest"] = ContentBuildService._manifest(checkpoint, expected_count)
 
     async def _save(self, db, job, checkpoint, fence, worker_id, *, state="running", phase="regions", error=None):
+        # 在持行锁前准备 JSON；独立续租心跳仍可运行。ORM 驱动的实际
+        # JSON 编码和数据库提交耗时归入 write_seconds。
+        serialization_started = time.monotonic()
+        storage_plan = await asyncio.to_thread(prepare_storage, job.build_id, checkpoint, _jsonable)
+        checkpoint_bytes = len(json.dumps(storage_plan[0]).encode("utf-8"))
+        serialization_seconds = time.monotonic() - serialization_started
+        lock_started = time.monotonic()
         current = await db.get(ContentBuildJob, job.build_id, with_for_update=True, populate_existing=True)
+        lock_acquire_seconds = time.monotonic() - lock_started
+        now = datetime.utcnow()
         if (current is None or current.fence_token != fence or current.lease_owner != worker_id
-                or current.lease_until is None or current.lease_until <= datetime.utcnow()):
+                or current.lease_until is None or current.lease_until <= now):
+            logger.warning("content_build_save_stale build_id=%s fence=%s current_fence=%s "
+                           "lease_until=%s observed_at=%s serialization_seconds=%.3f "
+                           "lock_acquire_seconds=%.3f checkpoint_bytes=%s",
+                           job.build_id, fence, getattr(current, "fence_token", None),
+                           getattr(current, "lease_until", None), now.isoformat(), serialization_seconds,
+                           lock_acquire_seconds, checkpoint_bytes)
             await db.rollback()
             raise ContentBuildError("stale content build worker cannot submit")
-        current.checkpoint = _jsonable(checkpoint)
+        lease_remaining_seconds = (current.lease_until - now).total_seconds()
+        write_started = time.monotonic()
+        prepared, fingerprints, changed_entries = await store_checkpoint(db, current, storage_plan)
+        current.checkpoint = prepared
         current.dispatch_state = state
         current.phase = phase
         current.last_error = error
         current.lease_until = datetime.utcnow() + timedelta(seconds=self.lease_seconds) if state == "running" else None
         await db.flush()
         await db.commit()
+        if isinstance(checkpoint, ContentCheckpoint):
+            checkpoint.fingerprints = fingerprints
+            checkpoint["source_pages_stored"] = prepared["source_pages_stored"]
+        logger.info("content_build_save build_id=%s fence=%s state=%s serialization_seconds=%.3f "
+                    "lock_acquire_seconds=%.3f write_seconds=%.3f checkpoint_bytes=%s lease_remaining_seconds=%.3f changed_entries=%s",
+                    job.build_id, fence, state, serialization_seconds, lock_acquire_seconds,
+                    time.monotonic() - write_started, checkpoint_bytes, lease_remaining_seconds, changed_entries)
 
     @staticmethod
     def _manifest(checkpoint, expected_count):
@@ -258,17 +296,33 @@ class ContentBuildService:
         if current.lease_until and current.lease_until > datetime.utcnow():
             await db.rollback()
             raise ContentBuildError("content build is already leased")
+        from app.config import settings
+        if settings.agent.reliable_quantum_queue_enabled:
+            from app.models.execution import ParseFieldJob
+            await db.execute(text('SELECT pg_advisory_xact_lock(753101503)'))
+            now = datetime.utcnow()
+            running = await db.scalar(select(func.count()).select_from(ParseFieldJob).where(
+                ParseFieldJob.execution_state == "running", ParseFieldJob.lease_until > now))
+            running += await db.scalar(select(func.count()).select_from(ContentBuildJob).where(
+                ContentBuildJob.dispatch_state == "running", ContentBuildJob.lease_until > now))
+            if running >= settings.attachment_import.parse_concurrency:
+                current.dispatch_state = "yielded"
+                await db.commit()
+                return deepcopy(current.checkpoint or {})
+        previous_fence, previous_lease_until = current.fence_token, current.lease_until
         current.fence_token = (current.fence_token or 0) + 1
         current.lease_owner = worker_id
         current.lease_until = datetime.utcnow() + timedelta(seconds=self.lease_seconds)
         current.attempt = (current.attempt or 0) + 1
         fence = current.fence_token
-        checkpoint = deepcopy(current.checkpoint or {"pages": {}, "regions": {}})
+        checkpoint = await load_checkpoint(db, current)
         checkpoint.setdefault("pages", {})
         checkpoint.setdefault("regions", {})
         current.phase = "regions"
         current.dispatch_state = "running"
         await db.commit()
+        logger.info("content_build_claim build_id=%s fence=%s previous_fence=%s previous_lease_until=%s claimed_at=%s",
+                    job.build_id, fence, previous_fence, previous_lease_until, datetime.utcnow().isoformat())
         expected_count = expected_page_count or checkpoint.get("expected_page_count") or (job.profile or {}).get("expected_page_count") or len(pages)
         if expected_count <= 0 or max_regions <= 0:
             raise ValueError("positive page count and region quantum required")
@@ -294,7 +348,6 @@ class ContentBuildService:
                 or (regions and all(region.get("whole_page") is True for region in regions)
                     and page.get("coverage_attested") is True)
             )
-            page_cp["native_page"] = {k: deepcopy(v) for k, v in page.items() if k not in {"image_bytes", "rendered_image", "regions", "ocr_regions"}}
             page_cp["regions"] = [str(r["region_id"]) for r in regions]
             for region_index, region in enumerate(regions):
                 rid = str(region["region_id"])

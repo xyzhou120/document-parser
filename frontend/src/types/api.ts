@@ -273,6 +273,7 @@ export interface ExecutionResponse {
     total_pages: number
     failed_units: number
     strategy: string
+    summary_pending?: boolean
   } | null
   next_cursor?: string | null
   legacy?: boolean

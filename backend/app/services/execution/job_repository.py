@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
@@ -35,6 +35,15 @@ _COUNTED_RUN_STATUSES = {"COMPLETED", "COMPLETED_WITH_REVIEW", "FAILED"}
 # 这些状态没有可展示的抽出值。review_required 不在其中，仍需核对的值照常计数。
 _WITHOUT_EXTRACTED_VALUE = {"missing", "blocked", "incomplete", "not_found"}
 RELIABLE_CONTRACT = "reliable-extraction-v2"
+
+
+def _checkpoint_result_unit_id(result: dict[str, Any]) -> str | None:
+    """Read both the legacy nested and page-checkpoint-v2 result shapes."""
+    unit_id = result.get("unit_id")
+    if unit_id:
+        return str(unit_id)
+    unit = result.get("unit") or {}
+    return str(unit.get("unit_id")) if unit.get("unit_id") else None
 
 
 def field_has_extracted_value(field: Any) -> bool:
@@ -174,6 +183,17 @@ class JobRepository:
         job = await self.db.scalar(query.execution_options(populate_existing=True))
         if job is None:
             return None
+        from app.config import settings
+        if settings.agent.reliable_quantum_queue_enabled:
+            # 只在领取瞬间串行化容量计数；模型请求期间完全不持全局锁。
+            await self.db.execute(text('SELECT pg_advisory_xact_lock(753101503)'))
+            running = await self.db.scalar(select(func.count()).select_from(ParseFieldJob).where(
+                ParseFieldJob.execution_state == "running", ParseFieldJob.lease_until > now))
+            from app.models.content import ContentBuildJob
+            running += await self.db.scalar(select(func.count()).select_from(ContentBuildJob).where(
+                ContentBuildJob.dispatch_state == "running", ContentBuildJob.lease_until > now))
+            if running >= settings.attachment_import.parse_concurrency:
+                return None
         run.status = "RUNNING"
         if run.started_at is None:
             run.started_at = now
@@ -193,7 +213,17 @@ class JobRepository:
         )).scalars().all()
         count = 0
         for job_id in rows:
-            job, run = await self._locked(job_id)
+            run_id = await self.db.scalar(select(ParseFieldJob.run_id).where(ParseFieldJob.job_id == job_id))
+            # Recovery must not let one long publish transaction block every
+            # other document. Preserve run -> job ordering, but skip busy rows.
+            run = await self.db.scalar(select(ParseRun).where(ParseRun.parse_run_id == run_id)
+                .with_for_update(skip_locked=True).execution_options(populate_existing=True))
+            if run is None:
+                continue
+            job = await self.db.scalar(select(ParseFieldJob).where(ParseFieldJob.job_id == job_id)
+                .with_for_update(skip_locked=True).execution_options(populate_existing=True))
+            if job is None:
+                continue
             if run.status not in ACTIVE_RUN_STATES:
                 continue
             due = (job.execution_state == "yielded" and (job.next_attempt_at is None or job.next_attempt_at <= now))
@@ -396,16 +426,26 @@ class JobRepository:
                     units = list(checkpoint.get("page_units") or [])
                     if failed_units:
                         checkpoint["page_results"] = [result for result in checkpoint.get("page_results", [])
-                            if (result.get("unit") or {}).get("unit_id") not in failed_units]
+                            if _checkpoint_result_unit_id(result) not in failed_units]
+                        sync = dict(checkpoint.get("page_write_sync") or {})
+                        sync["results"] = {key: value for key, value in (sync.get("results") or {}).items()
+                                           if key not in failed_units}
+                        checkpoint["page_write_sync"] = sync
                         checkpoint["page_index"] = min(
-                            (index for index, unit in enumerate(units) if unit.get("unit_id") in failed_units),
+                            (index for index, unit in enumerate(units)
+                             if str(unit.get("unit_id")) in failed_units),
                             default=int(checkpoint.get("page_index", 0)))
                         checkpoint["failed_units"] = []
+                        checkpoint["invalid_retried"] = {key: value for key, value in
+                            (checkpoint.get("invalid_retried") or {}).items() if key not in failed_units}
                         generations = dict(checkpoint.get("unit_retry_generations") or {})
                         for unit_id in failed_units:
                             generations[unit_id] = int(generations.get(unit_id, 0)) + 1
                         checkpoint["unit_retry_generations"] = generations
                         checkpoint["page_retry"] = 0
+                        for key in ("pending_extraction", "prior_call_id", "external_quota", "active_call",
+                                    "image_retry", "image_prior_call_id", "image_external_quota", "active_image_call"):
+                            checkpoint.pop(key, None)
                     job.checkpoint = checkpoint
             if action == "resume" and job.execution_state == "queued":
                 checkpoint = dict(job.checkpoint or {})
@@ -467,6 +507,24 @@ class JobRepository:
                                     ExecutionOutbox.dedupe_key == dedupe_key))
         assert event is not None
         return event
+
+    async def consume_content_wakeup(self, build_id, event_id, *, dispatch_attempt=None, task_id=None):
+        from app.models.content import ContentBuildJob
+        build = await self.db.get(ContentBuildJob, build_id, with_for_update=True, populate_existing=True)
+        if build is None or build.dispatch_state in {"paused", "cancelled", "superseded", "failed_terminal"}:
+            return False
+        event = await self.db.get(ExecutionOutbox, event_id, with_for_update=True, populate_existing=True)
+        if (event is None or event.kind != "content.build.execute" or event.aggregate_id != build_id
+                or not (event.payload or {}).get("dispatch_outstanding")
+                or (dispatch_attempt is not None and event.attempts != dispatch_attempt)):
+            return False
+        valid = (event.payload or {}).get("build_fence") == build.fence_token
+        event.payload = {**dict(event.payload), "dispatch_outstanding": False,
+            "received_at": datetime.utcnow().isoformat(), "received_task_id": task_id}
+        if event.dispatch_state in {"sending", "failed"}:
+            event.dispatch_state = "sent"
+        event.next_attempt_at = None
+        return valid
 
     async def ensure_run_continuation_wakeup(self, run_id: UUID, jobs: list[ParseFieldJob],
                                              *, execution_generation: int) -> ExecutionOutbox:

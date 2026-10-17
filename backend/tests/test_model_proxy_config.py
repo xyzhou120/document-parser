@@ -70,7 +70,8 @@ def test_injected_checklist_client_does_not_create_transport():
     ({}, False, False),
     ({}, True, True),
 ])
-def test_reliable_wakeup_selects_transport_and_closes_owned_client(frozen, local, expected):
+@pytest.mark.parametrize("remaining", [0, 1])
+def test_reliable_wakeup_selects_transport_and_closes_owned_client(frozen, local, expected, remaining):
     from app.tasks import reliable_execution_wakeup_task
 
     run = SimpleNamespace(contract_version="reliable-extraction-v2", status="RUNNING",
@@ -92,9 +93,13 @@ def test_reliable_wakeup_selects_transport_and_closes_owned_client(frozen, local
             patch("httpx.AsyncClient") as transport, \
             patch("openai.AsyncOpenAI", return_value=client) as sdk, \
             patch("app.services.reliable_extraction_service.reliable_extraction_service.process_run",
-                  AsyncMock(return_value={"status": "COMPLETED", "remaining_runnable": 0})):
+                  AsyncMock(return_value={"status": "RUNNING" if remaining else "COMPLETED",
+                                         "remaining_runnable": remaining})), \
+            patch("app.tasks.reliable_execution_dispatch_task.apply_async") as dispatch:
         result = reliable_execution_wakeup_task.run(str(uuid4()))
-    assert result["status"] == "COMPLETED"
+    assert result["status"] == ("RUNNING" if remaining else "COMPLETED")
+    # 后续 outbox 等待独立调度；有剩余工作的量子也不能制造全局恢复消息。
+    dispatch.assert_not_called()
     transport.assert_called_once_with(trust_env=expected)
     assert sdk.call_args.kwargs["http_client"] is transport.return_value
     client.close.assert_awaited_once()

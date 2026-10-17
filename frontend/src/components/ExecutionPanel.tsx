@@ -185,7 +185,9 @@ export default function ExecutionPanel({ runId, fields, onChange }: {
         </Space>}
       </div>
       {data.page_progress && <p className="execution-note" aria-live="polite">
-        {data.page_progress.failed_units > 0
+        {data.page_progress.summary_pending
+          ? '候选已保存，最终事实待汇总。'
+          : data.page_progress.failed_units > 0
           ? `有 ${data.page_progress.failed_units} 个内容块处理失败，相关字段仍需核验。`
           : data.automatic_complete
             ? '页面抽取已完成。自动提取结果仍待人工核对，完成状态不代表取值已经确认正确。'

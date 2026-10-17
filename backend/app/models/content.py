@@ -6,7 +6,7 @@ from typing import Optional
 
 from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Integer, String, Text, UniqueConstraint, event
 from sqlalchemy.dialects.postgresql import JSON, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, deferred, mapped_column
 
 from app.models.database import Base
 
@@ -24,6 +24,9 @@ class ContentBuildJob(Base):
     file_hash: Mapped[str] = mapped_column(String(64), index=True)
     profile: Mapped[dict] = mapped_column(JSON, default=dict)
     parent_revision_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("content_revisions.revision_id"), nullable=True, index=True)
+    # 原始页输入是不可变内容准备产物，不应随每个 OCR 量子重复写入 checkpoint。
+    # 旧任务仍可从 checkpoint.source_pages 兼容读取。
+    source_pages: Mapped[Optional[list]] = deferred(mapped_column(JSON, nullable=True))
     phase: Mapped[str] = mapped_column(String(50), default="planned", index=True)
     checkpoint: Mapped[dict] = mapped_column(JSON, default=dict)
     dispatch_state: Mapped[str] = mapped_column(String(32), default="queued", index=True)
@@ -34,6 +37,17 @@ class ContentBuildJob(Base):
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class ContentBuildEntry(Base):
+    """构建中的区域结果和预取回执；与紧凑检查点在同一栅栏事务提交。"""
+
+    __tablename__ = "content_build_entries"
+
+    build_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("content_build_jobs.build_id"), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), primary_key=True)
+    entry_key: Mapped[str] = mapped_column(String(500), primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON)
 
 
 class ContentRevision(Base):

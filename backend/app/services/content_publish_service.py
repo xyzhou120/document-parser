@@ -51,7 +51,7 @@ class ContentPublishService:
             ParseRun.document_id == document_id,
             ParseRun.content_revision_id != revision_id,
             ParseRun.contract_version == "reliable-extraction-v2",
-            ParseRun.status.in_(["PLANNED", "PENDING", "RUNNING", "YIELDED", "WAITING_SERVICE", "WAITING_EXTERNAL_QUOTA", "PARTIAL", "PAUSED"])
+            ParseRun.status.in_(["PLANNED", "PENDING", "RUNNING", "YIELDED", "WAITING_SERVICE", "WAITING_EXTERNAL_QUOTA", "PARTIAL", "PAUSED", "WAITING_REUSE"])
         ).order_by(ParseRun.parse_run_id).with_for_update().execution_options(populate_existing=True))).scalars().all())
         superseded: list[UUID] = []
         for run in runs:

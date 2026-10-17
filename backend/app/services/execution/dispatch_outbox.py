@@ -10,6 +10,7 @@ from sqlalchemy import exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import ParseRun
+from app.models.content import ContentBuildJob
 from app.models.execution import ExecutionOutbox, ParseFieldJob
 
 from .field_scheduler import ACTIVE_RUN_STATES
@@ -18,6 +19,42 @@ from .field_scheduler import ACTIVE_RUN_STATES
 class DispatchOutbox:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def claim_content_builds(self, *, now=None, limit=100):
+        """锁 build 合并重复事件；队列中尚未消费的回执也占一个投递名额。"""
+        now = now or datetime.utcnow()
+        due = (ExecutionOutbox.dispatch_state.in_(["pending", "failed"]),
+               or_(ExecutionOutbox.next_attempt_at.is_(None), ExecutionOutbox.next_attempt_at <= now))
+        related = (ExecutionOutbox.kind == "content.build.execute",
+                   ExecutionOutbox.aggregate_id == ContentBuildJob.build_id)
+        pending = exists(select(ExecutionOutbox.event_id).where(*related, *due))
+        outstanding = exists(select(ExecutionOutbox.event_id).where(*related,
+            or_(ExecutionOutbox.dispatch_state == "sending",
+                (ExecutionOutbox.dispatch_state == "sent") &
+                ExecutionOutbox.payload["dispatch_outstanding"].as_boolean().is_(True))))
+        jobs = (await self.db.scalars(select(ContentBuildJob).where(
+            ContentBuildJob.dispatch_state.in_(["queued", "yielded", "waiting_service", "running", "succeeded"]),
+            ContentBuildJob.phase != "published",
+            or_(ContentBuildJob.lease_until.is_(None), ContentBuildJob.lease_until <= now),
+            pending, ~outstanding).order_by(ContentBuildJob.updated_at, ContentBuildJob.build_id)
+            .limit(limit).with_for_update(skip_locked=True))).all()
+        result = []
+        for job in jobs:
+            query = (ExecutionOutbox.kind == "content.build.execute", ExecutionOutbox.aggregate_id == job.build_id)
+            wake = await self.db.scalar(select(ExecutionOutbox).where(*query, *due)
+                .order_by(ExecutionOutbox.created_at, ExecutionOutbox.event_id).limit(1).with_for_update())
+            if wake is None:
+                continue
+            await self.db.execute(update(ExecutionOutbox).where(*query, *due,
+                ExecutionOutbox.event_id != wake.event_id).values(dispatch_state="coalesced", next_attempt_at=None,
+                last_error=None, updated_at=now))
+            wake.dispatch_state, wake.updated_at = "sending", now
+            wake.attempts += 1
+            wake.payload = {**dict(wake.payload or {}), "dispatch_outstanding": True,
+                "dispatch_event_id": str(wake.event_id), "dispatch_attempt": wake.attempts,
+                "build_fence": job.fence_token}
+            result.append(wake)
+        return result
 
     async def claim_field_runs(self, *, now: datetime | None = None, limit: int = 100,
                                run_id=None, run_ids=None) -> list[ExecutionOutbox]:

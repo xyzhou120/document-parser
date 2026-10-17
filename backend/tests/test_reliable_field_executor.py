@@ -42,7 +42,7 @@ class FakeProvider:
 
 
 async def make_run(sessions, count=1, *, present=True, covered=True, text_override=None, rules_override=None,
-                   source="native", extraction_strategy="field_retrieval_v2"):
+                   source="native", extraction_strategy="field_retrieval_v2", page_count=1):
     text = text_override or ("报告正文 瓦斯压力 1.23MPa 实测" if present else "目录与说明。本附件无相关数据。")
     if present and "报告正文" not in text:
         text = "报告正文 " + text
@@ -54,6 +54,15 @@ async def make_run(sessions, count=1, *, present=True, covered=True, text_overri
                                                           "start_offset": 0, "end_offset": len(text)}]}]
     quality = {"coverage_manifest": {"expected_page_count": 1, "pages": [
         {"page_number": 1, "scope_complete": True, "regions": [{"state": "processed", "whole_page": True}]}]}}
+    if page_count > 1:
+        from copy import deepcopy
+        template = deepcopy(pages[0])
+        pages = [{**deepcopy(template), "page_number": number} for number in range(1, page_count + 1)]
+        for page in pages:
+            page["text_blocks"][0]["block_id"] = f"synthetic-{page['page_number']}"
+        quality["coverage_manifest"] = {"expected_page_count": page_count, "pages": [
+            {"page_number": number, "scope_complete": True,
+             "regions": [{"state": "processed", "whole_page": True}]} for number in range(1, page_count + 1)]}
     async with sessions() as db, db.begin():
         db.add(Document(document_id=document_id, file_name="synthetic.pdf", original_name="synthetic.pdf",
                         file_path="test/p13", file_size=1, file_hash="e" * 64, mime_type="application/pdf"))

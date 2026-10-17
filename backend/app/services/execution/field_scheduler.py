@@ -86,6 +86,8 @@ class QuantumOutcome:
     semantic_state: str | None = None
     retry_at: datetime | None = None
     error: str | None = None
+    # 本轮领域写入数据，只在内存中传给 writer，不进入检查点。
+    result_data: dict[str, Any] | None = None
 
 
 QuantumExecutor = Callable[[LeaseToken, dict[str, Any]], Awaitable[QuantumOutcome]]
@@ -306,7 +308,7 @@ class Scheduler:
 
 def aggregate_run_status(run: ParseRun, jobs: list[ParseFieldJob]) -> str:
     """返回以控制状态优先的运行聚合状态。"""
-    if run.status in {"PAUSED", "CANCELLED", "SUPERSEDED"}:
+    if run.status in {"PAUSED", "CANCELLED", "SUPERSEDED", "WAITING_REUSE"}:
         return run.status
     if not jobs:
         return "PLANNED" if run.status == "PLANNED" else run.status

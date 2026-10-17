@@ -52,6 +52,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 # 这里显式补齐，保证升级时不需要手工执行 SQL。
 COLUMN_MIGRATIONS: list[tuple[str, str, str]] = [
     # (表名, 列名, 列定义)
+    ("content_build_jobs", "source_pages", "JSON"),
     ("extracted_fields", "data_type", "VARCHAR(20)"),
     ("extracted_fields", "unit", "VARCHAR(50)"),
     ("extracted_fields", "required", "BOOLEAN DEFAULT FALSE"),
@@ -103,6 +104,7 @@ async def init_db():
     from app.models import reviews as reviews_models  # noqa: F401
     from app.models import rules as rules_models  # noqa: F401
     from app.models import source_revisions as source_revision_models  # noqa: F401
+    from app.models import shared_execution as shared_execution_models  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

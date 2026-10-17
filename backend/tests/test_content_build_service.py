@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock, Mock
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -18,9 +19,26 @@ def job(*, checkpoint=None, profile=None):
 
 
 def db(job_obj):
+    from sqlalchemy.sql.dml import Insert, Delete
+    entries = job_obj.__dict__.setdefault("_test_entries", {})
     async def get(model, key, **kwargs):
         return job_obj
-    return Mock(get=AsyncMock(side_effect=get), flush=AsyncMock(), add=Mock(), commit=AsyncMock(), rollback=AsyncMock())
+    async def scalar(statement):
+        return 0 if "count(" in str(statement) else job_obj.__dict__.get("source_pages")
+    async def scalars(statement):
+        return SimpleNamespace(all=lambda: [SimpleNamespace(kind=k[0], entry_key=k[1], payload=v) for k, v in entries.items()])
+    async def execute(statement):
+        params = statement.compile().params
+        if isinstance(statement, Insert):
+            for name, value in params.items():
+                if name.startswith("payload_m"):
+                    suffix = name[len("payload"):]
+                    entries[(params["kind" + suffix], params["entry_key" + suffix])] = value
+        elif isinstance(statement, Delete):
+            entries.pop((params["kind_1"], params["entry_key_1"]), None)
+    return Mock(get=AsyncMock(side_effect=get), scalar=AsyncMock(side_effect=scalar),
+                scalars=AsyncMock(side_effect=scalars), execute=AsyncMock(side_effect=execute),
+                flush=AsyncMock(), add=Mock(), commit=AsyncMock(), rollback=AsyncMock())
 
 
 @pytest.mark.asyncio
@@ -284,7 +302,7 @@ async def test_native_checkpoint_batches_but_yield_and_ocr_results_are_durable()
               for n in (11, 12)]
     with pytest.raises(ServiceUnavailable):
         await service.process(db(current), current, pages, ocr=ocr)
-    assert current.checkpoint["regions"]["p11:r"]["raw_ocr"] == "已付费 OCR 结果"
+    assert current._test_entries[("region", "p11:r")]["raw_ocr"] == "已付费 OCR 结果"
 
 
 @pytest.mark.asyncio

@@ -87,12 +87,20 @@ class ReliableExtractionService:
             frozen_profile.update(extraction_strategy=strategy,
                 coordinator_field_key=min((rule.field_key for rule in rules), default=""),
                 page_batch_chars=settings.agent.page_batch_chars,
-                page_parallelism=settings.agent.reliable_page_parallelism,
+                # Partners are only enabled after their call identity is stored
+                # in the v2 checkpoint and recovered from ParseModelCall.
+                # Keep v2 prefetch closed until the PostgreSQL ledger recovery
+                # path is enabled in an explicit rollout flag.
+                page_parallelism=(settings.agent.reliable_page_parallelism
+                                  if settings.agent.reliable_ledger_prefetch_enabled else 1),
+                ledger_prefetch_enabled=bool(settings.agent.reliable_ledger_prefetch_enabled),
+                page_checkpoint_schema_version="page-checkpoint-v2",
                 max_run_seconds=None,
                 hard_limit_tokens=None)
         frozen_profile["parent_parse_run_id"] = str(parent_run_id) if parent_run_id else None
         frozen_profile["request_id"] = request_id
         frozen_profile["document_file_hash"] = document.file_hash
+        frozen_profile["quantum_queue_enabled"] = bool(settings.agent.reliable_quantum_queue_enabled)
         if request_id:
             existing = await db.scalar(select(ParseRun).where(ParseRun.document_id == document_id,
                 ParseRun.contract_version == CONTRACT_VERSION,
@@ -166,6 +174,9 @@ class ReliableExtractionService:
         repo = JobRepository(db)
         jobs = await repo.initialize_jobs(run.parse_run_id, revision_id=pinned_id, fields=[
             {"field_key": rule.field_key, "rule_hash": rule.rule_semantic_hash, "snapshot": asdict(rule)} for rule in rules])
+        from app.services.shared_execution_service import attach_run
+        if await attach_run(db, run, jobs):
+            return run
         for job in jobs:
             await repo.enqueue_outbox(kind="field_job_wakeup", aggregate_id=job.job_id,
                 dedupe_key=f"{job.job_id}:initial", payload={"run_id": str(run.parse_run_id), "job_id": str(job.job_id)})
@@ -234,6 +245,7 @@ class ReliableExtractionService:
                     "total_pages": max(0, int(raw_progress.get("total_pages") or 0)),
                     "failed_units": max(0, int(raw_progress.get("failed_units") or 0)),
                     "strategy": str(raw_progress.get("strategy") or "page_batch_v1"),
+                    "summary_pending": bool(raw_progress.get("summary_pending", False)),
                 }
         return {
             "contract_version": CONTRACT_VERSION,
@@ -294,6 +306,8 @@ class ReliableExtractionService:
         async with sessions() as db:
             run = await self._run(db, run_id)
             self.ensure_contract(run)
+            if (run.extraction_profile or {}).get("quantum_queue_enabled"):
+                max_quantums = 1
         runner = FieldSchedulerRunner(sessions)
         executed = 0
         started = time.monotonic()
@@ -310,13 +324,16 @@ class ReliableExtractionService:
             repo = JobRepository(db)
             current = await db.get(ParseRun, run_id)
             head = None
-            managed = bool((current.extraction_profile or {}).get("attachment_version_id"))
+            current_profile = current.extraction_profile or {}
+            managed = bool(current_profile.get("attachment_version_id")
+                           or current_profile.get("shared_execution_owner"))
             if managed:
                 # 与附件控制入口一致：先业务父记录，再执行运行，禁止 run -> document 锁序反转。
                 from app.models.attachments import Attachment, AttachmentVersion
                 await db.get(Document, current.document_id, with_for_update=True, populate_existing=True)
                 await db.scalar(select(Attachment).where(Attachment.document_id == current.document_id).with_for_update())
-                await db.get(AttachmentVersion, UUID(current.extraction_profile["attachment_version_id"]), with_for_update=True)
+                if current_profile.get("attachment_version_id"):
+                    await db.get(AttachmentVersion, UUID(current_profile["attachment_version_id"]), with_for_update=True)
                 # 字段结果提交使用 head -> run；聚合前先拿 head，避免与它形成反向等待。
                 from app.services.content_publish_service import content_publish_service
                 await content_publish_service._head(db, current.document_id)
@@ -329,7 +346,11 @@ class ReliableExtractionService:
             if managed:
                 from app.services.attachment_version_service import finalize_version
                 await finalize_version(db, current)
-            if head is not None and status == "COMPLETED":
+            shared_owner = (current.extraction_profile or {}).get("shared_execution_owner")
+            if shared_owner:
+                from app.services.shared_execution_service import owner_finished
+                await owner_finished(db, current)
+            if head is not None and status == "COMPLETED" and not shared_owner:
                 await content_publish_service.publish_parse_run(db, run_id,
                     expected_cas_version=head.cas_version,
                     expected_invalidation_watermark=head.invalidation_watermark,
@@ -375,7 +396,9 @@ class ReliableExtractionService:
             rows = []
             if "field_job_wakeup" in selected_kinds:
                 rows.extend(await dispatcher.claim_field_runs(limit=limit, run_id=run_id))
-            other_kinds = [kind for kind in selected_kinds if kind != "field_job_wakeup"]
+            if "content.build.execute" in selected_kinds and len(rows) < limit:
+                rows.extend(await dispatcher.claim_content_builds(limit=limit - len(rows)))
+            other_kinds = [kind for kind in selected_kinds if kind not in {"field_job_wakeup", "content.build.execute"}]
             if other_kinds and len(rows) < limit:
                 rows.extend(await dispatcher.claim_due(limit=limit - len(rows), kinds=other_kinds,
                                                        aggregate_ids=aggregate_ids))

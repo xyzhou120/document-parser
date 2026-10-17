@@ -55,7 +55,7 @@ services:
       retries: 3
 
   # Celery 工作进程
-  celery-worker:
+  celery-worker: &execution-worker
     build:
       context: ..
       dockerfile: backend/Dockerfile
@@ -97,4 +97,19 @@ services:
     restart: unless-stopped
     volumes:
       - ../config:/app/config:ro
-    command: celery -A app.celery_app worker --loglevel=info --concurrency=4
+    command: celery -A app.celery_app worker -Q celery,reliable-execution,assistant --loglevel=info --concurrency=4
+
+  celery-attachment-control:
+    <<: *execution-worker
+    container_name: doc-parser-attachment-control-prod
+    command: celery -A app.celery_app worker -Q attachment-control --loglevel=info --concurrency=1
+
+  celery-control:
+    <<: *execution-worker
+    container_name: doc-parser-control-prod
+    command: celery -A app.celery_app worker -Q reliable-control --loglevel=info --concurrency=1
+
+  celery-beat:
+    <<: *execution-worker
+    container_name: doc-parser-beat-prod
+    command: celery -A app.celery_app beat --loglevel=info

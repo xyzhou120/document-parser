@@ -110,11 +110,16 @@ agent:
   reliable_context_tokens: 131072
   reliable_max_image_tokens: 16000
   reliable_page_parallelism: 4
+  # v2 先使用较小页单元，按真实 token 预算拆分后再发付费请求。
+  page_batch_chars: 24000
+  # 账本恢复和共享执行完成线上验收前保持关闭。
+  reliable_ledger_prefetch_enabled: true
+  reliable_quantum_queue_enabled: true
+  shared_execution_enabled: false
+  reliable_inflight_documents: 32
   # 持久化后交还 worker，避免大文件长时间占用整个解析队列。
   reliable_wakeup_seconds: 120
   reliable_wakeup_quantums: 20
-  # 一页正文的预切上限。普通报告页保持整页一次调用。
-  page_batch_chars: 100000
   candidate_window_chars: 300
   retrieval_image_policy: auto
 

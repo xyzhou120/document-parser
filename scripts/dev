@@ -17,20 +17,23 @@ BEAT_PIDFILE="$RUN_DIR/celerybeat.pid"
 BEAT_SCHEDULE="$RUN_DIR/celerybeat-schedule"
 
 PARSE_WORKERS="worker-parse-1 worker-parse-2 worker-parse-3 worker-parse-4 worker-parse-5"
-SERVICES="api worker-default worker-control $PARSE_WORKERS worker-assistant beat web"
-STOP_ORDER="beat worker-control worker-default $PARSE_WORKERS worker-assistant api web"
+SERVICES="api worker-default worker-attachment-control worker-control $PARSE_WORKERS worker-assistant beat web"
+STOP_ORDER="beat worker-control worker-attachment-control worker-default $PARSE_WORKERS worker-assistant api web"
 WORKER_CONCURRENCY=2
 
-LAUNCHER='import os, sys
+LAUNCHER='import os, sys, subprocess
 os.chdir(sys.argv[1])
 os.setsid()
+if sys.platform == "darwin" and os.environ.get("DOCUMENT_PARSER_DEV_SERVICE", "").startswith(("worker-", "beat")):
+    # 本地任务期间保持系统和磁盘唤醒；跟随服务 PID 自动结束。
+    subprocess.Popen(["/usr/bin/caffeinate", "-dimsu", "-w", str(os.getpid())], close_fds=True)
 os.execvp(sys.argv[2], sys.argv[2:])'
 
 usage() {
   cat <<EOF
 用法: ./scripts/dev <command>
 
-  start      启动前端、API、普通任务 worker、5 个解析 worker（每个并发 2）、调度 worker、助手 worker、1 个 beat
+  start      启动前端、API、普通任务 worker、5 个解析 worker（每个并发 2）、2 个独立调度 worker、助手 worker、1 个 beat
   stop       停止脚本管理的进程（含识别后接管的本项目遗留服务）
   restart    先停止再启动
   status     查看进程状态
@@ -117,6 +120,7 @@ marker_for() {
   case "$1" in
     api) printf '%s\n' 'app.main:app' ;;
     worker-default) printf '%s\n' 'default-local@' ;;
+    worker-attachment-control) printf '%s\n' 'attachment-control-local@' ;;
     worker-control) printf '%s\n' 'reliable-control-local@' ;;
     worker-parse-*) printf '%s\n' "parse-${1#worker-parse-}-local@" ;;
     worker-assistant) printf '%s\n' 'assistant-local@' ;;
@@ -206,6 +210,15 @@ service_running() {
   local pid
   pid="$(pid_of "$name" 2>/dev/null || true)"
   [[ -n "$pid" ]] && is_ours "$name" "$pid"
+}
+
+worker_stopping() {
+  local name="$1" last
+  [[ "$name" == worker-* ]] || return 1
+  [[ -f "$PID_DIR/$name.stopping" ]] && return 0
+  # 兼容旧启动器：日志中的历史 ready 不能证明暖关闭中的 worker 还在消费。
+  last="$(grep -E ' ready\.|Warm shutdown|Cold shutdown' "$LOG_DIR/$name.log" 2>/dev/null | tail -n 1 || true)"
+  [[ "$last" == *'Warm shutdown'* || "$last" == *'Cold shutdown'* ]]
 }
 
 port_pids() {
@@ -334,6 +347,9 @@ command_for() {
     worker-control)
       worker_command reliable-control 'reliable-control-local@%h' 1
       ;;
+    worker-attachment-control)
+      worker_command attachment-control 'attachment-control-local@%h' 1
+      ;;
     worker-parse-*)
       worker_command reliable-execution "parse-${name#worker-parse-}-local@%h"
       ;;
@@ -372,10 +388,14 @@ print_command() {
 launch_service() {
   local name="$1"
   if service_running "$name"; then
+    if worker_stopping "$name"; then
+      echo "$name 仍在退出，不能复用旧进程或历史 ready 日志 (pid $(pid_of "$name"))。" >&2
+      return 1
+    fi
     echo "$name 已在运行 (pid $(pid_of "$name"))"
     return 0
   fi
-  rm -f "$PID_DIR/$name.pid" "$PID_DIR/$name.lstart"
+  rm -f "$PID_DIR/$name.pid" "$PID_DIR/$name.lstart" "$PID_DIR/$name.stopping"
   : >"$LOG_DIR/$name.log"
   local workdir pid
   workdir="$(workdir_for "$name")"
@@ -432,7 +452,7 @@ stop_service() {
       return 1
     fi
     case "$name" in
-      worker-*) kill -TERM "$pid" 2>/dev/null || true ;;
+      worker-*) touch "$PID_DIR/$name.stopping"; kill -TERM "$pid" 2>/dev/null || true ;;
       *) kill -TERM -"$pid" 2>/dev/null || true ;;
     esac
     local i=0
@@ -453,7 +473,7 @@ stop_service() {
     echo "$name 主进程已退出但进程组 $pid 尚未退出，保留登记。" >&2
     return 1
   fi
-  rm -f "$pidfile" "$PID_DIR/$name.lstart"
+  rm -f "$pidfile" "$PID_DIR/$name.lstart" "$PID_DIR/$name.stopping"
   if [[ "$name" == "beat" && -f "$BEAT_PIDFILE" ]]; then
     local beat_pid
     beat_pid="$(tr -d '[:space:]' <"$BEAT_PIDFILE" || true)"
@@ -540,6 +560,7 @@ cmd_status() {
     if service_running "$name"; then
       pid="$(pid_of "$name")"
       state="运行中"
+      if worker_stopping "$name"; then state="退出中"; fi
     else
       pid="$(pid_of "$name" 2>/dev/null || true)"
       state="已停止"
@@ -589,7 +610,7 @@ cmd_start() {
   fi
   echo "解析并发: ${PARSE_WORKERS} 都消费 reliable-execution，每个并发 ${WORKER_CONCURRENCY}，共 $((5 * WORKER_CONCURRENCY)) 个解析执行槽位。"
   echo "模型请求: 同模型跨进程上限 ${MODEL_CAPACITY}，单文档页并行 ${PAGE_PARALLELISM}，附件入口活动文档上限 ${ATTACHMENT_CONCURRENCY}，模型请求超时 ${MODEL_TIMEOUT}s。"
-  echo "另有 worker-default（普通队列 ${QUEUE}：Excel 预览/下载）、worker-control（可靠提取恢复）和 worker-assistant（助手）。"
+  echo "另有 worker-default（普通队列 ${QUEUE}：Excel 预览/下载）、worker-attachment-control（附件恢复）、worker-control（解析调度）和 worker-assistant（助手）。"
   echo "beat 每 30 秒调度 reliable-execution-recovery，每 20 秒调度 assistant-message-recovery。"
   if [[ "$dry_run" == "--dry-run" ]]; then
     local name
@@ -623,6 +644,7 @@ cmd_start() {
   }
   require_ready wait_http api "http://127.0.0.1:8000/health" 90
   require_ready wait_ready worker-default 45 ' ready\.'
+  require_ready wait_ready worker-attachment-control 45 ' ready\.'
   require_ready wait_ready worker-control 45 ' ready\.'
   for name in $PARSE_WORKERS; do
     require_ready wait_ready "$name" 45 ' ready\.'
@@ -639,7 +661,8 @@ cmd_start() {
   解析  5 个 worker × 并发 ${WORKER_CONCURRENCY}，队列 reliable-execution，共 $((5 * WORKER_CONCURRENCY)) 个执行槽位
   模型  同模型请求上限 ${MODEL_CAPACITY}，超时 ${MODEL_TIMEOUT}s；单文档页并行 ${PAGE_PARALLELISM}
   普通  worker-default，并发 2，队列 ${QUEUE}（Excel 预览/下载等）
-  调度  worker-control，并发 1，只恢复丢失任务
+  附件调度  worker-attachment-control，并发 1，队列 attachment-control
+  解析调度  worker-control，并发 1，队列 reliable-control；后续执行由 Beat 和持久化 outbox 调度
   助手  worker-assistant，并发 1
 日志    output/dev/logs
 状态    ./scripts/dev status

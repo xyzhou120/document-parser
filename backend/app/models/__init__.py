@@ -24,6 +24,7 @@ from app.models.execution import (
 )
 from app.models.content import (
     ContentBuildJob,
+    ContentBuildEntry,
     ContentImpact,
     ContentInvalidation,
     ContentRevision,
@@ -33,6 +34,7 @@ from app.models.content import (
 )
 from app.models.assistant import DocumentCard, QAMessage, QASession
 from app.models.assistant_feedback import AssistantFeedbackSample
+from app.models.shared_execution import SharedExecution, SharedExecutionSubscriber
 from app.models.rules import ChecklistType, ExtractionRule, RuleChangeLog
 from app.models.attachments import (
     Attachment, AttachmentFileRevision, AttachmentImport, AttachmentImportRow,
@@ -76,6 +78,7 @@ __all__ = [
     "ParseModelCall",
     "ExecutionOutbox",
     "ContentBuildJob",
+    "ContentBuildEntry",
     "ContentRevision",
     "ContentImpact",
     "ContentInvalidation",
@@ -86,6 +89,7 @@ __all__ = [
     "QAMessage",
     "DocumentCard",
     "AssistantFeedbackSample",
+    "SharedExecution", "SharedExecutionSubscriber",
     # 规则模型
     "ChecklistType",
     "ExtractionRule",

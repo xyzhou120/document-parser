@@ -21,7 +21,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -34,6 +34,7 @@ from app.rules.semantic_contract import rule_semantic_hash
 from app.services.artifact_service import preprocessing_profile
 from app.services.assistant.index_repository import digest
 from app.services.content_build_service import ContentBuildError, ContentBuildService, ServiceUnavailable
+from app.services.content_build_storage import load_checkpoint
 from app.services.content_publish_service import ContentPublishService
 from app.services.execution.job_repository import JobRepository
 from app.services.ocr_capacity import RedisOCRCapacity
@@ -109,7 +110,9 @@ class ContentPreparationService:
                 continue
             outstanding = await db.scalar(select(ExecutionOutbox.event_id).where(
                 ExecutionOutbox.kind == CONTENT_BUILD_OUTBOX, ExecutionOutbox.aggregate_id == job.build_id,
-                ExecutionOutbox.dispatch_state.in_(["pending", "failed", "sending"])).limit(1))
+                or_(ExecutionOutbox.dispatch_state.in_(["pending", "failed", "sending"]),
+                    (ExecutionOutbox.dispatch_state == "sent") &
+                    ExecutionOutbox.payload["dispatch_outstanding"].as_boolean().is_(True))).limit(1))
             if outstanding is not None:
                 continue
             job.fence_token = (job.fence_token or 0) + 1
@@ -239,6 +242,8 @@ class ContentPreparationService:
                 raise KeyError("content build不存在")
             if job.dispatch_state in {"paused", "cancelled", "superseded", "failed_terminal"}:
                 return {"build": self.serialize(job), "status": job.dispatch_state}
+            if job.lease_until and job.lease_until > datetime.utcnow():
+                return {"status": "already_running", "build_id": str(build_id)}
             document = await db.get(Document, job.document_id)
             if document is None or document.file_hash != job.file_hash:
                 raise ContentPreparationError("构建文件版本已变化")
@@ -246,7 +251,9 @@ class ContentPreparationService:
                 return {"build": self.serialize(job), "status": "published", "revision_id": job.checkpoint["published_revision_id"],
                         "run_id": job.checkpoint.get("parse_run_id")}
             frozen_profile = deepcopy(job.profile)
-            baseline = deepcopy((job.checkpoint or {}).get("source_pages"))
+            baseline = await db.scalar(select(ContentBuildJob.source_pages).where(ContentBuildJob.build_id == build_id))
+            if baseline is None:
+                baseline = deepcopy((job.checkpoint or {}).get("source_pages"))
             source_hash = job.file_hash
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         pdf_cache = self.cache_dir / f"{source_hash}.pdf"
@@ -265,10 +272,16 @@ class ContentPreparationService:
                 page_inputs = self._page_inputs(pages, inspections)
                 async with sessions() as db, db.begin():
                     current = await db.get(ContentBuildJob, build_id, with_for_update=True, populate_existing=True)
-                    cp = deepcopy(current.checkpoint or {})
-                    cp.setdefault("source_pages", page_inputs)
-                    current.checkpoint = cp
-                    page_inputs = deepcopy(cp["source_pages"])
+                    if current.dispatch_state in {"paused", "cancelled", "superseded", "failed_terminal"}:
+                        return {"status": current.dispatch_state, "build_id": str(build_id)}
+                    if current.lease_until and current.lease_until > datetime.utcnow():
+                        return {"status": "already_running", "build_id": str(build_id)}
+                    # 源输入只落库一次，后续量子只更新游标和变更区域。
+                    existing = await db.scalar(select(ContentBuildJob.source_pages).where(ContentBuildJob.build_id == build_id))
+                    if existing is None:
+                        current.source_pages = page_inputs
+                    else:
+                        page_inputs = existing
             else:
                 page_inputs = baseline
             render = renderer
@@ -330,7 +343,7 @@ class ContentPreparationService:
                         max_seconds=settings.agent.reliable_wakeup_seconds)
                 except ServiceUnavailable:
                     job = await db.get(ContentBuildJob, build_id, populate_existing=True)
-                    checkpoint = job.checkpoint
+                    checkpoint = await load_checkpoint(db, job)
                 if job.dispatch_state != "succeeded":
                     if job.dispatch_state in {"yielded", "queued", "waiting_service"}:
                         event = await JobRepository(db).enqueue_outbox(kind=CONTENT_BUILD_OUTBOX, aggregate_id=job.build_id,
@@ -403,14 +416,20 @@ class ContentPreparationService:
                     item.setdefault("snapshot", deepcopy(rule))
                     fields.append(item)
                 jobs = await JobRepository(db).initialize_jobs(run.parse_run_id, revision_id=revision.revision_id, fields=fields)
-                for field_job in jobs:
+                from app.services.shared_execution_service import attach_run
+                waiting_shared = await attach_run(db, run, jobs)
+                for field_job in ([] if waiting_shared else jobs):
                     await JobRepository(db).enqueue_outbox(kind="field_job_wakeup", aggregate_id=field_job.job_id,
                         dedupe_key=f"content-build-run:{run.parse_run_id}:{field_job.field_key}",
                         payload={"run_id": str(run.parse_run_id), "job_id": str(field_job.job_id), "revision_id": str(revision.revision_id)})
-                job.phase, job.dispatch_state, job.checkpoint = "published", "succeeded", checkpoint
                 checkpoint["published_revision_id"] = str(revision.revision_id)
                 checkpoint["parse_run_id"] = str(run.parse_run_id)
-                job.checkpoint = deepcopy(checkpoint)
+                job.phase, job.dispatch_state = "published", "succeeded"
+                # 发布回执写回紧凑进度，正文和区域结果保留在独立表。
+                job.checkpoint = {**dict(job.checkpoint or {}),
+                    "schema_version": "content-checkpoint-v2",
+                    "published_revision_id": checkpoint["published_revision_id"],
+                    "parse_run_id": checkpoint["parse_run_id"]}
                 await db.flush()
                 return {"build": self.serialize(job), "status": "published", "revision_id": str(published["revision"].revision_id),
                         "run_id": str(run.parse_run_id), "successor_run_id": str(published["successor"].parse_run_id) if published.get("successor") else None}

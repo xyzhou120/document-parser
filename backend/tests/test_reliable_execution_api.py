@@ -48,6 +48,28 @@ async def test_v2_status_reads_real_jobs_and_does_not_claim_without_ledger():
 
 
 @pytest.mark.asyncio
+async def test_v2_status_exposes_pending_page_summary():
+    run = SimpleNamespace(parse_run_id=uuid4(), document_id=uuid4(), status="RUNNING",
+                          contract_version=CONTRACT_VERSION, execution_generation=1,
+                          extraction_profile={"extraction_strategy": "page_batch_v1",
+                                              "coordinator_field_key": "gas"})
+    job = SimpleNamespace(job_id=uuid4(), run_id=run.parse_run_id, field_key="gas",
+                          rule_hash="a" * 64, revision_id=uuid4(), execution_state="yielded",
+                          semantic_state="unknown", phase="yielded",
+                          checkpoint={"page_progress": {"processed_units": 1, "total_units": 2,
+                                                          "processed_pages": 1, "total_pages": 2,
+                                                          "failed_units": 0, "summary_pending": True}},
+                          next_attempt_at=None, lease_owner=None, lease_until=None, fence_token=1,
+                          progress_seq=2, attempt=1, last_error=None)
+    db = Mock(get=AsyncMock(return_value=run), execute=AsyncMock(side_effect=[
+        Mock(scalars=Mock(return_value=Mock(all=Mock(return_value=[job])))),
+        Mock(scalars=Mock(return_value=Mock(all=Mock(return_value=[job])))),
+    ]))
+    result = await execution(run.parse_run_id, limit=100, db=db)
+    assert result["page_progress"]["summary_pending"] is True
+
+
+@pytest.mark.asyncio
 async def test_control_endpoint_delegates_to_database_service():
     run_id = uuid4()
     with patch("app.api.reliable_execution.reliable_extraction_service.control",
